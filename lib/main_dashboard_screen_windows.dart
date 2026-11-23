@@ -1328,6 +1328,10 @@ String _feeIdentityForStudent(
       uid.isNotEmpty;
 
   if (useUid) return 'UID-$uid';
+  // An immutable person generation survives edits to name, roll and contact.
+  // Keep the composite key only for not-yet-migrated student records.
+  final stable = student['mobileStableId']?.toString().trim() ?? '';
+  if (stable.startsWith('p-') && stable.length > 20) return 'PERSON-$stable';
   return _compositeStudentFeeIdentity(student);
 }
 
@@ -10430,6 +10434,7 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
   String? _activeStudentClass;
   String _paymentMode = 'Cash';
   bool _isSavingPayment = false;
+  bool _showPartialStudents = false;
   final String _feesOriginProfile = FirebaseFirestore.instance.activeProfileId;
   String? _sessionReceiptPaymentId;
   String? _sessionReceiptStudentId;
@@ -10552,10 +10557,36 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
 
   List<String> _monthList() {
     final now = DateTime.now();
-    return List.generate(12, (index) {
+    final months = <String>{_selectedMonth};
+    for (var index = 0; index < 24; index++) {
       final d = DateTime(now.year, now.month - index, 1);
-      return '${d.year}-${d.month.toString().padLeft(2, '0')}';
+      months.add('${d.year}-${d.month.toString().padLeft(2, '0')}');
+    }
+    return months.toList()..sort((a, b) => b.compareTo(a));
+  }
+
+  void _selectFeeMonth(String month) {
+    if (_isSavingPayment || month == _selectedMonth) return;
+    setState(() {
+      _selectedMonth = month;
+      _localLedgerReady = false;
+      _ledgerStream = _ledgerStreamForMonth(month);
+      _resetActiveSelection();
     });
+  }
+
+  Future<void> _chooseHistoricalMonth() async {
+    if (_isSavingPayment) return;
+    final selected = DateTime.tryParse('$_selectedMonth-01') ?? DateTime.now();
+    final date = await showDatePicker(
+      context: context, initialDate: selected,
+      firstDate: DateTime(2000), lastDate: DateTime.now(),
+      initialDatePickerMode: DatePickerMode.year,
+      helpText: 'Choose fee collection month',
+    );
+    if (date == null || !mounted ||
+        FirebaseFirestore.instance.activeProfileId != _feesOriginProfile) return;
+    _selectFeeMonth('${date.year}-${date.month.toString().padLeft(2, '0')}');
   }
 
   String _feeStatus(double expected, double paid) {
@@ -10635,7 +10666,8 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
 Future<Map<String, dynamic>> _getClassFeeSettings(
   String studentClass,
 ) async {
-  final data = await WindowsFeeStructure.load(studentClass);
+  final session = await WindowsFeeStructure.sessionForMonth(_selectedMonth);
+  final data = await WindowsFeeStructure.load(studentClass, session: session);
   final rawFees =
       Map<String, dynamic>.from(data['fees'] ?? {});
 
@@ -10687,6 +10719,12 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
     Map<String, dynamic>? ledger,
   ) async {
     if (_isSavingPayment || !_localLedgerReady) return;
+    if (ledger?['__feeConflict'] == true) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('An older fee record needs identity review in History. Payment not collected.'),
+      ));
+      return;
+    }
     if (_sessionReceiptStudentId != studentDoc.id) {
       _sessionReceiptPaymentId = null;
       _sessionReceiptStudentId = null;
@@ -10771,7 +10809,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
         // New payment me fee heads tick karne ke baad full amount auto-fill hoga,
         // admin partial payment ke liye ise kam kar sakta hai.
         _receivedAmountController.text =
-            remaining > 0 ? remaining.toStringAsFixed(0) : '';
+            remaining > 0 ? remaining.toStringAsFixed(2) : '';
       });
     } catch (e) {
       if (!current()) return;
@@ -10854,7 +10892,17 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
     }
     final ensuredStudent = await SchoolPersonIdentity.ensure('students_directory', studentDoc.id);
     student.addAll(ensuredStudent);
-    final feeIdentity = _feeIdentityForStudent(student, _studentUidConfig);
+    final personId = student['mobileStableId']?.toString() ?? studentDoc.id;
+    final previousPerson = ledger?['personId']?.toString() ?? '';
+    if (ledger != null && previousPerson.isNotEmpty &&
+        previousPerson != personId && previousPerson != studentDoc.id) {
+      throw StateError('Fee ledger belongs to a different student generation.');
+    }
+    // Preserve existing paid-month identity instead of opening a second ledger
+    // after a profile edit, UID switch or academic promotion.
+    final storedFeeIdentity = ledger?['feeIdentity']?.toString().trim() ?? '';
+    final feeIdentity = storedFeeIdentity.isNotEmpty
+        ? storedFeeIdentity : _feeIdentityForStudent(student, _studentUidConfig);
     final now = DateTime.now();
     final schoolProfile = await _loadSchoolProfileCache();
     final receiptNo =
@@ -10976,7 +11024,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
           'lastDriveUrl': driveUrl,
         };
         _receivedAmountController.text =
-            balance > 0 ? balance.toStringAsFixed(0) : '';
+            balance > 0 ? balance.toStringAsFixed(2) : '';
         _isSavingPayment = false;
       });
 
@@ -11074,7 +11122,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
       final data = (await FirebaseFirestore.instance.collection('fee_payments').doc(id).get()).data();
       if (data == null) throw StateError('Receipt record not found.');
       if (!mounted || FirebaseFirestore.instance.activeProfileId != _feesOriginProfile) return;
-      await WindowsFeeReceiptPreview.open(context, data);
+      await WindowsFeeReceiptPreview.print(context, data);
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Receipt error: $e')));
     }
@@ -11249,7 +11297,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
 
                                 final total = _selectedFeesTotal;
                                 _receivedAmountController.text =
-                                    total > 0 ? total.toStringAsFixed(0) : '';
+                                    total > 0 ? total.toStringAsFixed(2) : '';
                               });
                             }
                           : null,
@@ -11324,7 +11372,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                                     }
                                     final total = _selectedFeesTotal;
                                     _receivedAmountController.text =
-                                        total > 0 ? total.toStringAsFixed(0) : '';
+                                        total > 0 ? total.toStringAsFixed(2) : '';
                                   });
                                 }
                               : null,
@@ -11352,7 +11400,9 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                           border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
                         ),
                         child: Text(
-                          amount > 0 ? amount.toStringAsFixed(0) : '0',
+                          amount > 0 ? (amount == amount.roundToDouble()
+                              ? amount.toStringAsFixed(0)
+                              : amount.toStringAsFixed(2)) : '0',
                           style: TextStyle(fontFamily: 'Segoe UI', 
                             color: amount > 0 ? const Color(0xFF00D9A5) : WindowsAppearance.foreground(Colors.white30),
                             fontSize: 11,
@@ -11804,9 +11854,11 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
 
   Widget _unpaidStudentPanel(
     List<QueryDocumentSnapshot<Map<String, dynamic>>> unpaid,
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> partial,
     Map<String, dynamic>? Function(QueryDocumentSnapshot<Map<String, dynamic>>)
         ledgerForStudent,
   ) {
+    final visible = _showPartialStudents ? partial : unpaid;
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -11822,18 +11874,33 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
               color: WindowsAppearance.foreground(const Color(0xFF38A8FF)),
               size: 20),
             const SizedBox(width: 8),
-            Expanded(child: Text('Available Students (${unpaid.length})',
+            Expanded(child: Text(_showPartialStudents
+                ? 'Partially Paid (${partial.length})'
+                : 'Available Students (${unpaid.length})',
               overflow: TextOverflow.ellipsis,
               style: TextStyle(fontFamily: 'Segoe UI',
                 color: WindowsAppearance.foreground(Colors.white),
                 fontSize: 14, fontWeight: FontWeight.w800))),
           ]),
           const SizedBox(height: 6),
-          Text('Jinhone is month abhi koi payment nahi diya.',
+          Text(_showPartialStudents
+              ? 'Remaining balance wale students; collect next installment.'
+              : 'Jinhone is month abhi koi payment nahi diya.',
             maxLines: 2, overflow: TextOverflow.ellipsis,
             style: TextStyle(fontFamily: 'Segoe UI',
               color: WindowsAppearance.foreground(Colors.white54),
               fontSize: 10)),
+          const SizedBox(height: 6),
+          Wrap(spacing: 6, children: [
+            ChoiceChip(label: Text('Not paid (${unpaid.length})'),
+              selected: !_showPartialStudents,
+              onSelected: _isSavingPayment ? null : (_) =>
+                  setState(() => _showPartialStudents = false)),
+            ChoiceChip(label: Text('Partial (${partial.length})'),
+              selected: _showPartialStudents,
+              onSelected: _isSavingPayment ? null : (_) =>
+                  setState(() => _showPartialStudents = true)),
+          ]),
           const SizedBox(height: 10),
           Divider(height: 1, color: WindowsAppearance.outline(Colors.white10)),
           Expanded(
@@ -11841,17 +11908,18 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                 ? Center(child: Text('Loading local fee ledger...',
                     style: TextStyle(
                       color: WindowsAppearance.foreground(Colors.white54))))
-                : unpaid.isEmpty
-                    ? Center(child: Text('No unpaid students',
+                : visible.isEmpty
+                    ? Center(child: Text(_showPartialStudents
+                          ? 'No partial payments' : 'No unpaid students',
                         style: TextStyle(
                           color: WindowsAppearance.foreground(Colors.white54))))
                     : ListView.separated(
                         key: const ValueKey('fees-unpaid-student-list'),
                         padding: const EdgeInsets.symmetric(vertical: 10),
-                        itemCount: unpaid.length,
+                        itemCount: visible.length,
                         separatorBuilder: (_, __) => const SizedBox(height: 7),
                         itemBuilder: (context, index) {
-                          final student = unpaid[index];
+                          final student = visible[index];
                           return _unpaidStudentCard(
                             student, ledgerForStudent(student),
                             canSelect: _localLedgerReady,
@@ -11878,8 +11946,9 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
     final balance = expected > 0
         ? (expected - paid).clamp(0, double.infinity).toDouble()
         : 0.0;
-    final status = _feeStatus(expected, paid);
-    final color = _statusColor(status);
+    final reviewRequired = ledger?['__feeConflict'] == true;
+    final status = reviewRequired ? 'REVIEW' : _feeStatus(expected, paid);
+    final color = reviewRequired ? Colors.orangeAccent : _statusColor(status);
     final isActive = _activeStudentId == studentDoc.id;
 
     return InkWell(
@@ -11988,7 +12057,8 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
               }
               _localLedgerReady = ledgerSnapshot.hasData && _studentUidConfigLoaded;
               final ledgerByIdentity = <String, Map<String, dynamic>>{};
-              final legacyLedgerByStudentId = <String, Map<String, dynamic>>{};
+              final ledgerByPerson = <String, List<Map<String, dynamic>>>{};
+              final legacyLedgerByStudentId = <String, List<Map<String, dynamic>>>{};
 
               for (final doc in ledgerSnapshot.data?.docs ?? []) {
                 final raw = doc.data();
@@ -12002,9 +12072,13 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                   ledgerByIdentity[feeIdentity] = data;
                 }
 
+                final personId = data['personId']?.toString() ?? '';
+                if (personId.isNotEmpty) {
+                  ledgerByPerson.putIfAbsent(personId, () => []).add(data);
+                }
                 final studentId = data['studentId']?.toString() ?? '';
                 if (studentId.isNotEmpty) {
-                  legacyLedgerByStudentId[studentId] = data;
+                  legacyLedgerByStudentId.putIfAbsent(studentId, () => []).add(data);
                 }
               }
 
@@ -12015,16 +12089,34 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                 final identity =
                     _feeIdentityForStudent(student, _studentUidConfig);
 
-                final byIdentity = ledgerByIdentity[identity];
-                if (byIdentity != null) return byIdentity;
-
-                final legacy = legacyLedgerByStudentId[studentDoc.id];
-                if (legacy != null &&
-                    _legacyLedgerMatchesStudent(legacy, student)) {
-                  return legacy;
+                final personId = student['mobileStableId']?.toString() ?? '';
+                bool sameOwner(Map<String, dynamic> row) {
+                  final owner = row['personId']?.toString() ?? '';
+                  if (owner.isEmpty) return _legacyLedgerMatchesStudent(row, student);
+                  if (owner == personId && personId.isNotEmpty) return true;
+                  return owner == studentDoc.id &&
+                      _legacyLedgerMatchesStudent(row, student);
                 }
+                final byIdentity = ledgerByIdentity[identity];
+                if (byIdentity != null &&
+                    byIdentity['studentId'] == studentDoc.id &&
+                    sameOwner(byIdentity)) return byIdentity;
 
-                return null;
+                // Edits to student demographics or UID settings must not hide
+                // a previously paid ledger belonging to the same person.
+                final byPerson = personId.isEmpty
+                    ? <Map<String, dynamic>>[]
+                    : (ledgerByPerson[personId] ?? []).where(
+                        (row) => row['studentId'] == studentDoc.id).toList();
+                if (byPerson.length == 1) return byPerson.first;
+                if (byPerson.length > 1) return {'__feeConflict': true};
+
+                final older = legacyLedgerByStudentId[studentDoc.id] ?? [];
+                final legacy = older.where((row) => sameOwner(row)).toList();
+                if (legacy.length == 1 && older.length == 1) return legacy.first;
+                // A retired person or ambiguous legacy ledger must never be
+                // silently classified as a new unpaid student and recollected.
+                return older.isEmpty ? null : {'__feeConflict': true};
               }
 
               final nameQuery = _nameSearchController.text.trim().toLowerCase();
@@ -12092,6 +12184,14 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
               final unpaidStudents = _localLedgerReady
                   ? filtered.where((student) =>
                       showInUnpaidStudentList(ledgerForStudent(student))).toList()
+                  : <QueryDocumentSnapshot<Map<String, dynamic>>>[];
+              final partialStudents = _localLedgerReady
+                  ? filtered.where((student) {
+                      final row = ledgerForStudent(student);
+                      final paid = _toDouble(row?['totalPaid']);
+                      final expected = _toDouble(row?['expectedAmount']);
+                      return paid > 0 && expected > paid;
+                    }).toList()
                   : <QueryDocumentSnapshot<Map<String, dynamic>>>[];
 
 
@@ -12211,7 +12311,8 @@ child: Row(
   children: [
     Expanded(
       flex: 2,
-      child: DropdownButtonFormField<String>(
+      child: Row(children: [
+        Expanded(child: DropdownButtonFormField<String>(
         isExpanded: true,
         value: _selectedMonth,
         dropdownColor: WindowsAppearance.resolve(const Color(0xFF172229)),
@@ -12229,16 +12330,15 @@ child: Row(
             )
             .toList(),
         onChanged: _isSavingPayment ? null : (value) {
-          if (value != null) {
-            setState(() {
-              _selectedMonth = value;
-              _localLedgerReady = false;
-              _ledgerStream = _ledgerStreamForMonth(value);
-              _resetActiveSelection();
-            });
-          }
+          if (value != null) _selectFeeMonth(value);
         },
-      ),
+        )),
+        IconButton(
+          tooltip: 'Choose an older fee month',
+          onPressed: _isSavingPayment ? null : _chooseHistoricalMonth,
+          icon: const Icon(Icons.event_rounded),
+        ),
+      ]),
     ),
 
     const SizedBox(width: 10),
@@ -12329,7 +12429,7 @@ child: Row(
                       child: _mainPaymentPanel(
                         activeStudentDoc, activeLedger,
                         unpaidStudentPanel: _unpaidStudentPanel(
-                          unpaidStudents, ledgerForStudent),
+                          unpaidStudents, partialStudents, ledgerForStudent),
                       ),
                     ),
                   ],
@@ -20519,6 +20619,7 @@ class _FeeTransactionHistoryScreenState
   List<Map<String, dynamic>> _payments = [];
   String _classFilter = 'All Classes';
   String _monthFilter = 'All Months';
+  int _visibleLimit = 50;
 
   @override
   void initState() {
@@ -20557,7 +20658,20 @@ class _FeeTransactionHistoryScreenState
       double.tryParse(value?.toString() ?? '') ??
       0;
 
-  String _money(dynamic value) => '₹${_n(value).toStringAsFixed(0)}';
+  String _money(dynamic value) {
+    final amount = _n(value);
+    return '₹${amount == amount.roundToDouble()
+        ? amount.toStringAsFixed(0) : amount.toStringAsFixed(2)}';
+  }
+
+  List<String> get _classOptions {
+    final classes = <String>{
+      ...List.generate(12, (i) => 'Class ${i + 1}'),
+      ..._payments.map((p) => p['studentClass']?.toString() ?? '')
+          .where((c) => c.isNotEmpty),
+    }.toList()..sort();
+    return ['All Classes', ...classes];
+  }
 
   List<String> get _months {
     final values = _payments
@@ -20705,7 +20819,7 @@ class _FeeTransactionHistoryScreenState
                                 borderSide: BorderSide.none,
                               ),
                             ),
-                            onChanged: (_) => setState(() {}),
+                            onChanged: (_) => setState(() => _visibleLimit = 50),
                           );
                           final cls = DropdownButtonFormField<String>(
                             value: _classFilter,
@@ -20719,17 +20833,13 @@ class _FeeTransactionHistoryScreenState
                               border: OutlineInputBorder(
                                   borderSide: BorderSide.none),
                             ),
-                            items: [
-                              'All Classes',
-                              ...List.generate(
-                                  10, (i) => 'Class ${i + 1}')
-                            ]
+                            items: _classOptions
                                 .map((v) =>
                                     DropdownMenuItem(value: v, child: Text(v)))
                                 .toList(),
                             onChanged: (v) {
                               if (v != null) {
-                                setState(() => _classFilter = v);
+                                setState(() { _classFilter = v; _visibleLimit = 50; });
                               }
                             },
                           );
@@ -20753,7 +20863,7 @@ class _FeeTransactionHistoryScreenState
                                 .toList(),
                             onChanged: (v) {
                               if (v != null) {
-                                setState(() => _monthFilter = v);
+                                setState(() { _monthFilter = v; _visibleLimit = 50; });
                               }
                             },
                           );
@@ -20787,7 +20897,7 @@ class _FeeTransactionHistoryScreenState
                               style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white54))),
                         )
                       else
-                        ...data.map((p) {
+                        ...data.take(_visibleLimit).map((p) {
                           final status = p['status']?.toString() ?? '';
                           final paid = status == 'PAID';
                           return Container(
@@ -20875,6 +20985,12 @@ class _FeeTransactionHistoryScreenState
                             ),
                           );
                         }),
+                      if (data.length > _visibleLimit)
+                        TextButton.icon(
+                          onPressed: () => setState(() => _visibleLimit += 50),
+                          icon: const Icon(Icons.expand_more_rounded),
+                          label: Text('Load more (${data.length - _visibleLimit} remaining)'),
+                        ),
                     ],
                   ),
                 ),
