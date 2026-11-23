@@ -2918,7 +2918,13 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             (details.value['needsAttention'] as num).toInt(),
             (details.value['conflictCount'] as num? ?? 0).toInt(),
           );
-        if ((details.value['pending'] as num? ?? 0) > 0 || (details.value['incomingPending'] as num? ?? 0)>0) {
+        final deviceUploadPending = (details.value['pending'] as num? ?? 0) > 0;
+        final inboundReconciliationPending =
+            (details.value['incomingPending'] as num? ?? 0) > 0;
+        if (deviceUploadPending || inboundReconciliationPending) {
+          // Incoming cloud changes/Drive receipts are NOT outgoing PC writes.
+          // Preserve their reconciliation evidence without reactivating an
+          // already ACKed device's foreground Syncing/Pending state.
           // Legacy Drive requests are visible for review but are not serviced
           // by the managed protocol. Their presence must not spin this engine.
           // Queue presence is not a new mutation. Re-dispatching unchanged
@@ -2935,7 +2941,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           if(verifiedTransferTiming.sequence>transferSequenceAtStart &&
               (details.value['liveQueue'] as List).any((r)=>r is Map&&r['_queueCollection']=='_windows_firebase_outbox'&&
                 {'pending','retry',null}.contains(r['syncState'])&&(r['retryAtMillis'] as num? ?? 0)<=DateTime.now().millisecondsSinceEpoch))_rerunRequested=true;
-          state.value = SchoolCloudState.syncPending;
+          state.value = deviceUploadPending
+              ? SchoolCloudState.syncPending
+              : SchoolCloudState.synced;
           return;
         }
         await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
