@@ -326,3 +326,35 @@ test('authenticated notice precondition rejections settle only their exact new a
  const reply=await mf.dispatchFetch('https://worker.invalid/internal',{method:'POST',body:JSON.stringify({schoolId:A,lane:'notices',command:'write',request:original})});
  assert.equal(reply.status,401);assert.equal((await reply.json()).schoolId,undefined);
 });
+
+test('24-hour records inventory counts original entries without inventing Drive proofs',async()=>{
+ const school='vs-'+hash('sync4-hourly-records-proofs').slice(0,32);
+ const before=(await rpc(school,'records',{command:'backupHourly'})).value;
+ assert.equal(before.scope,'records_spool_only');
+ assert.equal(before.countUnit,'original_spool_entries_batches_count_as_one');
+ assert.equal(before.hours.length,24);
+ assert.equal(before.hours.reduce((n,h)=>n+h.admitted,0),0);
+ const request={...write('school_expenses','hourly-original',
+  'operation-hourly-original-00001'),data:{schoolId:school,amount:2}};
+ const accepted=await delivery.record(school,request);
+ const pending=(await rpc(school,'records',{command:'backupHourly'})).value;
+ assert.equal(pending.hours.reduce((n,h)=>n+h.admitted,0),1);
+ assert.equal(pending.hours.reduce((n,h)=>n+h.pending,0),1);
+ assert.equal(pending.hours.reduce((n,h)=>n+h.proofStamped,0),0,
+  'Cloudflare admission must not count as Google provider verification');
+ await delivery.drain(school,'records',async original=>({
+  success:true,schoolId:school,syncProtocol:2,
+  recordRevision:'drive-hourly-original',
+  record:{...original.data,id:original.id,_syncOperationId:original.operationId}
+ }));
+ assert.equal((await delivery.status(school,'records',accepted.delivery.id)).driveState,'verified');
+ const after=(await rpc(school,'records',{command:'backupHourly'})).value;
+ assert.equal(after.hours.reduce((n,h)=>n+h.admitted,0),1);
+ assert.equal(after.hours.reduce((n,h)=>n+h.pending+n.retry+n.processing,0),0);
+ assert.equal(after.hours.reduce((n,h)=>n+h.proofStamped+n.completedWithoutProofTimestamp,0),1);
+ assert(after.hours.every((h,i)=>i===0||h.hourStartMillis-after.hours[i-1].hourStartMillis===3600000));
+ assert.equal(after.unattributed,0);
+ const foreign=(await rpc(tenant('3'),'records',{command:'backupHourly'})).value;
+ assert.equal(foreign.hours.reduce((n,h)=>n+h.admitted,0),0,
+  'A different school never inherits this school's original counts');
+});
