@@ -903,6 +903,25 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    sql.exec("UPDATE live_backup SET state=?,due=?,claim='',claim_until=0 WHERE seq=?",b.review===true?'review':'retry',b.review===true?Number.MAX_SAFE_INTEGER:Number(b.retryAt),job.seq);
   }return {accepted:true};
  });
+ if(command==='backupHourly'){
+  // Read only: count original, server-held live backup receipts. A Cloudflare
+  // admission is never counted as a Google Drive verification.
+  const hourMs=3600000;
+  const windowStart=Math.floor((now-24*hourMs)/hourMs)*hourMs;
+  const accepted=sql.exec<{collection:string;hourStart:number;state:string;count:number}>(
+   'SELECT collection,(accepted_at / 3600000) * 3600000 AS hourStart,state,count(*) AS count FROM live_backup WHERE accepted_at>=? AND accepted_at<=? GROUP BY collection,hourStart,state ORDER BY hourStart,collection,state',
+   windowStart,now).toArray();
+  const verified=sql.exec<{collection:string;hourStart:number;count:number}>(
+   "SELECT collection,(verified_at / 3600000) * 3600000 AS hourStart,count(*) AS count FROM live_backup WHERE state='verified' AND verified_at>=? AND verified_at<=? AND accepted_at>0 AND verified_at>=accepted_at AND drive_revision IS NOT NULL AND drive_revision!='' GROUP BY collection,hourStart ORDER BY hourStart,collection",
+   windowStart,now).toArray();
+  const current=sql.exec<{collection:string;state:string;count:number}>(
+   'SELECT collection,state,count(*) AS count FROM live_backup GROUP BY collection,state ORDER BY collection,state').toArray();
+  const unknown=sql.exec<{missingAcceptedAt:number;unverifiedCompletion:number}>(
+   "SELECT coalesce(sum(CASE WHEN accepted_at<=0 OR accepted_at>? THEN 1 ELSE 0 END),0) AS missingAcceptedAt,coalesce(sum(CASE WHEN state='verified' AND (verified_at<=0 OR verified_at<accepted_at OR drive_revision IS NULL OR drive_revision='') THEN 1 ELSE 0 END),0) AS unverifiedCompletion FROM live_backup",now).toArray()[0];
+  return {liveProtocol:1,backupHourlyVersion:1,schoolId:school,
+   coverage:'live_native_backup_only',windowStart,windowHours:24,observedAt:now,
+   accepted,verified,current,unknown};
+ }
  if(command==='backupHistory'){
   const entries=sql.exec<{seq:number;collection:string;id:string;operation_id:string;state:string;accepted_at:number;verified_at:number;drive_revision:string|null;receipt:string}>('SELECT b.seq,b.collection,b.id,b.operation_id,b.state,b.accepted_at,b.verified_at,b.drive_revision,e.receipt FROM live_backup b JOIN live_events e ON e.seq=b.seq ORDER BY b.seq DESC LIMIT 25').toArray().map(row=>({operationId:row.operation_id,collection:row.collection,id:row.id,state:row.state,sequence:row.seq,acceptedAt:row.accepted_at,verifiedAt:row.verified_at,completedAt:row.state==='verified'?row.verified_at:0,recordRevision:String(JSON.parse(row.receipt).recordRevision||''),...(row.state==='verified'?{driveRevision:row.drive_revision}:{})}));
   return {liveProtocol:1,schoolId:school,entries};
