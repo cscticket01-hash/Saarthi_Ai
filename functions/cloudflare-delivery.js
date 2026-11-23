@@ -73,6 +73,8 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
    if(result.recordWriteBatchVersion===1&&
     (!Array.isArray(result.acknowledgements)||result.acknowledgements.length===0))
     fail(502,'ACK_UNVERIFIED');
+   if(Array.isArray(result.acknowledgements)&&result.acknowledgements.some(ack=>
+    !ack||typeof ack.success!=='boolean'))fail(502,'ACK_UNVERIFIED');
    const rejected=Array.isArray(result.acknowledgements)
     ?result.acknowledgements.find(ack=>ack?.success!==true):null;
    if(rejected)fail(409,terminal.has(rejected.code)?rejected.code:'EDGE_DELIVERY_REVIEW_REQUIRED');
