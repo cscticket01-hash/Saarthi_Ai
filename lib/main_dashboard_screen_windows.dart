@@ -40,6 +40,7 @@ import 'windows_expense_history.dart';
 import 'windows_expense_receipt_preview.dart';
 import 'windows_school_expense_sync.dart';
 import 'windows_exam_service.dart';
+import 'windows_exam_promotion_center.dart';
 import 'windows_exam_policy.dart';
 import 'windows_exam_history_screen.dart';
 import 'windows_ui_localization.dart';
@@ -20933,6 +20934,8 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
   String? _error;
   int _academicYearRolloverMonth = 1;
   String _sessionFilter = '';
+  String _classFilter = '';
+  String _selectedPromotionExamId = '';
 
   List<Map<String, dynamic>> _exams = [];
   List<Map<String, dynamic>> _results = [];
@@ -22489,293 +22492,291 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
         ),
       );
 
-  @override
-  Widget build(BuildContext context) {WindowsAppearance.watch(context);
-    if (!_sameSchool) {
-      return const Scaffold(
-        body: Center(child: Text('School changed. Reopen Exam Center.')),
-      );
-    }
-    final groups = _examGroups();
-    final visibleResults = _visibleResults;
-    final sessions = _exams.map((e) => e['academicSession']?.toString() ?? '')
-        .where((session) => session.isNotEmpty).toSet().toList()
-      ..sort((a, b) => b.compareTo(a));
-    final passTotal = visibleResults.where((e) => e['result'] == 'PASS').length;
-    final failTotal = visibleResults.where((e) => e['result'] == 'FAIL').length;
-    final totalResults = passTotal + failTotal;
-    final passRate = totalResults == 0 ? 0.0 : passTotal / totalResults * 100;
-    final pendingMarks =
-        _visibleExams.fold<int>(0, (sum, exam) => sum + _pendingForExam(exam));
+  Widget _examListPanel(List<Map<String, dynamic>> exams, String selectedId,
+      List<List<Map<String, dynamic>>> groups) {
+    final white = WindowsAppearance.foreground(Colors.white);
+    final selected = exams.where((exam) => exam['examId']?.toString() == selectedId).toList();
+    final current = selected.isEmpty ? null : selected.first;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: WindowsAppearance.background(const Color(0xFF213B50)),
+        borderRadius: BorderRadius.circular(17),
+        border: Border.all(color: WindowsAppearance.outline(Colors.white30)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Row(children: [
+          Icon(Icons.layers_rounded, size: 23,
+              color: WindowsAppearance.foreground(const Color(0xFF93DCE7))),
+          const SizedBox(width: 8),
+          Expanded(child: Text('Exam List', style: TextStyle(
+              fontSize: 18, fontWeight: FontWeight.w800, color: white))),
+          IconButton(
+            tooltip: 'Create Exam', onPressed: _saving ? null : _createExam,
+            icon: Icon(Icons.add_circle_outline_rounded,
+                color: WindowsAppearance.foreground(const Color(0xFF9EDBE8)))),
+        ]),
+        const SizedBox(height: 4),
+        Text('Select a class exam to manage marks and promotion.',
+            style: TextStyle(fontSize: 10.5,
+                color: WindowsAppearance.foreground(Colors.white60))),
+        const SizedBox(height: 12),
+        Expanded(child: exams.isEmpty
+          ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Icon(Icons.event_note_rounded, size: 42,
+                  color: WindowsAppearance.foreground(const Color(0xFF9FDDE6))),
+              const SizedBox(height: 10),
+              Text('No exams yet', style: TextStyle(
+                  color: white, fontSize: 15, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              FilledButton.icon(onPressed: _saving ? null : _createExam,
+                  icon: const Icon(Icons.add_rounded),
+                  label: const Text('Create First Exam')),
+            ]))
+          : ListView.separated(
+              itemCount: exams.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 8),
+              itemBuilder: (context, index) {
+                final exam = exams[index], id = exam['examId']?.toString() ?? '';
+                final count = _forExam(id).length;
+                final active = id == selectedId;
+                final label = count == 0 ? 'No marks' :
+                    _pendingForExam(exam) == 0 ? 'Marks Ready' : 'In Progress';
+                return InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () => setState(() => _selectedPromotionExamId = id),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: WindowsAppearance.background(active
+                        ? const Color(0xFF2B5768) : const Color(0xFF274258)),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: WindowsAppearance.outline(active
+                        ? const Color(0xFF8CD9E6) : Colors.white24),
+                          width: active ? 1.5 : 1),
+                    ),
+                    child: Row(children: [
+                      Icon(Icons.description_outlined, size: 20,
+                          color: WindowsAppearance.foreground(
+                              active ? const Color(0xFF9FE7EB) : Colors.white70)),
+                      const SizedBox(width: 9),
+                      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(exam['examName']?.toString() ?? 'Exam',
+                              maxLines: 1, overflow: TextOverflow.ellipsis,
+                              style: TextStyle(fontSize: 12.3, fontWeight: FontWeight.w700,
+                                  color: white)),
+                          const SizedBox(height: 4),
+                          Text((exam['studentClass']?.toString() ?? 'Class') +
+                              (exam['isFinal'] == true ? ' • Final Exam' : ''),
+                              style: TextStyle(fontSize: 10.5,
+                                  color: WindowsAppearance.foreground(Colors.white60))),
+                        ])),
+                      const SizedBox(width: 4),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: WindowsAppearance.background(const Color(0xFF1C3A4D)),
+                          borderRadius: BorderRadius.circular(10)),
+                        child: Text(label, style: TextStyle(fontSize: 9.5,
+                            color: WindowsAppearance.foreground(const Color(0xFFACDEE6)))),
+                      ),
+                    ]),
+                  ),
+                );
+              },
+            )),
+        if (current != null) ...[
+          const SizedBox(height: 11),
+          OutlinedButton.icon(
+            onPressed: _saving ? null : () {
+              final group = groups.where((g) =>
+                  g.any((e) => e['examId'] == current['examId'])).toList();
+              _openExamGroup(group.isNotEmpty ? group.first : [current]);
+            },
+            icon: const Icon(Icons.settings_outlined, size: 17),
+            label: const Text('Manage Exam Classes'),
+          ),
+        ],
+      ]),
+    );
+  }
 
+  Future<void> _showInsights() async {
+    await showDialog<void>(context: context, builder: (ctx) =>
+      AlertDialog(
+        backgroundColor: WindowsAppearance.background(const Color(0xFF1D3449)),
+        title: const Text('Exam Performance & Recent Results'),
+        content: SizedBox(width: 850, child: SingleChildScrollView(
+          child: Column(children: [
+            _performanceOverview(),
+            const SizedBox(height: 12),
+            _recentResults(),
+          ]),
+        )),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx),
+          child: const Text('Close'))],
+      ));
+  }
+
+  @override
+  Widget build(BuildContext context) { WindowsAppearance.watch(context);
+    if (!_sameSchool) return const Scaffold(
+      body: Center(child: Text('School changed. Reopen Exam Center.')));
+    final groups = _examGroups();
+    final exams = _visibleExams;
+    final results = _visibleResults;
+    final sessions = _exams.map((e) => e['academicSession']?.toString() ?? '')
+      .where((s) => s.isNotEmpty).toSet().toList()..sort((a,b) => b.compareTo(a));
+    final classes = exams.map((e) => e['studentClass']?.toString() ?? '')
+      .where((s) => s.isNotEmpty).toSet().toList()
+      ..sort((a,b) => _classNumber(a).compareTo(_classNumber(b)));
+    final candidates = exams.where((e) =>
+        _classFilter.isEmpty || e['studentClass']?.toString() == _classFilter).toList();
+    final selectedItems = candidates.where((e) => e['examId']?.toString() == _selectedPromotionExamId).toList();
+    final selectedExam = selectedItems.isNotEmpty ? selectedItems.first :
+        candidates.where((e) => e['isFinal'] == true).isNotEmpty
+        ? candidates.firstWhere((e) => e['isFinal'] == true)
+        : candidates.isEmpty ? null : candidates.first;
+    final selectedId = selectedExam?['examId']?.toString() ?? '';
+    final finals = exams.where((e) => e['isFinal'] == true).toList();
+    final finalIds = finals.map((e) => e['examId']?.toString()).toSet();
+    final finalResults = results.where((r) => finalIds.contains(r['examId']?.toString()) &&
+        {'PASS','FAIL'}.contains(r['result'])).length;
+    final pending = exams.fold<int>(0, (sum,e) => sum + _pendingForExam(e));
+    final panelResults = results.where((r) => r['examId']?.toString() == selectedId).toList();
     return Scaffold(
-      backgroundColor: WindowsAppearance.background(const Color(0xFF0B141A)),
+      backgroundColor: WindowsAppearance.background(const Color(0xFF1C3449)),
       appBar: AppBar(
-        backgroundColor: WindowsAppearance.background(const Color(0xFF111B22)),
+        backgroundColor: WindowsAppearance.background(const Color(0xFF203B50)),
+        title: const Text('Exam Center',
+            style: TextStyle(fontFamily:'Segoe UI',fontWeight:FontWeight.w800)),
         elevation: 0,
-        title: const Text(
-          'Exam Center',
-          style: TextStyle(fontFamily: 'Segoe UI', fontWeight: FontWeight.w800),
-        ),
         actions: [
           DropdownButton<String>(
             value: sessions.contains(_sessionFilter) ? _sessionFilter : '',
             underline: const SizedBox.shrink(),
-            hint: const Text('Academic session'),
             items: [
-              const DropdownMenuItem<String>(
-                value: '', child: Text('All sessions')),
+              const DropdownMenuItem(value:'',child:Text('All Sessions')),
               for (final session in sessions)
-                DropdownMenuItem<String>(
-                  value: session, child: Text(session)),
+                DropdownMenuItem(value:session,child:Text(session)),
             ],
-            onChanged: (value) =>
-                setState(() => _sessionFilter = value ?? ''),
+            onChanged:(value)=>setState(() {
+              _sessionFilter=value??''; _classFilter=''; _selectedPromotionExamId='';
+            }),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width:10),
           TextButton.icon(
-            onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
-              builder: (_) => const WindowsExamHistoryScreen(),
-            )),
-            icon: const Icon(Icons.history_rounded),
-            label: const Text('History'),
+            onPressed: _showInsights,
+            icon: const Icon(Icons.insights_rounded,size:17),
+            label: const Text('Insights'),
           ),
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 9),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-              decoration: BoxDecoration(
-                color: WindowsAppearance.background(const Color(0xFF172229)),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.calendar_month_rounded,
-                    color: WindowsAppearance.foreground(Color(0xFF00D9A5)),
-                    size: 15,
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    _academicYear(),
-                    style:  TextStyle(fontFamily: 'Segoe UI', 
-                      color: WindowsAppearance.foreground(Colors.white70),
-                      fontSize: 10,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ],
-              ),
-            ),
+          TextButton.icon(
+            onPressed: ()=>Navigator.of(context).push(MaterialPageRoute<void>(
+              builder:(_)=>const WindowsExamHistoryScreen())),
+            icon:const Icon(Icons.history_rounded,size:17),
+            label:const Text('History'),
           ),
-          IconButton(
-            tooltip: WindowsUiLanguage.translate('Refresh'),
-            onPressed: _loading ? null : _load,
-            icon: const Icon(Icons.refresh_rounded),
-          ),
+          IconButton(tooltip:'Refresh',onPressed:_loading?null:_load,
+              icon:const Icon(Icons.refresh_rounded)),
+          const SizedBox(width:8),
+          Padding(padding:const EdgeInsets.symmetric(vertical:8,horizontal:12),
+            child:FilledButton.icon(
+              onPressed:_saving?null:_createExam,
+              icon:const Icon(Icons.add_rounded),
+              label:const Text('Create Exam'),
+              style:FilledButton.styleFrom(
+                  backgroundColor:WindowsAppearance.primary,
+                  foregroundColor:WindowsAppearance.onPrimary))),
         ],
       ),
-      body: _loading
-          ? Center(
-              child: CircularProgressIndicator(color: WindowsAppearance.foreground(Color(0xFF00A884))),
-            )
-          : RefreshIndicator(
-                  onRefresh: _load,
-                  color: WindowsAppearance.foreground(const Color(0xFF00A884)),
-                  child: ListView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    padding: const EdgeInsets.fromLTRB(18, 18, 18, 100),
-                    children: [
-                      if (_error != null) ListTile(leading: Icon(Icons.cloud_off, color: WindowsAppearance.foreground(Colors.orange)), title: Text(_error!), trailing: TextButton(onPressed: _load, child: const Text('Retry'))),
-                       Text('Exam records save durably on this PC. Cloud changes sync automatically; offline changes stay pending until acknowledged.', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white60))),
-                      const SizedBox(height: 12),
-                      Container(
-                        padding: const EdgeInsets.all(20),
-                        decoration: BoxDecoration(
-                          gradient:  LinearGradient(
-                            colors: [
-                              WindowsAppearance.resolve(Color(0xFF11343A)),
-                              WindowsAppearance.resolve(Color(0xFF172229)),
-                              WindowsAppearance.resolve(Color(0xFF2A2417)),
-                            ],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: WindowsAppearance.outline(Colors.orangeAccent.withOpacity(0.18)),
-                          ),
-                        ),
-                        child: LayoutBuilder(
-                          builder: (context, constraints) {WindowsAppearance.watch(context);
-                            final compact = constraints.maxWidth < 680;
-                            final intro = Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                 Text(
-                                  'Examination Dashboard',
-                                  style: TextStyle(fontFamily: 'Segoe UI', 
-                                    color: WindowsAppearance.foreground(Colors.white),
-                                    fontSize: 21,
-                                    fontWeight: FontWeight.w900,
-                                  ),
-                                ),
-                                const SizedBox(height: 3),
-                                 Text(
-                                  'Plan • Conduct • Evaluate • Generate Report Cards',
-                                  style: TextStyle(fontFamily: 'Segoe UI', 
-                                    color: WindowsAppearance.foreground(Colors.white54),
-                                    fontSize: 10.5,
-                                  ),
-                                ),
-                                const SizedBox(height: 11),
-                                 Text(
-                                  'Ek Final Exam create karke Class 1–10 ko ek hi exam card ke andar class-wise subjects, full marks aur pass marks ke saath customize karein.',
-                                  style: TextStyle(fontFamily: 'Segoe UI', 
-                                    color: WindowsAppearance.foreground(Colors.white60),
-                                    fontSize: 11,
-                                    height: 1.45,
-                                  ),
-                                ),
-                              ],
-                            );
-                            return intro;
-                          },
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      Wrap(
-                        spacing: 10,
-                        runSpacing: 10,
-                        children: [
-                          _metricCard(
-                            title: 'Total Exams',
-                            value: '${groups.length}',
-                            subtitle: '${_exams.length} class configurations',
-                            icon: Icons.assignment_rounded,
-                            color: WindowsAppearance.foreground(Colors.orangeAccent),
-                          ),
-                          _metricCard(
-                            title: 'Results Entered',
-                            value: '${visibleResults.length}',
-                            subtitle: 'Student result records',
-                            icon: Icons.edit_note_rounded,
-                            color: WindowsAppearance.foreground(const Color(0xFF38A8FF)),
-                          ),
-                          _metricCard(
-                            title: 'Pass Rate',
-                            value: '${passRate.toStringAsFixed(1)}%',
-                            subtitle: '$passTotal pass • $failTotal fail',
-                            icon: Icons.trending_up_rounded,
-                            color: WindowsAppearance.foreground(const Color(0xFF00D9A5)),
-                          ),
-                          _metricCard(
-                            title: 'Pending Marks',
-                            value: '$pendingMarks',
-                            subtitle: 'Student results remaining',
-                            icon: Icons.pending_actions_rounded,
-                            color: WindowsAppearance.foreground(Colors.purpleAccent),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 18),
-                      LayoutBuilder(
-                        builder: (context, constraints) {WindowsAppearance.watch(context);
-                          final wide = constraints.maxWidth >= 980;
-
-                          final main = Container(
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: WindowsAppearance.background(const Color(0xFF111B22)),
-                              borderRadius: BorderRadius.circular(18),
-                              border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: _sectionHeader(
-                                        'Exam Groups',
-                                        'Final Exam / Half Yearly / Unit Test — class-wise settings inside',
-                                        Icons.view_agenda_rounded,
-                                      ),
-                                    ),
-                                    if (groups.isNotEmpty) ...[
-                                      const SizedBox(width: 12),
-                                      ElevatedButton.icon(
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor:
-                                              WindowsAppearance.primary,
-                                          foregroundColor: WindowsAppearance.onPrimary,
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 14,
-                                            vertical: 11,
-                                          ),
-                                        ),
-                                        onPressed:
-                                            _saving ? null : _createExam,
-                                        icon: const Icon(
-                                          Icons.add_rounded,
-                                          size: 17,
-                                        ),
-                                        label: const Text(
-                                          'Create Exam',
-                                          style: TextStyle(fontFamily: 'Segoe UI', 
-                                            fontWeight: FontWeight.w800,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                                const SizedBox(height: 14),
-                                if (groups.isEmpty)
-                                  _emptyState()
-                                else
-                                  ...groups.map(
-                                    (group) => Padding(
-                                      padding: const EdgeInsets.only(bottom: 10),
-                                      child: _examGroupCard(group),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          );
-
-                          final side = Column(
-                            children: [
-                              _performanceOverview(),
-                              const SizedBox(height: 12),
-                              _recentResults(),
-                            ],
-                          );
-
-                          if (!wide) {
-                            return Column(
-                              children: [
-                                main,
-                                const SizedBox(height: 12),
-                                side,
-                              ],
-                            );
-                          }
-
-                          return Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(flex: 7, child: main),
-                              const SizedBox(width: 12),
-                              Expanded(flex: 4, child: side),
-                            ],
-                          );
-                        },
-                      ),
+      body: _loading ? Center(child: CircularProgressIndicator(
+        color:WindowsAppearance.foreground(const Color(0xFF8CDBE7))))
+      : LayoutBuilder(builder:(context,outer) {
+          final narrow=outer.maxWidth<930;
+          return Padding(padding:const EdgeInsets.fromLTRB(16,12,16,12),
+            child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+              if (_error != null) Padding(
+                padding:const EdgeInsets.only(bottom:8),
+                child:Text(_error!,style:const TextStyle(color:Colors.orangeAccent))),
+              Row(children:[
+                Expanded(child:Text(
+                  'Exam records save on this PC. Cloudflare sync runs automatically; PDF is created only on Download.',
+                  maxLines:1,overflow:TextOverflow.ellipsis,
+                  style:TextStyle(fontSize:11.5,
+                      color:WindowsAppearance.foreground(Colors.white70)))),
+                if(classes.isNotEmpty) ...[
+                  const SizedBox(width:8),
+                  DropdownButton<String>(
+                    value:classes.contains(_classFilter)?_classFilter:'',
+                    underline:const SizedBox.shrink(),
+                    items:[
+                      const DropdownMenuItem(value:'',child:Text('All Classes')),
+                      for(final className in classes)
+                        DropdownMenuItem(value:className,child:Text(className)),
                     ],
+                    onChanged:(v)=>setState((){
+                      _classFilter=v??''; _selectedPromotionExamId='';
+                    }),
                   ),
-                ),
+                ],
+              ]),
+              const SizedBox(height:12),
+              LayoutBuilder(builder:(context,width) {
+                final cardWidth=(width.maxWidth-30)/4;
+                if(cardWidth<175)return Wrap(spacing:9,runSpacing:9,children:[
+                  _metricCard(title:'Total Exams',value:groups.length.toString(),
+                    subtitle:'Exam groups',icon:Icons.calendar_month_rounded,
+                    color:WindowsAppearance.foreground(const Color(0xFF8FD7E8))),
+                  _metricCard(title:'Pending Marks',value:pending.toString(),
+                    subtitle:'Results remaining',icon:Icons.pending_actions_rounded,
+                    color:WindowsAppearance.foreground(const Color(0xFFBDA9E4))),
+                  _metricCard(title:'Final Exams',value:finals.length.toString(),
+                    subtitle:'Class configurations',icon:Icons.emoji_events_outlined,
+                    color:WindowsAppearance.foreground(const Color(0xFFF0D189))),
+                  _metricCard(title:'Final Results',value:finalResults.toString(),
+                    subtitle:'Saved for review',icon:Icons.verified_outlined,
+                    color:WindowsAppearance.foreground(const Color(0xFF85DBBB))),
+                ]);
+                return Row(children:[
+                  Expanded(child:_metricCard(title:'Total Exams',value:groups.length.toString(),
+                    subtitle:'Exam groups',icon:Icons.calendar_month_rounded,
+                    color:WindowsAppearance.foreground(const Color(0xFF8FD7E8)))),
+                  const SizedBox(width:10),
+                  Expanded(child:_metricCard(title:'Pending Marks',value:pending.toString(),
+                    subtitle:'Results remaining',icon:Icons.pending_actions_rounded,
+                    color:WindowsAppearance.foreground(const Color(0xFFBDA9E4)))),
+                  const SizedBox(width:10),
+                  Expanded(child:_metricCard(title:'Final Exams',value:finals.length.toString(),
+                    subtitle:'Class configurations',icon:Icons.emoji_events_outlined,
+                    color:WindowsAppearance.foreground(const Color(0xFFF0D189)))),
+                  const SizedBox(width:10),
+                  Expanded(child:_metricCard(title:'Final Results',value:finalResults.toString(),
+                    subtitle:'Saved for review',icon:Icons.verified_outlined,
+                    color:WindowsAppearance.foreground(const Color(0xFF85DBBB)))),
+                ]);
+              }),
+              const SizedBox(height:14),
+              Expanded(child:narrow
+                ? SingleChildScrollView(child:Column(children:[
+                    SizedBox(height:300,child:_examListPanel(candidates,selectedId,groups)),
+                    const SizedBox(height:10),
+                    SizedBox(height:560,child:WindowsExamPromotionCenter(
+                      key:ValueKey(selectedId),exam:selectedExam,results:panelResults,
+                      onOpenMarks:()=>selectedExam==null?null:_openMarks(selectedExam),
+                      onRefresh:_load)),
+                  ]))
+                : Row(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+                    SizedBox(width:(outer.maxWidth*.27).clamp(275.0,345.0),
+                      child:_examListPanel(candidates,selectedId,groups)),
+                    const SizedBox(width:12),
+                    Expanded(child:WindowsExamPromotionCenter(
+                      key:ValueKey(selectedId),exam:selectedExam,results:panelResults,
+                      onOpenMarks:()=>selectedExam==null?null:_openMarks(selectedExam),
+                      onRefresh:_load)),
+                  ])),
+            ]));
+        }),
     );
   }
 }
@@ -22907,7 +22908,6 @@ class _ExamMarksEntryScreenState
     bool saving = false;
 
     var savedOffline = false;
-    var promotionPending = false;
     final saved = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
@@ -23071,19 +23071,6 @@ class _ExamMarksEntryScreenState
                         // exam_center_results. Do not create a second
                         // independent sync in legacy exam_results.
                         savedOffline = savedResult['windowsLocalFallback'] == true;
-                        if(isFinal){
-                          try{await SchoolPromotionService.apply(studentId:doc.id,student:student,exam:{...widget.exam,'isFinal':true},result:resultStatus);}
-                          catch(e){
-                             promotionPending = true;
-                             doc.reference.requireOriginProfile();
-                             if((await doc.reference.get()).exists) {
-                               await doc.reference.set({
-                                 'promotionPending':true,
-                                 'promotionError':'$e',
-                               },SetOptions(merge:true));
-                             }
-                           }
-                        }
                         if (!ctx.mounted) return;
                         Navigator.pop(ctx, true);
                       } catch (e) {
@@ -23123,10 +23110,7 @@ class _ExamMarksEntryScreenState
         SnackBar(
           backgroundColor: WindowsAppearance.background(const Color(0xFF00A884)),
           content: Text(
-              promotionPending
-                ? 'Marks saved. Final-exam promotion needs review in Student Directory.'
-                : savedOffline
-                    ? 'Marks saved locally. Cloudflare sync pending. No PDF generated.'
+              savedOffline ?  'Marks saved locally. Cloudflare sync pending. No PDF generated.'
                     : 'Marks saved. Cloudflare sync pending. No PDF generated.'),
         ),
       );
