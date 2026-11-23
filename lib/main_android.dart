@@ -521,6 +521,8 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
   final _s = SchoolSession.instance;
   int _page = 0;
   bool _loading = true, _busy = false, _blocked = false;
+  // Actual pending dashboard HTTP requests; never a fake progress timer.
+  int _dashboardRefreshInFlight = 0;
   String? _error;
   Map<String, dynamic> _data = {};
   late final _history = AttendanceHistoryController(
@@ -639,7 +641,10 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
 
   Future<void> _load({bool afterSignal = false}) async {
     if (!mounted || _s.syncPaused) return;
-    setState(() => _loading = _data.isEmpty);
+    setState(() {
+      _dashboardRefreshInFlight++;
+      _loading = _data.isEmpty;
+    });
     try {
       final d = await _s.refreshDashboard(afterSignal: afterSignal);
       if (mounted)
@@ -668,12 +673,11 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
               : null;
         });
     } finally {
+      _dashboardRefreshInFlight--;
       if (mounted)
-        setState(
-          () => _loading =
-              _data.isEmpty &&
-              _s.connectionState == SchoolConnectionState.syncing,
-        );
+        setState(() => _loading =
+            _data.isEmpty &&
+            _s.connectionState == SchoolConnectionState.syncing);
     }
   }
 
@@ -1687,6 +1691,19 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
       appBar: AppBar(
         title: const VidyaSaarthiBrand(),
         actions: [
+          IconButton(
+            tooltip: _dashboardRefreshInFlight > 0
+                ? 'Refreshing school data' : 'Refresh school data',
+            onPressed: _dashboardRefreshInFlight > 0 || _blocked
+                ? null
+                : () => unawaited(_load(afterSignal: true)),
+            icon: _dashboardRefreshInFlight > 0
+                ? const SizedBox(
+                    height: 20, width: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.refresh),
+          ),
           PopupMenuButton<String>(
             onSelected: (v) {
               if (v == 'complaint') _complaint();
