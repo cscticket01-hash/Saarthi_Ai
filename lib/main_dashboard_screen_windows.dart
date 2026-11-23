@@ -270,6 +270,7 @@ const String _windowsStudentRecordsLock = 'student_records';
 const String _windowsFeesCollectionLock = 'fees_collection';
 const String _windowsSchoolExpensesLock = 'school_expenses';
 const String _windowsAttendanceLock = 'attendance';
+const String _windowsExamCenterLock = 'exam_center';
 
 class _WindowsSectionLockDefinition {
   const _WindowsSectionLockDefinition({
@@ -315,6 +316,13 @@ List<_WindowsSectionLockDefinition> get _windowsSectionLockDefinitions => [
     subtitle: 'Student/Teacher QR attendance ko protect karein.',
     icon: Icons.fact_check_rounded,
     color: WindowsAppearance.foreground(Color(0xFF69C2FF)),
+  ),
+  _WindowsSectionLockDefinition(
+    key: _windowsExamCenterLock,
+    title: 'Exam Center',
+    subtitle: 'Exams, marks, results aur report cards ko protect karein.',
+    icon: Icons.assignment_turned_in_rounded,
+    color: WindowsAppearance.foreground(Colors.orangeAccent),
   ),
 ];
 
@@ -1537,6 +1545,7 @@ String? _windowsAdminModuleLock(WindowsAdminPage page) => switch (page) {
   WindowsAdminPage.fees => _windowsFeesCollectionLock,
   WindowsAdminPage.expenses => _windowsSchoolExpensesLock,
   WindowsAdminPage.attendance => _windowsAttendanceLock,
+  WindowsAdminPage.exams => _windowsExamCenterLock,
   _ => null,
 };
 String _windowsAdminModuleTitle(WindowsAdminPage page) => WindowsAdminSidebar.entries.firstWhere((e) => e.$1 == page).$2;
@@ -6061,14 +6070,11 @@ Widget _buildOverviewCards() {
             title: windowsTr('exam'),
             subtitle: 'Marks, results & report cards',
             accent: Colors.orangeAccent,
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) { WindowsAppearance.watch(context); return  const ExamCenterScreen(); },
-                ),
-              );
-            },
+            onTap: () => _openAdminModule(
+              const ExamCenterScreen(),
+              sectionKey: _windowsExamCenterLock,
+              sectionTitle: 'Exam Center',
+            ),
           ),
 
           _overviewCard(
