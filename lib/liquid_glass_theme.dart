@@ -164,6 +164,38 @@ class LiquidGlassPanel extends StatelessWidget {
   }
 }
 
+/// A layout-neutral blur layer for existing Windows panels.
+///
+/// Unlike [LiquidGlassPanel], this widget adds no padding, tint or border: the
+/// original panel retains its sizing, colors, hit targets and semantics.
+/// It is opt-in so every other published Windows preset stays unchanged.
+class LiquidGlassSurface extends StatelessWidget {
+  const LiquidGlassSurface({
+    super.key,
+    required this.child,
+    this.enabled = true,
+    this.radius = 18,
+    this.blurSigma = 10,
+  });
+
+  final Widget child;
+  final bool enabled;
+  final double radius;
+  final double blurSigma;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!enabled) return child;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(radius),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
+        child: child,
+      ),
+    );
+  }
+}
+
 /// Android's default native glass appearance; Windows keeps its separately
 /// managed developer-published preset, revision and App Lock activation flow.
 ThemeData mobileLiquidGlassTheme() {
