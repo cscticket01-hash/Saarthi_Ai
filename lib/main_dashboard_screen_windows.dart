@@ -61,6 +61,7 @@ import 'windows_backend_bridge.dart';
 import 'windows_sync_engine.dart';
 import 'windows_app_restart.dart';
 import 'dart:convert';
+import 'package:crypto/crypto.dart' as security_crypto;
 import 'windows_html_shim.dart' as html;
 import 'package:pdf/widgets.dart' as pw;
 import 'package:pdf/pdf.dart';
@@ -334,10 +335,26 @@ class WindowsAdminAccessGate extends StatelessWidget {
   @override Widget build(BuildContext context){ WindowsAppearance.watch(context); return WindowsAdminSecurityGate(child:child); }
 }
 
+// PBKDF2-HMAC-SHA256 runs off the UI isolate. Existing section passwords
+// migrate after successful verification without changing the user's secret.
+String _deriveSectionLockPassword(Map<String,String> input) {
+  final key=utf8.encode(input['password']!);
+  final salt=base64Url.decode(base64Url.normalize(input['salt']!));
+  final mac=security_crypto.Hmac(security_crypto.sha256,key);
+  var previous=mac.convert([...salt,0,0,0,1]).bytes;
+  final derived=List<int>.from(previous);
+  for(var iteration=1;iteration<120000;iteration++){
+    previous=mac.convert(previous).bytes;
+    for(var i=0;i<derived.length;i++)derived[i]^=previous[i];
+  }
+  return base64Url.encode(derived).replaceAll('=','');
+}
+
 class WindowsSectionLocks {
   WindowsSectionLocks._();
 
   static const WindowsSecureStorage _secure = WindowsSecureStorage();
+  static const String _hashPrefix='pbkdf2-sha256-v1';
 
   static Future<String> _passwordKey(String sectionKey) async {
     final saved=await CentralSchoolCloud.saved();
@@ -351,16 +368,30 @@ class WindowsSectionLocks {
     return 'vidya_saarthi_windows_section_password_enabled_v1_$sectionKey$suffix';
   }
 
+  static Future<String> _hashPassword(String password) async {
+    final secureRandom=Random.secure();
+    final salt=base64Url.encode(List<int>.generate(16,
+      (_)=>secureRandom.nextInt(256))).replaceAll('=','');
+    final value=await compute(_deriveSectionLockPassword,
+      {'password':password,'salt':salt});
+    return '$_hashPrefix:$salt:$value';
+  }
+
+  static bool _constantTimeEquals(String a,String b) {
+    if(a.length!=b.length)return false;
+    var bits=0;
+    for(var i=0;i<a.length;i++)bits |= a.codeUnitAt(i)^b.codeUnitAt(i);
+    return bits==0;
+  }
+
   static Future<bool> configured(String sectionKey) async {
-    final value = await _secure.read(key: await _passwordKey(sectionKey));
-    return value?.trim().isNotEmpty ?? false;
+    final value=await _secure.read(key:await _passwordKey(sectionKey));
+    return value?.isNotEmpty ?? false;
   }
 
   static Future<bool> enabled(String sectionKey) async {
-    if (!await configured(sectionKey)) return false;
-
-    final value = await _secure.read(key: await _enabledKey(sectionKey));
-    // A configured lock without an old enabled flag remains protected.
+    if (!await configured(sectionKey))return false;
+    final value=await _secure.read(key:await _enabledKey(sectionKey));
     return value == null || value == 'true';
   }
 
@@ -368,8 +399,26 @@ class WindowsSectionLocks {
     required String sectionKey,
     required String password,
   }) async {
-    final stored = await _secure.read(key: await _passwordKey(sectionKey));
-    return stored != null && stored.isNotEmpty && stored == password;
+    if(password.isEmpty||password.length>128)return false;
+    final storageKey=await _passwordKey(sectionKey);
+    final stored=await _secure.read(key:storageKey);
+    if(stored==null||stored.isEmpty)return false;
+    if(stored.startsWith('$_hashPrefix:')) {
+      final segments=stored.split(':');
+      if(segments.length!=3||
+          !RegExp(r'^[A-Za-z0-9_-]{22}$').hasMatch(segments[1])||
+          !RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(segments[2]))return false;
+      final candidate=await compute(_deriveSectionLockPassword,
+        {'password':password,'salt':segments[1]});
+      return _constantTimeEquals(candidate,segments[2]);
+    }
+    if(!_constantTimeEquals(stored,password))return false;
+    // A previously saved six-character lock still unlocks; only new
+    // passwords must meet the current minimum length.
+    try {
+      await _secure.write(key:storageKey,value:await _hashPassword(password));
+    } catch (_) {/* Do not lock out a valid legacy credential on migration. */}
+    return true;
   }
 
   static Future<void> addPassword({
@@ -377,16 +426,9 @@ class WindowsSectionLocks {
     required String password,
   }) async {
     _validatePassword(password);
-
-    await _secure.write(
-      key: await _passwordKey(sectionKey),
-      value: password,
-    );
-    // Adding a password turns that section lock ON by default.
-    await _secure.write(
-      key: await _enabledKey(sectionKey),
-      value: 'true',
-    );
+    final secret=await _hashPassword(password);
+    await _secure.write(key:await _passwordKey(sectionKey),value:secret);
+    await _secure.write(key:await _enabledKey(sectionKey),value:'true');
   }
 
   static Future<void> changePassword({
@@ -394,49 +436,30 @@ class WindowsSectionLocks {
     required String currentPassword,
     required String newPassword,
   }) async {
-    final storedPassword = await _secure.read(
-      key: await _passwordKey(sectionKey),
-    );
-
-    if (storedPassword == null || storedPassword.isEmpty) {
+    if(!await configured(sectionKey))
       throw StateError('Pehle section password add karein.');
-    }
-
-    if (storedPassword != currentPassword) {
+    if(!await verify(sectionKey:sectionKey,password:currentPassword))
       throw StateError('Current section password galat hai.');
-    }
-
     _validatePassword(newPassword);
-    await _secure.write(
-      key: await _passwordKey(sectionKey),
-      value: newPassword,
-    );
-    await _secure.write(
-      key: await _enabledKey(sectionKey),
-      value: 'true',
-    );
+    final secret=await _hashPassword(newPassword);
+    await _secure.write(key:await _passwordKey(sectionKey),value:secret);
+    await _secure.write(key:await _enabledKey(sectionKey),value:'true');
   }
 
   static Future<void> setEnabled({
     required String sectionKey,
     required bool value,
   }) async {
-    if (value && !(await configured(sectionKey))) {
+    if(value && !await configured(sectionKey))
       throw StateError('Pehle section password add karein.');
-    }
-
-    await _secure.write(
-      key: await _enabledKey(sectionKey),
-      value: value ? 'true' : 'false',
-    );
+    await _secure.write(key:await _enabledKey(sectionKey),
+      value:value?'true':'false');
   }
 
   static void _validatePassword(String password) {
-    if (password.trim().length < 6) {
+    if(password.length<8||password.length>128||password.trim()!=password)
       throw const FormatException(
-        'Section password kam se kam 6 characters ka hona chahiye.',
-      );
-    }
+        'New section password must contain 8–128 characters without surrounding spaces.');
   }
 }
 
@@ -18753,9 +18776,10 @@ class _WindowsSectionPasswordLocksPanelState
                 setDialogState(() => error = 'Current password required hai.');
                 return;
               }
-              if (next.text.trim().length < 6) {
+              if (next.text.length < 8 || next.text.length > 128 ||
+                  next.text.trim() != next.text) {
                 setDialogState(
-                  () => error = 'Password kam se kam 6 characters ka ho.',
+                  () => error = 'Naya password 8–128 characters ka ho, bina extra spaces.',
                 );
                 return;
               }
