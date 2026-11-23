@@ -25,6 +25,16 @@ class WindowsAdminSecurity {
     return '$scope|$target|$school';
   }
 
+  static Future<void> _rememberConsumedAction(String scope,String target) async {
+    final current=DateTime.now();
+    _consumedActions.removeWhere((_,at)=>
+      current.difference(at)>const Duration(minutes:2));
+    if(_consumedActions.length>=64) {
+      _consumedActions.clear();
+    }
+    _consumedActions[await _actionKey(scope,target)]=current;
+  }
+
   static Future<void> requireConsumedAction({
     required String scope,
     required String target,
@@ -153,11 +163,17 @@ class WindowsAdminSecurity {
           target.isEmpty||target.length>1000)
         throw StateError('Invalid protected school action.');
       await WindowsLocalAdminSecurity.verify(password);
+      final now=DateTime.now().millisecondsSinceEpoch;
+      _localApprovalTickets.removeWhere((_,value)=>
+        (int.tryParse(value['issuedAt']??'')??0)<now-120000);
+      if(_localApprovalTickets.length>=32)
+        throw StateError('Too many pending administrator confirmations.');
       final rng=Random.secure();
       final token=List<String>.generate(32,
         (_)=>rng.nextInt(256).toRadixString(16).padLeft(2,'0')).join();
       _localApprovalTickets[token]={
         'scope':scope,'target':target,'school':_standaloneScope(),
+        'issuedAt':now.toString(),
       };
       return token;
     }
@@ -180,10 +196,12 @@ class WindowsAdminSecurity {
   }) async {
     if(!await isManaged){
       final ticket=_localApprovalTickets.remove(token);
+      final issuedAt=int.tryParse(ticket?['issuedAt']??'')??0;
       if(ticket==null||ticket['scope']!=scope||
-         ticket['target']!=target||ticket['school']!=_standaloneScope())
-        throw StateError('Local Admin Password approval is missing or invalid.');
-      _consumedActions[await _actionKey(scope,target)]=DateTime.now();
+         ticket['target']!=target||ticket['school']!=_standaloneScope()||
+         DateTime.now().millisecondsSinceEpoch-issuedAt>120000)
+        throw StateError('Local Admin Password approval is missing or expired.');
+      await _rememberConsumedAction(scope,target);
       return;
     }
     if(token.length != 64 || !RegExp(r'^[a-f0-9]{64}$').hasMatch(token)) {
@@ -196,7 +214,7 @@ class WindowsAdminSecurity {
     if(result['authorized'] != true) {
       throw StateError('School Admin approval was not accepted by the backend.');
     }
-    _consumedActions[await _actionKey(scope,target)]=DateTime.now();
+    await _rememberConsumedAction(scope,target);
   }
 
   static Future<void> change({
