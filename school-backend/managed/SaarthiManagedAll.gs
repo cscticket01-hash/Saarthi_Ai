@@ -7248,6 +7248,8 @@ function VS_managedRecordUnlocked(b,readContext) {
     } else if(revision) throw new Error('Versioned document requires a matching revision');
   }
   if(b.operation==='write' && existing && existing.data._syncDeleted && !VS_reusableStudentChild(b,existing) && !(b.syncProtocol===2&&b.expectedRecordRevision===existing.data._syncRevision&&b.data&&(b.data._syncRecreatesDeletedRevision===existing.data._syncRevision||b.data._syncRecreatesDeletedOperationId&&b.data._syncRecreatesDeletedOperationId===existing.data._syncOperationId)&&b.collection!=='students_directory') && !(VS_sheetLifecycleEnabled()&&b.collection==='students_directory'&&b.syncProtocol===2&&/^p-[a-f0-9]{32,64}$/.test(b.data&&b.data.mobileStableId||'')&&b.data.mobileStableId!==existing.data._syncDeletedOwner&&(b.expectedRecordRevision===existing.data._syncRevision||b.data.replacesStudentGeneration===existing.data._syncDeletedOwner)))throw new Error('Record revision conflict');
+  if(b.collection==='school_settings'&&String(b.id||'').startsWith('promotion_event_')&&b.operation==='delete')
+    throw new Error('Promotion audit events are immutable');
   if(b.operation==='delete'){
     if(VS_recycleEnabled()&&b.syncProtocol!==2)throw new Error('Invalid sync operation');
     if(existing&&existing.data._syncDeleted){VS_saveRecordHead(store,existing);if(existing.row){VS_refreshStudentReadable(store,existing,existing.row);VS_refreshRecordReadable(store,existing,existing.row);}VS_recordJsonBackup(store,existing);return {recordRevision:existing.data._syncRevision,syncProtocol:2,...(b.operation==='write'?{record:Object.assign({id:b.id},existing.data)}:{}),fileCleanup:VS_managedDeletedFile(store,b.id,existing.data)};}
@@ -7265,6 +7267,13 @@ function VS_managedRecordUnlocked(b,readContext) {
       return {recordRevision:revision,syncProtocol:2,fileCleanup:VS_managedDeletedFile(store,b.id,data)};
     }
 
+  }
+  if(b.collection==='school_settings'&&String(b.id||'').startsWith('promotion_event_')){
+    if(b.operation!=='write'||!b.data||existing&&existing.data&&!existing.data._syncDeleted||
+       !['RETAINED','PROMOTED','FORCE_PROMOTED','GRADUATED'].includes(b.data.movement)||
+       b.id!=='promotion_event_'+b.data.examId+'_'+b.data.studentId+'_'+b.data.movement||
+       b.data.schoolId!==school||typeof b.data.at!=='number'||!Number.isFinite(b.data.at))
+      throw new Error('Promotion audit event requires immutable school ownership');
   }
   if(b.operation!=='write'||!b.data||b.data.schoolId!==school)throw new Error('Invalid school record');
   VS_validateScanQuota(store,b,existing,school);
