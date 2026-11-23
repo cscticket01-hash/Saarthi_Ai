@@ -16,7 +16,14 @@ Uri? latestReleasedInstaller(List releases, String platform) {
       if (comparison <= 0) continue;
     }
     for (final asset in release['assets'] as List) {
-      if (asset is! Map || !asset['name'].toString().endsWith(platform == 'windows' ? '.exe' : '.apk')) continue;
+      if (asset is! Map) continue;
+      final assetName = asset['name']?.toString() ?? '';
+      if (platform == 'windows') {
+        final expectedName = 'Vidya_Saarthi_Setup_${version.join('.')}.exe';
+        if (assetName != expectedName) continue;
+      } else if (!assetName.toLowerCase().endsWith('.apk')) {
+        continue;
+      }
       final uri = Uri.tryParse(asset['browser_download_url'].toString());
       if (uri == null || uri.scheme != 'https' || uri.host != 'github.com' ||
           !uri.path.startsWith('/cscticket01-hash/Saarthi_Ai/releases/download/')) continue;
