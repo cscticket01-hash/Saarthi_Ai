@@ -1,4 +1,5 @@
 import 'windows_verified_update.dart';
+import 'windows_release_selection.dart';
 
 import 'dart:async';
 import 'dart:convert';
@@ -131,38 +132,16 @@ class WindowsUpdateService {
         throw StateError('Update response invalid hai.');
       }
 
-      for (final release in decoded) {
-        if (release is! Map) continue;
-        if (release['draft'] == true || release['prerelease'] == true) continue;
-
-        final tag = release['tag_name']?.toString().trim() ?? '';
-        if (!tag.toLowerCase().startsWith('windows-v')) continue;
-
-        final latestVersion = tag.replaceFirst(
-          RegExp(r'^windows-v', caseSensitive: false),
-          '',
+      final selected = latestPublishedWindowsInstaller(decoded);
+      if (selected != null) {
+        return WindowsUpdateInfo(
+          latestVersion: selected.version,
+          downloadUrl: selected.url,
+          fileName: selected.fileName,
+          releaseNotes: selected.notes,
+          sha256Digest: selected.digest,
+          sizeBytes: selected.sizeBytes,
         );
-        final notes = release['body']?.toString() ?? '';
-        final assets = release['assets'];
-
-        if (assets is! List) continue;
-        for (final item in assets) {
-          if (item is! Map) continue;
-          final name = item['name']?.toString() ?? '';
-          final candidate = item['browser_download_url']?.toString() ?? '';
-          if (name.toLowerCase().endsWith('.exe') &&
-              name.toLowerCase().contains('vidya_saarthi_setup') &&
-              candidate.startsWith('https://')) {
-            return WindowsUpdateInfo(
-              latestVersion: latestVersion,
-              downloadUrl: candidate,
-              fileName: name,
-              releaseNotes: notes,
-              sha256Digest: item['digest']?.toString() ?? '',
-              sizeBytes: (item['size'] as num? ?? 0).toInt(),
-            );
-          }
-        }
       }
 
       throw StateError('Windows installer release nahi mila.');
