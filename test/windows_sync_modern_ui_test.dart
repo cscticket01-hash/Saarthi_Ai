@@ -192,7 +192,8 @@ void main() {
         ...(engine.details.value['activity'] as List),
         {
           'schoolId':'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-          'stage':'driveVerified','at':DateTime.now().millisecondsSinceEpoch,
+          'stage':'verified','operationId':'server-ack-test-1',
+          'at':DateTime.now().millisecondsSinceEpoch,
         }
       ],
     };
