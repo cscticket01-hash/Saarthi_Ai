@@ -18,7 +18,9 @@ function hasChangedPromotion(old,next){
  if(!old||!next)return false;
  return old.promotionTransactionId!==next.promotionTransactionId ||
   old.classMovement!==next.classMovement ||
-  old.promotionExamId!==next.promotionExamId;
+  old.promotionExamId!==next.promotionExamId ||
+  (old.promotionExamId && (old.class!==next.class ||
+    old.studentClass!==next.studentClass));
 }
 
 function validatePromotionAuthority({schoolId,studentId,previous,next,exam,result,policy}){
