@@ -77,14 +77,14 @@ class _PromotionPanelState extends State<WindowsExamPromotionCenter> {
   String _status(Map<String,dynamic> student) {
     if (student['promotionExamId'] == _examId && _examId.isNotEmpty) {
       final movement = student['classMovement'];
-      if (movement == 'PROMOTED' || movement == 'FORCE_PROMOTED') return 'Promoted';
+      if (movement == 'PROMOTED' || movement == 'FORCE_PROMOTED') return 'Sync pending';
       if (movement == 'RETAINED') {
         // A corrected PASS result requires a new explicit approval.
         if (_result(student['id'].toString())?['result'] == 'PASS')
           return 'Review';
-        return 'Retained';
+        return 'Sync pending';
       }
-      if (movement == 'GRADUATED') return 'Graduated';
+      if (movement == 'GRADUATED') return 'Sync pending';
     }
     return _result(student['id'].toString()) == null ? 'Marks missing' : 'Review';
   }
@@ -112,17 +112,32 @@ class _PromotionPanelState extends State<WindowsExamPromotionCenter> {
       _notice('Select students with saved ' + decision + ' results awaiting approval.');
       return;
     }
+    if (!WindowsLocalSecurity.configured) {
+      _notice('Configure Administrator Settings Lock to approve promotions.');
+      return;
+    }
+    final adminPassword = TextEditingController();
+    try {
     final proceed = await showDialog<bool>(context:context,
       builder:(ctx)=>AlertDialog(
         title: Text(decision == 'FAIL' ? 'Confirm retention' : 'Approve promotion'),
-        content: Text('Review and apply for ' + chosen.length.toString() +
-            ' students? Permanent student IDs, fees, attendance, documents and history stay unchanged.'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text('Apply to ' + chosen.length.toString() +
+            ' students? Permanent IDs, fees, attendance, documents and history remain linked.'),
+          const SizedBox(height: 12),
+          TextField(controller: adminPassword, obscureText: true,
+            decoration: const InputDecoration(labelText: 'Administrator lock password')),
+        ]),
         actions:[
           TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),
           FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Confirm')),
         ],
       ));
     if (proceed != true || !mounted || !_sameSchool) return;
+    if (!WindowsLocalSecurity.verifyPassword(adminPassword.text)) {
+      _notice('Invalid Administrator password. Nothing was changed.');
+      return;
+    }
     setState(() => _working = true);
     var done = 0;
     final failures = <String>[];
@@ -141,8 +156,11 @@ class _PromotionPanelState extends State<WindowsExamPromotionCenter> {
       setState(() { _working = false; _selected.clear(); });
       await _load();
       await widget.onRefresh();
-      _notice(done.toString() + ' processed; ' + failures.length.toString() +
-          ' need review.' + (failures.isEmpty ? ' Cloud sync pending.' : ' ' + failures.first));
+      _notice(done.toString() + ' locally recorded; ' + failures.length.toString() +
+          ' need review.' + (failures.isEmpty ? ' Cloudflare ACK pending.' : ' ' + failures.first));
+    }
+    } finally {
+      adminPassword.dispose();
     }
   }
 
@@ -190,7 +208,7 @@ class _PromotionPanelState extends State<WindowsExamPromotionCenter> {
           exam:widget.exam!,result:'FAIL',force:true,reason:reason.text.trim());
         await _load();
         await widget.onRefresh();
-        _notice('Override recorded locally; Cloudflare sync pending.');
+        _notice('Override recorded locally; Cloudflare ACK pending.');
       } catch (e) {
         _notice('Override blocked: ' + e.toString());
       } finally {
