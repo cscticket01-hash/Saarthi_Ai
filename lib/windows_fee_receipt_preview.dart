@@ -48,8 +48,8 @@ class WindowsFeeReceiptPreview {
     return result;
   }
 
-  /// The school explicitly requested Print; generate bytes only for this action.
-  /// Record-only receipt previews never prepare a PDF in the background.
+  /// The receipt PDF is read/generated ONLY after the user presses Print.
+  /// Opening a saved-record preview never invokes [bytes].
   static Future<void> print(BuildContext context, Map<String, dynamic> payment) {
     final db = FirebaseFirestore.instance;
     final profile = db.activeProfileId;
@@ -57,11 +57,6 @@ class WindowsFeeReceiptPreview {
     final saved = Map<String, dynamic>.from(payment);
     if (saved['schoolId'] != null && saved['schoolId'] != school) {
       throw StateError('Another school receipt cannot be printed.');
-    }
-    // New record-only saves must not produce a PDF on Print: they show the
-    // existing preview and allow PDF generation only on Download PDF.
-    if ((saved['receiptDocumentId']?.toString() ?? '').isEmpty) {
-      return open(context, saved);
     }
     return showDialog<void>(context: context,
       builder: (_) => WindowsReceiptPrintDialog(
@@ -73,7 +68,8 @@ class WindowsFeeReceiptPreview {
       ));
   }
 
-  /// New payments are shown as records; PDF bytes only on explicit Download/Print.
+  /// All receipts preview their original saved records without rendering PDF.
+  /// Print and Download are explicit actions and never run on Payment Save.
   static Future<void> open(BuildContext context, Map<String, dynamic> payment) {
     final db = FirebaseFirestore.instance;
     final origin = db.activeProfileId;
@@ -81,10 +77,6 @@ class WindowsFeeReceiptPreview {
     final saved = Map<String, dynamic>.from(payment);
     if (saved['schoolId'] != null && saved['schoolId'] != school) {
       throw StateError('Another school receipt cannot be displayed.');
-    }
-    final id = saved['receiptDocumentId']?.toString() ?? '';
-    if (id.isNotEmpty) {
-      return print(context, saved);
     }
     String field(String key) {
       final value = saved[key]?.toString().trim() ?? '';
@@ -143,6 +135,25 @@ class WindowsFeeReceiptPreview {
       actions: [
         TextButton(onPressed: () => Navigator.pop(dialog),
           child: const Text('Close')),
+        TextButton.icon(
+          onPressed: () async {
+            if (db.activeProfileId != origin ||
+                db.activeProfileIdentity['schoolSyncId'] != school) {
+              Navigator.pop(dialog);
+              return;
+            }
+            Navigator.pop(dialog);
+            try {
+              if (!context.mounted) return;
+              await print(context, saved);
+            } catch (e) {
+              if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Receipt print error: $e')));
+            }
+          },
+          icon: const Icon(Icons.print_outlined),
+          label: const Text('Print Receipt'),
+        ),
         FilledButton.icon(
           onPressed: () async {
             if (db.activeProfileId != origin ||
