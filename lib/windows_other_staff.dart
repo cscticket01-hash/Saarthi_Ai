@@ -415,8 +415,7 @@ class _SchoolStaffDirectoryState extends State<SchoolStaffDirectory> {
                     : () async {
                         setD(() => saving = true);
                         try {
-                          if(existing != null && existing['active'] != false && !active &&
-                              await WindowsAdminSecurity.isManaged) {
+                          if(existing != null && existing['active'] != false && !active) {
                             final approved=await requestWindowsAdminApproval(ctx,
                               scope:'protected-settings',
                               target:'school_settings/staff_payroll_directory/${existing['id']}');
