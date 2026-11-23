@@ -1,4 +1,5 @@
 import 'windows_appearance.dart';
+import 'liquid_glass_theme.dart';
 import 'package:flutter/material.dart';
 import 'windows_ui_localization.dart' as ui;
 
@@ -30,7 +31,10 @@ class WindowsAdminSidebar extends StatelessWidget {
   @override
   Widget build(BuildContext context) { WindowsAppearance.watch(context); return  SizedBox(
     width: width,
-    child: ColoredBox(color: WindowsAppearance.background(const Color(0xFF06131A)), child: SafeArea(
+    child: LiquidGlassSurface(
+      enabled: WindowsAppearance.presetId == 'midnight-glass',
+      radius: 0,
+      child: ColoredBox(color: WindowsAppearance.background(const Color(0xFF06131A)), child: SafeArea(
       child: Column(children: [
         Expanded(child: ListView(padding: EdgeInsets.zero, children: [header,
           for (final entry in entries) Padding(
@@ -56,6 +60,6 @@ class WindowsAdminSidebar extends StatelessWidget {
             style: TextButton.styleFrom(foregroundColor: WindowsAppearance.primary),
             icon: const Icon(Icons.logout_rounded), label: const ui.Text('Logout')))),
       ]),
-    )),
+    ))),
   ); }
 }
