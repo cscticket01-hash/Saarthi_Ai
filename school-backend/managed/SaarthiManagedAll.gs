@@ -7113,7 +7113,7 @@ function VS_validateSalaryLedger(current,next,operation){
     return;
   }
   if(next.netPaise===undefined){if(prior&&prior.netPaise!==undefined)fail('SALARY_SCHEMA_DOWNGRADE');return;}
-  const net=paise(next.netPaise),paid=paise(next.paidPaise),balance=paise(next.balancePaise);
+  const net=paise(next.netPaise),paid=paise(next.paidPaise),balance=paise(next.balancePaise===undefined&&(!prior||prior.balancePaise===undefined)?net-paid:next.balancePaise);
   if(paid>net||balance!==net-paid)fail('SALARY_BALANCE_MISMATCH');
   if(next.status!==(paid===net?'Paid':paid===0?'Pending':'Part paid'))fail('SALARY_STATUS_MISMATCH');
   if(next.amount!==undefined&&(typeof next.amount!=='number'||Math.round(next.amount*100)!==net))fail('SALARY_NET_MISMATCH');
