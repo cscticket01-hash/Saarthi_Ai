@@ -543,6 +543,8 @@ class SchoolPromotionService {
         );
   }
 
+  /// A promotion is a stable-person class update, never a delete/create.
+  /// The durable local student + audit batch is sent by the existing Sync Engine.
   static Future<String> apply({
     required String studentId,
     required Map<String, dynamic> student,
@@ -551,257 +553,234 @@ class SchoolPromotionService {
     bool force = false,
     String reason = '',
   }) async {
-    final profile = FirebaseFirestore.instance.activeProfileId;
+    final db = FirebaseFirestore.instance;
+    final profile = db.activeProfileId;
+    final school = db.activeProfileIdentity['schoolSyncId']?.toString() ?? '';
     void own() {
-      if (FirebaseFirestore.instance.activeProfileId != profile)
-        throw StateError('School changed during promotion.');
+      if (db.activeProfileId != profile ||
+          (db.activeProfileIdentity['schoolSyncId']?.toString() ?? '') != school) {
+        throw StateError('School changed during promotion. Reopen Exam Center.');
+      }
     }
 
-    if(force){
-      final examId=exam['examId']?.toString() ?? '';
+    final examId = exam['examId']?.toString().trim() ?? '';
+    if (studentId.isEmpty || examId.isEmpty || studentId.contains('/')) {
+      throw StateError('Valid exam and student IDs are required.');
+    }
+    if (force) {
       await WindowsAdminSecurity.requireConsumedAction(
         scope:'force-promotion',target:'$studentId/$examId');
       own();
     }
-    if (!await isFinal(exam, allowPreviousSession: force))
-      throw StateError(
-        'Promotion or retention is available only after a final exam.',
-      );
+    if (!await isFinal(exam, allowPreviousSession: force)) {
+      throw StateError('Only a verified completed Final Exam can change class.');
+    }
     own();
+    final definition =
+        (await db.collection('exams').doc(examId).get()).data() ??
+        (await db.collection('_local_exam_center_exams').doc(examId).get()).data();
+    own();
+    if (definition == null || definition['isFinal'] != true) {
+      throw StateError('Final Exam definition is unavailable.');
+    }
     final verifiedResult =
-        (await FirebaseFirestore.instance
-                .collection('exam_results')
-                .doc('${exam['examId']}_$studentId')
-                .get())
-            .data() ??
-        (await FirebaseFirestore.instance.collection('exam_center_results').doc('${exam['examId']}_$studentId').get()).data() ??
-        (await FirebaseFirestore.instance
-                .collection('_local_exam_center_results')
-                .doc('${exam['examId']}_$studentId')
-                .get())
-            .data();
+        (await db.collection('exam_center_results')
+                .doc('${examId}_$studentId').get()).data() ??
+        (await db.collection('exam_results')
+                .doc('${examId}_$studentId').get()).data() ??
+        (await db.collection('_local_exam_center_results')
+                .doc('${examId}_$studentId').get()).data();
     own();
     if (verifiedResult == null ||
+        verifiedResult['examId'] != null && verifiedResult['examId'] != examId ||
+        verifiedResult['studentId'] != null &&
+            verifiedResult['studentId'] != studentId ||
         verifiedResult['result'] != result ||
-        (verifiedResult['studentId'] != null &&
-            verifiedResult['studentId'] != studentId))
-      throw StateError(
-        'Calculate and save this student final-exam result first.',
-      );
-    final definition =
-        (await FirebaseFirestore.instance.collection('exams').doc(exam['examId'].toString()).get()).data() ??
-        (await FirebaseFirestore.instance
-                .collection('_local_exam_center_exams')
-                .doc(exam['examId'])
-                .get())
-            .data();
-    own();
-    final subjects = (definition?['subjects'] as List? ?? [])
-        .map((s) => s.toString())
-        .toList();
-    if (subjects.isNotEmpty) {
+        !{'PASS', 'FAIL'}.contains(result)) {
+      throw StateError('Save a matching verified final result before approval.');
+    }
+    final session = definition['academicSession']?.toString() ?? '';
+    final resultSession = verifiedResult['academicSession']?.toString() ?? '';
+    if (session != resultSession) {
+      throw StateError('Result and Final Exam academic sessions differ.');
+    }
+    final subjects = (definition['subjects'] as List? ?? [])
+        .map((s) => s.toString()).toList();
+    if (subjects.isEmpty ||
+        subjects.any((subject) => subject.trim().isEmpty) ||
+        subjects.map((s) => s.toLowerCase().trim()).toSet().length !=
+            subjects.length) {
+      throw StateError('Valid Final Exam subjects are required before promotion.');
+    }
+    {
       final marks = verifiedResult['marks'];
-      final maximum = definition?['fullMarks'] ?? verifiedResult['fullMarks'];
-      final pass = definition?['passMarks'] ?? verifiedResult['passMarks'];
-      if (marks is! Map ||
-          maximum is! num ||
-          pass is! num ||
-          !maximum.isFinite ||
-          maximum <= 0 ||
-          !pass.isFinite ||
-          pass < 0 ||
-          pass > maximum ||
-          subjects.any(
-            (s) =>
-                marks[s] is! num ||
-                !(marks[s] as num).isFinite ||
-                marks[s] < 0 ||
-                marks[s] > maximum,
-          ))
-        throw StateError(
-          'Complete and save every Final Exam subject before promotion.',
-        );
-      final computed = subjects.every((s) => marks[s] >= pass)
-          ? 'PASS'
-          : 'FAIL';
-      if (computed != result)
-        throw StateError(
-          'Final result does not match the saved subject marks.',
-        );
-    }
-    if (result != 'PASS' && result != 'FAIL')
-      throw StateError('Final PASS/FAIL result is missing.');
-    if (force && (reason.trim().isEmpty || reason.trim().length > 500))
-      throw StateError(
-        'Enter an administrator override reason (maximum 500 characters).',
-      );
-    if (force && !await forceEnabled())
-      throw StateError(
-        'Enable the administrator force-promotion switch first.',
-      );
-    final ref = FirebaseFirestore.instance
-        .collection('students_directory')
-        .doc(studentId);
-    final live = await SchoolPersonIdentity.ensure(
-      'students_directory',
-      studentId,
-    );
-    own();
-    if (verifiedResult['personId'] != null &&
-        verifiedResult['personId'] != (live['mobileStableId'] ?? studentId))
-      throw StateError('Final result belongs to a previous pupil identity.');
-    final examId = exam['examId']?.toString() ?? '';
-    if (examId.isEmpty) throw StateError('Final exam ID missing.');
-    if (force &&
-        (result != 'FAIL' ||
-            live['classMovement'] != 'RETAINED' ||
-            live['promotionExamId'] != examId))
-      throw StateError(
-        'Admin override is only for this final-exam retained student.',
-      );
-    if (live['promotionExamId'] == examId &&
-        live['classMovement'] != 'RETAINED')
-      return 'Already processed';
-    final classNo =
-        int.tryParse(
-          live['class']?.toString().replaceAll(RegExp(r'[^0-9]'), '') ?? '',
-        ) ??
-        0;
-    if (classNo < 1 || classNo > 12) throw StateError('Invalid student class.');
-    final shared = {
-      'promotionExamId': examId,
-      'lastExamResult': result,
-      'lastExamName': exam['examName'] ?? 'Final exam',
-      'lastExamTimestamp': DateTime.now().millisecondsSinceEpoch,
-      'classChangedBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
-      'promotionPending': false,
-      'promotionError': '',
-      'classChangedAt': FieldValue.serverTimestamp(),
-    };
-    if (result == 'FAIL' && !force) {
-      await ref.set({
-        ...shared,
-        'classMovement': 'RETAINED',
-      }, SetOptions(merge: true));
-      return 'Retained in ${live['class']}';
-    }
-    final nextClass = nextClassNumber(classNo);
-    if (nextClass == null) {
-      await ref.set({
-        ...shared,
-        'classMovement': 'GRADUATED',
-      }, SetOptions(merge: true));
-      return 'Completed Class 12';
-    }
-    final newClass = 'Class $nextClass';
-    final roll = live['rollNo']?.toString() ?? '';
-    final directory = await FirebaseFirestore.instance
-        .collection('students_directory')
-        .get();
-    final occupied = directory.docs
-        .where((d) => d.data()['class'] == newClass)
-        .map((d) => int.tryParse(d.data()['rollNo']?.toString() ?? ''))
-        .whereType<int>()
-        .toSet();
-    var nextRoll = int.tryParse(roll) ?? 1;
-    if (occupied.contains(nextRoll)) {
-      nextRoll = 1;
-      while (occupied.contains(nextRoll)) {
-        nextRoll++;
+      final maximum = definition['fullMarks'] ?? verifiedResult['fullMarks'];
+      final pass = definition['passMarks'] ?? verifiedResult['passMarks'];
+      if (marks is! Map || maximum is! num || pass is! num ||
+          !maximum.isFinite || maximum <= 0 || !pass.isFinite ||
+          pass < 0 || pass > maximum ||
+          marks.length != subjects.length ||
+          marks.keys.any((k) => !subjects.contains(k)) ||
+          subjects.any((s) => marks[s] is! num ||
+              !(marks[s] as num).isFinite ||
+              (marks[s] as num) < 0 || (marks[s] as num) > maximum)) {
+        throw StateError('Final Exam subject marks must be complete and valid.');
+      }
+      final computed = subjects.every((s) => (marks[s] as num) >= pass)
+          ? 'PASS' : 'FAIL';
+      if (computed != result) {
+        throw StateError('Final result disagrees with saved marks.');
       }
     }
-    final target = FirebaseFirestore.instance
-        .collection('students_directory')
-        .doc('${newClass}_Roll_$nextRoll');
+    if (force && (reason.trim().isEmpty || reason.trim().length > 500)) {
+      throw StateError('Enter an admin override reason (maximum 500 characters).');
+    }
+    if (force && !await forceEnabled()) {
+      throw StateError('Administrator force-promotion policy is disabled.');
+    }
+    own();
+
+    final ref = db.collection('students_directory').doc(studentId);
+    final live = (await ref.get()).data();
+    own();
+    if (live == null) throw StateError('Student changed. Refresh Exam Center.');
+    if (live['deleted'] == true || live['_syncDeleted'] == true ||
+        live['active'] == false ||
+        live['status']?.toString().toLowerCase() == 'inactive') {
+      throw StateError('Inactive/deleted student cannot be promoted.');
+    }
+    if (live['schoolId'] != null && live['schoolId'] != school) {
+      throw StateError('This student belongs to another school.');
+    }
+    if (definition['schoolId'] != null && definition['schoolId'] != school ||
+        verifiedResult['schoolId'] != null && verifiedResult['schoolId'] != school) {
+      throw StateError('Foreign final exam or result.');
+    }
     final stableId = live['mobileStableId'] ?? studentId;
+    if (verifiedResult['personId'] != null &&
+        verifiedResult['personId'] != stableId) {
+      throw StateError('Result belongs to a previous student identity.');
+    }
+    if (live['classMovement'] == 'GRADUATED') {
+      throw StateError('A graduated student cannot be promoted again.');
+    }
+    if (live['promotionExamId'] == examId) {
+      if (live['classMovement'] == 'RETAINED' &&
+          result == 'FAIL' && !force) return 'Already retained';
+      if (live['classMovement'] != 'RETAINED') return 'Already processed';
+    }
+    if (force && (result != 'FAIL' ||
+        live['classMovement'] != 'RETAINED' ||
+        live['promotionExamId'] != examId)) {
+      throw StateError('Override is allowed only for this retained Final Exam.');
+    }
+    int classNo(dynamic v) => int.tryParse(
+        v?.toString().replaceAll(RegExp(r'[^0-9]'), '') ?? '') ?? 0;
+    final currentClass = classNo(live['class']);
+    if (currentClass < 1 || currentClass > 12) {
+      throw StateError('Invalid current student class.');
+    }
+    final definedClass = classNo(definition['studentClass']);
+    final resultClass = classNo(verifiedResult['studentClass']);
+    if (live['studentClass'] != null &&
+        classNo(live['studentClass']) != currentClass) {
+      throw StateError('Conflicting student class fields; reconcile before promotion.');
+    }
+    if ((definedClass != 0 && definedClass != currentClass) ||
+        (resultClass != 0 && resultClass != currentClass)) {
+      throw StateError('Student class changed since the Final Exam result.');
+    }
+    final movement = result == 'FAIL' && !force ? 'RETAINED' :
+        currentClass == 12 ? 'GRADUATED' :
+        force ? 'FORCE_PROMOTED' : 'PROMOTED';
+    final nextClass = movement == 'PROMOTED' || movement == 'FORCE_PROMOTED'
+        ? 'Class ${currentClass + 1}' : live['class']?.toString() ?? '';
+    final roll = live['rollNo']?.toString() ?? '';
+    if (nextClass != live['class']) {
+      // Reject occupied slots; never generate a replacement student ID.
+      final directory = await db.collection('students_directory').get();
+      own();
+      if (directory.docs.any((row) =>
+          row.id != studentId &&
+          row.data()['class'] == nextClass &&
+          row.data()['rollNo']?.toString() == roll &&
+          (row.data()['section']?.toString().trim() ?? '') ==
+              (live['section']?.toString().trim() ?? '') &&
+          row.data()['deleted'] != true &&
+          row.data()['_syncDeleted'] != true)) {
+        throw StateError('Roll $roll in $nextClass is occupied. Resolve before promotion.');
+      }
+    }
     own();
-    final connection = await CentralSchoolCloud.saved();
-    own();
-    final url = connection['managed'] == true
-        ? await WindowsExternalConnections.googleScriptUrl()
-        : await WindowsConnectionCenter.googleScriptUrl();
-    final response = await WindowsBackendBridge.post(
-      Uri.parse(url),
-      headers: {'Content-Type': 'text/plain;charset=utf-8'},
-      body: jsonEncode({
-        'action': 'change_student_class',
-        'oldClass': live['class'],
-        'newClass': newClass,
-        'rollNo': roll,
-        'newRollNo': nextRoll.toString(),
-        'oldStudentId': studentId,
-        'newStudentId': target.id,
-        'studentName': live['name'],
-        'dob': live['dob'] ?? live['dateOfBirth'],
-        'movement': force ? 'FORCE_PROMOTED' : 'PROMOTED',
-        'examName': exam['examName'],
-        'result': result,
-        'updatedBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
-      }),
-    );
-    own();
-    final data = jsonDecode(response.body);
-    if (response.statusCode >= 400 || data is! Map || data['success'] != true)
-      throw StateError(
-        data is Map
-            ? data['message']?.toString() ?? 'Class sync failed'
-            : 'Class sync failed',
-      );
-    final aliases = List<String>.from(live['previousStudentIds'] ?? []);
-    if (!aliases.contains(studentId)) aliases.add(studentId);
-    own();
-    final batch = FirebaseFirestore.instance.batch();
-    batch.set(target, {
-      ...live,
-      ...shared,
-      'class': newClass,
-      'rollNo': nextRoll.toString(),
-      'previousClass': live['class'],
-      'mobileStableId': stableId,
-      'previousStudentIds': aliases,
-      'classMovement': force ? 'FORCE_PROMOTED' : 'PROMOTED',
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final shared = <String, dynamic>{
+      'promotionExamId': examId,
+      'lastExamResult': result,
+      'lastExamName': definition['examName'] ?? 'Final exam',
+      'lastExamTimestamp': now,
+      'classChangedBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
+      'promotionPending': true,
+      'promotionSyncState': 'Pending',
+      'promotionError': '',
+      'classChangedAt': FieldValue.serverTimestamp(),
+      'classMovement': movement,
+      'promotionTransactionId': 'promotion:$examId:$studentId',
+      if (force) 'promotionOverrideReason': reason.trim(),
+    };
+    final batch = db.batch();
+    // Local serialized compare-and-swap blocks stale/duplicate approvals.
+    batch.requireUnchanged(ref, live);
+    batch.set(ref, {
+      ...live, ...shared,
+      if (school.isNotEmpty) 'schoolId': school,
+      if (nextClass != live['class']) 'previousClass': live['class'],
+      'class': nextClass,
+      if (live.containsKey('studentClass')) 'studentClass': nextClass,
     });
+    final eventRef = db.collection('school_settings')
+        .doc('promotion_event_${examId}_${studentId}_$movement');
+    if (eventRef.id.length > 200) {
+      throw StateError('Promotion audit identity too long; student needs review.');
+    }
+    batch.requireUnchanged(eventRef, null);
     batch.set(
-      FirebaseFirestore.instance
-          .collection('school_settings')
-          .doc('promotion_audit_${examId}_$studentId'),
+      eventRef,
       {
-        'studentId': studentId,
-        'name': live['name'],
-        'fromClass': live['class'],
-        'toClass': newClass,
-        'examId': examId,
-        'at': DateTime.now().millisecondsSinceEpoch,
-        'reason': reason.trim(),
-        'manualAdminOverride': force,
+        'schoolId': school,
+        'studentId': studentId, 'personId': stableId,
+        'examId': examId, 'academicSession': session,
+        'fromClass': live['class'], 'toClass': nextClass,
+        'result': result, 'movement': movement, 'at': now,
+        'reason': reason.trim(), 'manualAdminOverride': force,
         'actor': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
       },
     );
-    batch.delete(ref);
-    try {
-      await batch.commit();
-    } catch (error) {
-      try {
-        await WindowsBackendBridge.post(
-          Uri.parse(url),
-          headers: {'Content-Type': 'text/plain;charset=utf-8'},
-          body: jsonEncode({
-            'action': 'change_student_class',
-            'oldClass': newClass,
-            'newClass': live['class'],
-            'rollNo': nextRoll.toString(),
-            'newRollNo': roll,
-            'oldStudentId': target.id,
-            'newStudentId': studentId,
-            'studentName': live['name'],
-            'dob': live['dob'] ?? live['dateOfBirth'],
-            'movement': 'ROLLBACK',
-          }),
-        );
-      } catch (_) {}
-      rethrow;
-    }
-    return 'Promoted to $newClass • Roll $nextRoll';
+    batch.set(
+      db.collection('school_settings').doc('promotion_audit_${examId}_$studentId'),
+      {
+        'schoolId': school,
+        'studentId': studentId,
+        'personId': stableId,
+        'fromClass': live['class'],
+        'toClass': nextClass,
+        'examId': examId,
+        'academicSession': session,
+        'result': result,
+        'movement': movement,
+        'at': now,
+        'reason': reason.trim(),
+        'manualAdminOverride': force,
+        'actor': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
+        'syncState': 'Pending',
+        'transactionId': 'promotion:$examId:$studentId',
+      },
+    );
+    own();
+    await batch.commit();
+    own();
+    if (movement == 'RETAINED') return 'Retained in $nextClass';
+    if (movement == 'GRADUATED') return 'Completed Class 12';
+    return 'Promoted to $nextClass • Roll $roll (sync pending)';
   }
 }
 
@@ -829,23 +808,25 @@ class _PromotionPolicySwitchState extends State<PromotionPolicySwitch> {
       'Final-exam FAIL normally keeps a student in the same class. This switch enables an administrator override.',
     ),
     onChanged: (v) async {
-      {
+      final db = FirebaseFirestore.instance;
+      final profile = db.activeProfileId;
+      try {
         final approved=await requestWindowsAdminApproval(context,
           scope:'protected-settings',target:'school_settings/promotion_policy');
-        if(approved==null || !mounted)return;
-        await WindowsAdminSecurity.consumeApproval(
-          token:approved,scope:'protected-settings',
-          target:'school_settings/promotion_policy');
+        if(approved==null || !mounted || db.activeProfileId!=profile)return;
+        await WindowsAdminSecurity.consumeApproval(token:approved,
+          scope:'protected-settings',target:'school_settings/promotion_policy');
+        if(!mounted || db.activeProfileId!=profile)return;
+        await db.collection('school_settings').doc('promotion_policy').set({
+          'allowForcedPromotion':v,
+          'updatedBy':FirebaseAuth.instance.currentUser?.email ?? 'Admin',
+          'updatedAt':FieldValue.serverTimestamp(),
+        });
+        if(mounted && db.activeProfileId==profile)setState(()=>_enabled=v);
+      }catch(error){
+        if(mounted)ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content:Text('Administrator approval failed: $error')));
       }
-      await FirebaseFirestore.instance
-          .collection('school_settings')
-          .doc('promotion_policy')
-          .set({
-            'allowForcedPromotion': v,
-            'updatedBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
-            'updatedAt': FieldValue.serverTimestamp(),
-          });
-      if (mounted) setState(() => _enabled = v);
     },
   ); }
 }

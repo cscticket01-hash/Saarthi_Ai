@@ -122,6 +122,54 @@ export function validatePersonCandidate(input:PersonCandidate):void {
   const retired=current?._syncRetiredStudentGenerations||current?.retiredGenerations;
   if(Array.isArray(retired)&&retired.includes(next.mobileStableId))reject('PERSON_GENERATION_RETIRED');
   if(current&&(current._syncDeleted===true||current.deleted===true)&&oldGeneration===next.mobileStableId)reject('PERSON_GENERATION_RETIRED');
+
+  // Promotion never retires a pupil generation. A changed approval must be
+  // a same-person, same-roll, one-class transition. The authoritative Script
+  // path additionally checks the saved Final Exam and individual marks;
+  // native live admission must not silently accept a replacement owner.
+  const tagged=next.promotionExamId!==undefined ||
+      next.promotionTransactionId!==undefined || next.classMovement!==undefined;
+  if(!current&&tagged)reject('PERSON_PROMOTION_REQUIRES_EXISTING_OWNER');
+  if(current){
+   const changed=next.promotionExamId!==current.promotionExamId ||
+     next.promotionTransactionId!==current.promotionTransactionId ||
+     next.classMovement!==current.classMovement ||
+     (current.promotionExamId && (current.class!==next.class ||
+       current.studentClass!==next.studentClass));
+   if(changed){
+    const oldClass=String(current.class??current.studentClass??''),
+      newClass=String(next.class??next.studentClass??'');
+    const cls=(value:string):number=>{
+     const match=/^Class ([1-9]|1[0-2])$/.exec(value);
+     return match?Number(match[1]):0;
+    };
+    const previous=cls(oldClass),following=cls(newClass);
+    const examId=next.promotionExamId;
+    const decision=next.lastExamResult;
+    const movement=next.classMovement;
+    if(!previous||!following||typeof examId!=='string'||!examId||
+       typeof next.promotionTransactionId!=='string'||
+       next.promotionTransactionId!=='promotion:'+examId+':'+id ||
+       next.mobileStableId!==current.mobileStableId ||
+       next.rollNo!==current.rollNo ||
+       String(next.section??'')!==String(current.section??'') ||
+       next.studentClass!==undefined&&next.studentClass!==newClass ||
+       next.previousClass!==undefined&&next.previousClass!==oldClass ||
+       next.promotionPending!==true||next.promotionSyncState!=='Pending')
+      reject('PERSON_PROMOTION_IDENTITY_MISMATCH');
+    const passed=decision==='PASS',failed=decision==='FAIL';
+    if(!(movement==='RETAINED'&&failed&&following===previous ||
+      movement==='GRADUATED'&&passed&&previous===12&&following===12 ||
+      movement==='PROMOTED'&&passed&&previous<12&&following===previous+1 ||
+      movement==='FORCE_PROMOTED'&&failed&&previous<12&&
+        following===previous+1&&current.classMovement==='RETAINED'&&
+        current.promotionExamId===examId&&
+        typeof next.promotionOverrideReason==='string'&&
+        next.promotionOverrideReason.trim().length>0&&
+        next.promotionOverrideReason.length<=500))
+      reject('PERSON_PROMOTION_RULE_MISMATCH');
+   }
+  }
   const nextSlot=slot(next),oldSlot=slot(current);
   for(const peer of readPeers('students_directory')){
    if(peer.schoolId!==schoolId)reject('PERSON_FOREIGN_OWNER',403);

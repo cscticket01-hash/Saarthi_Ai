@@ -523,3 +523,5 @@ const windowsIdleServerTimeoutMessage =
 
 // Windows v2.1.276+ release review: local Idle is not a verified Google Drive
 // backup; SCRIPT_TIMEOUT remains a separate school-server warning.
+
+// Windows release requested for the merged Exam Center update in PR #399.
