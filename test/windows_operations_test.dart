@@ -53,6 +53,28 @@ void main() {
     expect(find.text('Open teachers'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });
+  test('durable payroll journal checks read-only salary and advance dependencies atomically',()async{
+    await db.ensureDurableSchoolRecords();
+    expect(await db.localPersistenceEnabled(),true);
+    final salary=db.collection('teacher_salary').doc('cas-salary'),advance=db.collection('school_settings').doc('cas-advance'),
+      journal=db.collection('_local_payroll_recovery_journal').doc('cas-advance');
+    await salary.set({'netPaise':100000});
+    await advance.set({'balancePaise':40000});
+    final beforeSalary=(await salary.get()).data()!,beforeAdvance=(await advance.get()).data()!;
+    final batch=db.batch();
+    batch.requireUnchanged(salary,beforeSalary);batch.requireUnchanged(advance,beforeAdvance);
+    batch.requireUnchanged(journal,null);batch.set(journal,{'state':'pending'});
+    await batch.commit();
+    expect((await journal.get()).data()?['state'],'pending');
+    expect((await salary.get()).data(),beforeSalary);expect((await advance.get()).data(),beforeAdvance);
+    final oldJournal=(await journal.get()).data();
+    final stale=db.batch();stale.requireUnchanged(salary,beforeSalary);stale.requireUnchanged(journal,oldJournal);
+    stale.update(journal,{'state':'cloudCommitted'});
+    await salary.update({'netPaise':90000});
+    await expectLater(stale.commit(),throwsStateError);
+    expect((await journal.get()).data()?['state'],'pending');
+    expect((await salary.get()).data()?['netPaise'],90000);
+  });
   test('salary correction audit requires 100–300 words and never changes the original', () async {
     final profile=db.activeProfileId;
     await WindowsLocalSecurity.initialize();
