@@ -17,8 +17,8 @@ class WindowsThemePreset {
   // Stable ID preserves already-published school themes when the visual\n  // treatment evolves from Midnight Glass to Liquid Glass.
   // Screenshot/animation fallbacks use existing verified dark-blue resources,
   // so every existing page keeps rendering without missing binary assets.
-  String get image => 'assets/theme_preset_${(id == 'midnight-glass' || id == 'aurora-liquid-glass') ? 'electric-blue' : id}.webp';
-  String get wave => 'assets/theme_wave_${(id == 'midnight-glass' || id == 'aurora-liquid-glass') ? 'electric-blue' : id}.webp';
+  String get image => 'assets/theme_preset_${id == 'midnight-glass' ? 'electric-blue' : id == 'aurora-liquid-glass' ? 'mint-light' : id}.webp';
+  String get wave => 'assets/theme_wave_${id == 'midnight-glass' ? 'electric-blue' : id == 'aurora-liquid-glass' ? 'mint-light' : id}.webp';
 }
 
 const windowsThemePresets = <WindowsThemePreset>[
