@@ -8,6 +8,7 @@ import 'package:image/image.dart' as img;
 import 'package:crypto/crypto.dart';
 import '../lib/windows_backend_bridge.dart';
 import '../lib/windows_school_operations.dart';
+import '../lib/windows_admin_security.dart';
 import '../lib/windows_school_image_cache.dart';
 import '../lib/windows_connect/school_drive_images.dart';
 import 'dart:typed_data';
@@ -515,6 +516,29 @@ void main() {
     expect(retained['classMovement'],'RETAINED');
     expect((await db.collection('students_directory').doc('Class 2_Roll_2').get()).exists,false);
     expect((await db.collection('school_settings').doc('promotion_audit_final-local_failed').get()).exists,false);
+  });
+
+  test('standalone Admin Password authorizes only the requested action once', () async {
+    FlutterSecureStorage.setMockInitialValues({});
+    WindowsAdminSecurity.clearPanelSession();
+    addTearDown(WindowsAdminSecurity.clearPanelSession);
+    await WindowsLocalSecurity.initialize();
+    await WindowsLocalSecurity.create(adminId:'School app',password:'local-app-lock');
+    const adminPassword = 'Synthetic-Admin-Password-42';
+    const target = 'failed/final-local';
+    await WindowsAdminSecurity.enroll(schoolPassword:'',newPassword:adminPassword);
+    await expectLater(WindowsAdminSecurity.approve(password:'local-app-lock',
+      scope:'force-promotion',target:target),throwsStateError);
+    final ticket = await WindowsAdminSecurity.approve(password:adminPassword,
+      scope:'force-promotion',target:target);
+    await WindowsAdminSecurity.consumeApproval(token:ticket,
+      scope:'force-promotion',target:target);
+    await expectLater(WindowsAdminSecurity.requireConsumedAction(
+      scope:'force-promotion',target:'other/final-local'),throwsStateError);
+    await WindowsAdminSecurity.requireConsumedAction(
+      scope:'force-promotion',target:target);
+    await expectLater(WindowsAdminSecurity.requireConsumedAction(
+      scope:'force-promotion',target:target),throwsStateError);
   });
 
   test('nested photo preparation leaves exam marks and payment structures unchanged', () async {
