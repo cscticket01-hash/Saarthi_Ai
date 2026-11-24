@@ -114,7 +114,8 @@ class StaffPayroll {
     final amount = net(basic: basic, allowance: allowance, bonus: bonus, overtime: overtime, deduction: deduction);
     final id = rowId(employee['id'].toString(), month);
     final ref = FirebaseFirestore.instance.collection('teacher_salary').doc(id);
-    final old = (await ref.get()).data() ?? <String, dynamic>{};
+    final before = (await ref.get()).data();
+    final old = before ?? <String, dynamic>{};
     _sameSchool(profile);
     final alreadyPaid = paid(old);
     if (amount < alreadyPaid) throw StateError('Net salary cannot be lower than the payments already recorded.');
@@ -126,7 +127,10 @@ class StaffPayroll {
       'paidPaise': alreadyPaid, 'balancePaise': amount - alreadyPaid,
       'status': alreadyPaid == amount ? 'Paid' : alreadyPaid == 0 ? 'Pending' : 'Part paid',
       'updatedAt': DateTime.now().millisecondsSinceEpoch};
-    await ref.set(row);
+    final batch = FirebaseFirestore.instance.batch();
+    batch.requireUnchanged(ref, before);
+    batch.set(ref, row);
+    await batch.commit();
     return row;
   });
   static Future<void> recordPayment(String profile, String id, int amount, {required String paymentId,
@@ -151,9 +155,16 @@ class StaffPayroll {
     }
     final next = paid(row) + amount;
     if (next > total(row)) throw StateError('Payment exceeds the remaining salary balance.');
-    payments.add({'id': paymentId, 'amountPaise': amount, 'date': date.toIso8601String(), 'mode': mode, 'reference': reference.trim(), 'timeRecorded': true, 'recordedAt': DateTime.now().millisecondsSinceEpoch});
-    await ref.update({'payments': payments, 'paidPaise': next, 'balancePaise': total(row) - next,
-      'status': next == total(row) ? 'Paid' : 'Part paid', 'updatedAt': DateTime.now().millisecondsSinceEpoch});
+    await WindowsLocalSecurity.initialize();
+    _sameSchool(profile);
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    payments.add({'id': paymentId, 'amountPaise': amount, 'date': date.toIso8601String(), 'mode': mode, 'reference': reference.trim(), 'timeRecorded': true, 'recordedAt': timestamp,
+      if (WindowsLocalSecurity.configured) 'recordedBy': WindowsLocalSecurity.adminId});
+    final batch = FirebaseFirestore.instance.batch();
+    batch.requireUnchanged(ref, row);
+    batch.set(ref, {'payments': payments, 'paidPaise': next, 'balancePaise': total(row) - next,
+      'status': next == total(row) ? 'Paid' : 'Part paid', 'updatedAt': timestamp}, const SetOptions(merge: true));
+    await batch.commit();
   });
 
   /// A payment correction is a new immutable event, not a rewrite of the
@@ -226,12 +237,15 @@ class StaffPayroll {
     if (!WindowsLocalSecurity.verifyPassword(appLockPassword)) {
       throw StateError('App Lock verification expired; original payment retained.');
     }
-    await doc.update({
+    final batch = FirebaseFirestore.instance.batch();
+    batch.requireUnchanged(doc, row);
+    batch.set(doc, {
       'paymentCorrections': corrections,
       'paidPaise': next, 'balancePaise': total(row) - next,
       'status': next == total(row) ? 'Paid' : next == 0 ? 'Pending' : 'Part paid',
       'updatedAt': timestamp,
-    });
+    }, const SetOptions(merge: true));
+    await batch.commit();
   });
 }
 
@@ -471,10 +485,12 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
           if (RegExp(r'^[=+@\-\t\r]').hasMatch(text)) text = "'$text";
           return '"${text.replaceAll('"', '""')}"';
         }
-        final content = ['Name,Employee ID,Role,Month,Basic,Allowances,Deductions,Net,Paid,Balance,Status',
+        final content = ['Name,Employee ID,Role,Month,Basic,Allowances,Bonus,Overtime,Deductions,Net,Paid,Balance,Status',
           for (final r in rows) [r['name'],r['employeeId']??r['teacherId']??r['staffId'],r['role'],r['month'],
             StaffPayroll.format((r['basicPaise'] as num?)?.toInt() ?? 0),
             StaffPayroll.format((r['allowancePaise'] as num?)?.toInt() ?? 0),
+            StaffPayroll.format((r['bonusPaise'] as num?)?.toInt() ?? 0),
+            StaffPayroll.format((r['overtimePaise'] as num?)?.toInt() ?? 0),
             StaffPayroll.format((r['deductionPaise'] as num?)?.toInt() ?? 0),
             StaffPayroll.format(StaffPayroll.total(r)),StaffPayroll.format(StaffPayroll.paid(r)),
             StaffPayroll.format(StaffPayroll.total(r)-StaffPayroll.paid(r)),r['status']].map(cell).join(',')].join('\r\n');
@@ -533,7 +549,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
             }),
             IconButton(tooltip:'Next month',onPressed:()=>setState((){_month=DateTime(_month.year,_month.month+1);_selected.clear();}),icon:Icon(Icons.chevron_right)),
             FilledButton.icon(onPressed:_staff.isEmpty?null:_calculatePayroll,icon:Icon(Icons.calculate_outlined),label:Text('Calculate Payroll')),
-            FilledButton.icon(style:FilledButton.styleFrom(backgroundColor: WindowsAppearance.primary, foregroundColor: WindowsAppearance.onPrimary),onPressed:_selected.isEmpty?null:_paySelected,icon:Icon(Icons.done_all),label:Text('Mark Selected as Paid')),
+            FilledButton.icon(style:FilledButton.styleFrom(backgroundColor: WindowsAppearance.primary, foregroundColor: WindowsAppearance.onPrimary),onPressed:_selected.isEmpty?null:_paySelected,icon:Icon(Icons.done_all),label:Text('Record Selected Payments')),
             OutlinedButton.icon(key: const ValueKey('salary-history'), onPressed:()=>_history(),icon:Icon(Icons.history),label:Text('Payment History')),
             OutlinedButton.icon(onPressed:_working?null:()=>_output(csv:true),icon:Icon(Icons.download_outlined),label:Text('Export CSV')),
 
@@ -563,7 +579,12 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
           )))),if(constraints.maxWidth>=1350)...[SizedBox(width:14),SizedBox(width:270,child:_monthSummary(net,paid,deductions,paidCount,rows.length))]]),
           if(constraints.maxWidth<1350)_monthSummary(net,paid,deductions,paidCount,rows.length),
           for(final row in rows.where((r)=>!_staff.any((s)=>s['id']==r['staffId'])))
-            Card(child:ListTile(title:Text('${row['name'] ?? row['teacherId'] ?? 'Previous staff'} • ₹${StaffPayroll.format(StaffPayroll.total(row))}'),subtitle:Text('${row['status'] ?? 'Previous record'}'),trailing:IconButton(icon:Icon(Icons.history),onPressed:()=>_history(row)))),
+            Card(child:ListTile(title:Text('${row['name'] ?? row['teacherId'] ?? 'Previous staff'} • ₹${StaffPayroll.format(StaffPayroll.total(row))}'),subtitle:Text('${row['status'] ?? 'Previous record'} • Balance ₹${StaffPayroll.format(StaffPayroll.total(row)-StaffPayroll.paid(row))}'),trailing:Wrap(spacing:8,children:[
+              if(row['netPaise'] is num && StaffPayroll.paid(row)<StaffPayroll.total(row)) TextButton(onPressed:()=>_payment(row),child:Text('Record payment')),
+              if(StaffPayroll.paid(row)>0) TextButton(onPressed:()=>_correctPayment(row),child:Text('Modify payment')),
+              IconButton(tooltip:'Payment history',icon:Icon(Icons.history),onPressed:()=>_history(row)),
+              IconButton(tooltip:'View payslip',icon:Icon(Icons.receipt_long),onPressed:_working?null:()=>_output(row:row)),
+            ]))),
         ]); })));
   }
   Widget _metric(String label,String value,Color color,IconData icon,String detail)=>SizedBox(width:205,child:Container(
