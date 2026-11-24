@@ -30,7 +30,7 @@ void main() {
     }
     final source = Uint8List.fromList(img.encodePng(raster));
     final original = Uint8List.fromList(source);
-    final r = DocumentProcessingEngine.process({'bytes': source, 'manualEdit': [0.1, 0.1, 0.8, 0.7, 0]});
+    final r = DocumentProcessingEngine.process({'bytes': source, 'strictPhotoLimit': true, 'manualEdit': [0.1, 0.1, 0.8, 0.7, 0]});
     expect(r['manualCrop'], true);
     expect(r['sourceRetained'], false);
     expect((r['optimized'] as Uint8List).length, lessThanOrEqualTo(80 * 1024));
