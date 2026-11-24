@@ -112,6 +112,63 @@ class StaffPayroll {
   static int paid(Map<String, dynamic> row) => (row['paidPaise'] as num?)?.toInt() ??
       (row['status']?.toString().toLowerCase() == 'paid' ? total(row) : 0);
   static int total(Map<String, dynamic> row) => (row['netPaise'] as num?)?.toInt() ?? ((row['amount'] as num? ?? 0) * 100).round();
+  static String structureId(String staffId) => 'payroll_salary_structure_${sha256.convert(utf8.encode(staffId))}';
+  static Future<Map<String,dynamic>?> structure(String profile,String staffId) async {
+    _sameSchool(profile);
+    final row=(await FirebaseFirestore.instance.collection('school_settings').doc(structureId(staffId)).get()).data();
+    _sameSchool(profile);
+    if(row!=null&&row['staffId']!=staffId)throw StateError('Salary structure identity mismatch.');
+    return row;
+  }
+  static Future<void> saveStructure(String profile,String staffId,{required int basic,required int allowance,required int deduction,required String adminPassword})=>_serial(()async{
+    await requireAdmin(profile,adminPassword);
+    net(basic:basic,allowance:allowance,deduction:deduction);
+    final people=await staff(profile);
+    if(people.where((p)=>p['id']==staffId).length!=1)throw StateError('Active staff not found.');
+    final ref=FirebaseFirestore.instance.collection('school_settings').doc(structureId(staffId));
+    final old=(await ref.get()).data();
+    if(old!=null&&old['staffId']!=staffId)throw StateError('Salary structure identity mismatch.');
+    await requireAdmin(profile,adminPassword);
+    final batch=FirebaseFirestore.instance.batch();
+    batch.requireUnchanged(ref,old);
+    batch.set(ref,{'staffId':staffId,'basicPaise':basic,'allowancePaise':allowance,'deductionPaise':deduction,'updatedAt':DateTime.now().millisecondsSinceEpoch});
+    await batch.commit();
+  });
+  static bool _matchesEmployee(Map<String,dynamic> row,Map<String,dynamic> person) =>
+      row['staffId']==person['id'] || ((row['staffId']?.toString()??'').isEmpty &&
+      (person['teacherId']?.toString()??'').isNotEmpty && row['teacherId']==person['teacherId']);
+  static Future<Map<String,int>> generateMonth(String profile,String month,{required String adminPassword})=>_serial(()async{
+    await requireAdmin(profile,adminPassword);
+    final people=await staff(profile);
+    final db=FirebaseFirestore.instance;
+    final existing=(await db.collection('teacher_salary').where('month',isEqualTo:month).get()).docs.map((d)=>d.data()).toList();
+    final batch=db.batch();
+    int created=0,skipped=0,missing=0;
+    final now=DateTime.now().millisecondsSinceEpoch;
+    for(final p in people){
+      _sameSchool(profile);
+      final staffId=p['id'].toString();
+      if(existing.any((r)=>_matchesEmployee(r,p))){skipped++;continue;}
+      final template=await structure(profile,staffId);
+      if(template==null){missing++;continue;}
+      final basic=template['basicPaise'],allowance=template['allowancePaise'],deduction=template['deductionPaise'];
+      if(basic is! int||allowance is! int||deduction is! int)throw StateError('Invalid saved salary structure for ${p['name']}.');
+      final amount=net(basic:basic,allowance:allowance,deduction:deduction);
+      final id=rowId(staffId,month);
+      final ref=db.collection('teacher_salary').doc(id);
+      if((await ref.get()).data()!=null){skipped++;continue;}
+      _sameSchool(profile);
+      batch.requireUnchanged(ref,null);
+      batch.set(ref,{'id':id,'staffId':staffId,'teacherId':p['teacherId']??'','employeeId':p['employeeId']??p['teacherId']??'',
+       'name':p['name'],'role':p['role'],'designation':p['designation'],'month':month,'basicPaise':basic,
+       'allowancePaise':allowance,'bonusPaise':0,'overtimePaise':0,'deductionPaise':deduction,'netPaise':amount,
+       'amount':amount/100,'paidPaise':0,'balancePaise':amount,'status':amount==0?'Paid':'Pending','updatedAt':now});
+      created++;
+    }
+    await requireAdmin(profile,adminPassword);
+    if(created>0)await batch.commit();
+    return {'created':created,'existing':skipped,'missing':missing};
+  });
   static Future<Map<String, dynamic>> save(String profile, Map<String, dynamic> person, String month,
       {required int basic, int allowance = 0, int bonus = 0, int overtime = 0, int deduction = 0, String? adminPassword}) => _serial(() async {
     _sameSchool(profile);
@@ -125,6 +182,11 @@ class StaffPayroll {
     final before = (await ref.get()).data();
     final old = before ?? <String, dynamic>{};
     _sameSchool(profile);
+    if(before==null){
+      final sameMonth=await FirebaseFirestore.instance.collection('teacher_salary').where('month',isEqualTo:month).get();
+      _sameSchool(profile);
+      if(sameMonth.docs.any((d)=>d.id!=id&&_matchesEmployee(d.data(),employee)))throw StateError('A historical salary row already exists for this staff and month. Review it before creating another.');
+    }
     if (before != null) {
       final same = old['basicPaise']==basic && old['allowancePaise']==allowance && old['bonusPaise']==bonus && old['overtimePaise']==overtime && old['deductionPaise']==deduction;
       if (same) return old;
@@ -349,7 +411,9 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     if ((old != null && adminPassword == null) || !mounted) return;
     const keys = ['basicPaise', 'allowancePaise', 'bonusPaise', 'overtimePaise', 'deductionPaise'];
     const labels = ['Basic salary', 'Allowances', 'Bonus', 'Overtime', 'Deductions / advance adjustment'];
-    final controllers = [for (final k in keys) TextEditingController(text: StaffPayroll.format((old?[k] as num?)?.toInt() ?? 0))];
+    final template=old==null?await StaffPayroll.structure(_profile,person['id'].toString()):null;
+    if(!mounted)return;
+    final controllers = [for (final k in keys) TextEditingController(text: StaffPayroll.format(((old??template)?[k] as num?)?.toInt() ?? 0))];
     await _editor('${person['name']} • $month', (setD) {
       String net = '—';
       try { final v = controllers.map((c) => StaffPayroll.money(c.text)).toList(); net = StaffPayroll.format(StaffPayroll.net(basic:v[0],allowance:v[1],bonus:v[2],overtime:v[3],deduction:v[4])); } catch (_) {}
@@ -557,6 +621,48 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     } catch(e) { if(mounted) setState(() => _error='$e'); }
     finally { if(mounted) setState(() => _working=false); }
   }
+  Future<void> _editStructure(Map<String,dynamic> person) async {
+    try{
+      final password=await _adminAuthorization('Salary Structure');
+      if(password==null||!mounted)return;
+      final staffId=person['id'].toString();
+      final old=await StaffPayroll.structure(_profile,staffId);
+      if(!mounted)return;
+      const keys=['basicPaise','allowancePaise','deductionPaise'],labels=['Recurring basic salary','Recurring allowance','Recurring deduction'];
+      final c=[for(final key in keys)TextEditingController(text:StaffPayroll.format((old?[key] as num?)?.toInt()??0))];
+      try{
+        await _editor('Salary Structure • ${person['name']}',(setD)=>[
+          for(int i=0;i<c.length;i++)TextField(controller:c[i],keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:InputDecoration(labelText:labels[i],prefixText:'₹ ')),
+          const Text('This template is used only for new salary months. Existing payroll and payment history are not changed. Bonus and overtime remain monthly inputs.'),
+        ],()async{
+          await StaffPayroll.saveStructure(_profile,staffId,basic:StaffPayroll.money(c[0].text),allowance:StaffPayroll.money(c[1].text),deduction:StaffPayroll.money(c[2].text),adminPassword:password);
+        });
+      }finally{
+        await Future<void>.delayed(const Duration(milliseconds:250));
+        for(final controller in c)controller.dispose();
+      }
+    }catch(e){if(mounted)setState(()=>_error='$e');}
+  }
+  Future<void> _generateMonth() async {
+    if(_working)return;
+    final month=StaffPayroll.monthKey(_month);
+    final password=await _adminAuthorization('Generate Monthly Salary');
+    if(password==null||!mounted)return;
+    final confirmed=await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(
+      title:Text('Generate salary • $month'),
+      content:const Text('Create unpaid salary rows using each active staff member’s saved salary structure. Existing rows are skipped. No payment is recorded. Staff without a structure are skipped.'),
+      actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Generate'))]));
+    if(confirmed!=true||!mounted)return;
+    setState(()=>_working=true);
+    try{
+      final result=await StaffPayroll.generateMonth(_profile,month,adminPassword:password);
+      if(mounted){
+        await _load();
+        if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Created: ${result['created']} • Already exists: ${result['existing']} • Missing structure: ${result['missing']}')));
+      }
+    }catch(e){if(mounted)setState(()=>_error='$e');}
+    finally{if(mounted)setState(()=>_working=false);}
+  }
   Future<void> _calculatePayroll() async {
     final person = await showDialog<Map<String,dynamic>>(context:context,builder:(ctx){ WindowsAppearance.watch(ctx); return SimpleDialog(title:Text('Select staff to calculate salary'),children:[for(final person in _staff) SimpleDialogOption(onPressed:()=>Navigator.pop(ctx,person),child:Text('${person['name']} • ${person['employeeId']??person['teacherId']??person['id']} • ${person['role']}'))]); });
     if(person != null && mounted) await _salary(person,_monthRows.where((r)=>r['staffId']==person['id']).firstOrNull);
@@ -593,6 +699,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
             }),
             IconButton(tooltip:'Next month',onPressed:()=>_changeMonth(DateTime(_month.year,_month.month+1)),icon:Icon(Icons.chevron_right)),
             FilledButton.icon(onPressed:_staff.isEmpty?null:_calculatePayroll,icon:Icon(Icons.calculate_outlined),label:Text('Calculate Payroll')),
+            OutlinedButton.icon(onPressed:_working||_staff.isEmpty?null:_generateMonth,icon:Icon(Icons.playlist_add),label:Text('Generate Monthly Salary')),
             FilledButton.icon(style:FilledButton.styleFrom(backgroundColor: WindowsAppearance.primary, foregroundColor: WindowsAppearance.onPrimary),onPressed:_selected.isEmpty?null:_paySelected,icon:Icon(Icons.done_all),label:Text('Record Selected Payments')),
             OutlinedButton.icon(key: const ValueKey('salary-history'), onPressed:()=>_history(),icon:Icon(Icons.history),label:Text('Payment History')),
             OutlinedButton.icon(onPressed:_working?null:()=>_output(csv:true),icon:Icon(Icons.download_outlined),label:Text('Export CSV')),
@@ -661,12 +768,14 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
         else FilledButton.tonal(onPressed:_working?null:()=>_output(row:row),child:Text('View Payslip')),
         PopupMenuButton<String>(tooltip:'Salary actions',onSelected:(action){
           if(action=='edit')_salary(person,row);
+          if(action=='structure')_editStructure(person);
           if(action=='pay'&&row!=null)_payment(row);
           if(action=='correct'&&row!=null)_correctPayment(row);
           if(action=='reverse'&&row!=null)_correctPayment(row,reverse:true);
           if(action=='history'&&row!=null)_history(row);
         },itemBuilder:(_)=>[
           PopupMenuItem(value:'edit',child:Text(row==null?'Set salary':'Edit salary')),
+          const PopupMenuItem(value:'structure',child:Text('Salary Structure • Admin Password')),
           if(row!=null&&StaffPayroll.paid(row)<StaffPayroll.total(row))const PopupMenuItem(value:'pay',child:Text('Record payment')),
           if(row!=null&&StaffPayroll.paid(row)>0)const PopupMenuItem(value:'correct',child:Text('Modify Payment • Admin Password')),
           if(row!=null&&StaffPayroll.paid(row)>0)const PopupMenuItem(value:'reverse',child:Text('Reverse Payment • Admin Password')),
