@@ -2753,7 +2753,7 @@ class _LocalSchoolDatabase {
         final childCollections = <String>{...studentOwnedCollections,
           '_local_student_documents', '_windows_document_outbox'};
         final root = await _readRoot(collections:{collection,'_windows_firebase_outbox',
-          '_windows_sync_conflicts','_windows_sync_conflict_history','_windows_sync_baselines','_windows_recycle_requests','_windows_local_deletions',if(parentId is String)'students_directory',
+          '_windows_sync_conflicts','_windows_sync_conflict_history','_windows_sync_resolution_history','_windows_sync_baselines','_windows_recycle_requests','_windows_local_deletions',if(parentId is String)'students_directory',
           if(freshStudent)...childCollections},recordScope:{collection:[id],if(parentId is String&&collection!='students_directory')'students_directory':[parentId]});
         if (_activeProfileId != origin) throw StateError('School changed during conflict capture.');
         final collections = _collections(root), queue = collections['_windows_firebase_outbox'];
@@ -2849,7 +2849,7 @@ class _LocalSchoolDatabase {
         final replacedGeneration = remote['_syncDeleted'] != true && remoteGeneration is String &&
             remoteGeneration.isNotEmpty && localGeneration != remoteGeneration && current['priorDeletion'] == null;
         if ((remote['_syncDeleted'] == true && current['operation'] != 'delete' || replacedGeneration) &&
-            collection != 'students_directory') {
+            collection != 'students_directory' && !isPayrollFinancialRecord(current)) {
           final restores = collections['_windows_recycle_requests'];
           final localRow = (collections[collection] as Map?)?[id];
           final localTime = localRow is Map ? localRow['_syncUpdatedAt'] : null;
