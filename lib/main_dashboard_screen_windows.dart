@@ -21316,6 +21316,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
       _exams.where((exam) =>
           exam['deleted'] != true &&
           exam['_syncDeleted'] != true &&
+          !WindowsExamPolicy.archived(exam, DateTime.now()) &&
           (_sessionFilter.isEmpty ||
               exam['academicSession']?.toString() == _sessionFilter)).toList();
 
@@ -21324,8 +21325,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
     return _results.where((result) =>
         result['deleted'] != true &&
         result['_syncDeleted'] != true &&
-        (_sessionFilter.isEmpty ||
-            examIds.contains(result['examId']?.toString()))).toList();
+        examIds.contains(result['examId']?.toString())).toList();
   }
 
   List<List<Map<String, dynamic>>> _examGroups() {
@@ -22079,6 +22079,27 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
       );
 
 
+  Future<void> _completeExam(String examId) async {
+    if (_saving) return;
+    final profile = FirebaseFirestore.instance.activeProfileId;
+    setState(() => _saving = true);
+    try {
+      await WindowsExamService.completeExam(examId);
+      if (FirebaseFirestore.instance.activeProfileId != profile) return;
+      _ExamCenterDataCache.invalidateAfterMutation();
+      if (!mounted) return;
+      await _load(silent: true);
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Exam completed. It remains in the Exam List for 15 days.'),
+      ));
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Completion blocked: $error')));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   Future<void> _deleteUnusedExam(Map<String, dynamic> exam) async {
     if (_saving) return;
     final examId = exam['examId']?.toString() ?? '';
@@ -22274,6 +22295,15 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                               label: const Text('Marks & Results'),
                             ),
                             const SizedBox(width: 8),
+                            if (exam['completedAt'] != null)
+                              const Text('Completed')
+                            else TextButton(
+                              onPressed: _saving || results.isEmpty ? null : () {
+                                Navigator.pop(dialogContext);
+                                _completeExam(id);
+                              },
+                              child: const Text('Mark as Completed'),
+                            ),
                             IconButton(
                               key: ValueKey('delete-exam-$id'),
                               tooltip: results.isNotEmpty
