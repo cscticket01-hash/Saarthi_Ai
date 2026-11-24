@@ -1,6 +1,8 @@
 import 'windows_drive_delivery_queue.dart';
 import 'cloudflare_save_notice.dart';
 import 'windows_sync_flow.dart';
+import 'windows_sync_system_health.dart';
+import 'windows_connect/central_school_cloud.dart' show CentralCloudException;
 import 'windows_sync_evidence.dart';
 import 'windows_ui_localization.dart';
 import 'windows_repair_memory.dart';
@@ -1015,8 +1017,40 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     );
   }
 
-  Widget _syncSummary(String title, String value, IconData icon, Color accent) {
+  Future<SyncHealth> _schoolServiceHealth(String school, {required bool mobile}) async {
+    if (school.isEmpty || db.activeProfileId != origin || !ManagedSchoolSession.enabled) {
+      return SyncHealth.unknown;
+    }
+    try {
+      final result = await ManagedSchoolSession.callForSchool(
+        school, mobile ? 'managed/mobile/health' : 'managed/cloudflare/status',
+        const {}, backgroundHealthCheck: true,
+      ).timeout(const Duration(seconds: 95));
+      if (db.activeProfileId != origin || db.activeProfileIdentity['schoolSyncId'] != school ||
+          result['schoolId'] != school || result['success'] != true) {
+        return SyncHealth.unknown;
+      }
+      if (mobile) {
+        return result['mobileHealthVersion'] == 1 && result['mobileProtocol'] == 3 &&
+                result['mobileReady'] == true ? SyncHealth.healthy : SyncHealth.unknown;
+      }
+      if (result['enabled'] != true) return SyncHealth.unknown;
+      return result['statusScope'] == 'records_notices_delivery' &&
+              result['observedAt'] is int && result['notices'] is Map &&
+              result['records'] is Map && result['delivery'] is Map
+          ? SyncHealth.healthy : SyncHealth.unknown;
+    } on CentralCloudException catch (error) {
+      return error.status >= 500 && error.status < 600 && error.status != 504
+          ? SyncHealth.failed : SyncHealth.unknown;
+    } catch (_) {
+      return SyncHealth.unknown;
+    }
+  }
+
+  Widget _syncSummary(String title, String value, IconData icon, Color accent,
+      {Widget? detail, double minHeight = 0}) {
     return Container(
+      constraints: BoxConstraints(minHeight: minHeight),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
         color: _darkDashboard(context)
@@ -1026,6 +1060,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
+      crossAxisAlignment: detail == null ? CrossAxisAlignment.center : CrossAxisAlignment.start,
       children: [
         CircleAvatar(
           backgroundColor: accent.withValues(alpha: .15),
@@ -1034,21 +1069,34 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         ),
         const SizedBox(width: 12),
         Expanded(child: Column(
+          mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(title, style: const TextStyle(fontSize: 12)),
             const SizedBox(height: 4),
-            Text(value, style: const TextStyle(fontWeight: FontWeight.bold)),
+            if (detail != null) detail else
+              Text(value, style: const TextStyle(fontWeight: FontWeight.bold)),
           ],
         )),
       ],
     ));
   }
 
-  Widget _syncSummaryStrip(List<Widget> cards) => LayoutBuilder(
+  Widget _syncSummaryStrip(List<Widget> cards, {bool equalHeight = false}) => LayoutBuilder(
     builder: (context, constraints) {
       final columns = (constraints.maxWidth / 205).floor().clamp(1, cards.length);
       final width = (constraints.maxWidth - 12 * (columns - 1)) / columns;
+      if (equalHeight && columns == cards.length) {
+        return IntrinsicHeight(child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (var i = 0; i < cards.length; i++) ...[
+              if (i > 0) const SizedBox(width: 12),
+              Expanded(child: cards[i]),
+            ],
+          ],
+        ));
+      }
       return Wrap(
         spacing: 12,
         runSpacing: 12,
@@ -1143,15 +1191,27 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         _syncSummaryStrip([
           _syncSummary('Current Upload',
             transferActive ? '$uploadCount pending uploads' : 'No active upload',
-            Icons.upload_outlined, Colors.lightBlueAccent),
+            Icons.upload_outlined, Colors.lightBlueAccent, minHeight: 164),
           _syncSummary('Last Synced',
             newestDeviceAckAt > 0
                 ? '${MaterialLocalizations.of(context).formatTimeOfDay(TimeOfDay.fromDateTime(DateTime.fromMillisecondsSinceEpoch(newestDeviceAckAt)))} · ${lastProviderVerifiedAt >= lastDeviceAckAt && transfers is num ? '${(transfers / 1000000).toStringAsFixed(2)} sec' : 'School Server ACK'}'
                 : 'No verified ACK yet',
-            Icons.cloud_done_outlined, Colors.greenAccent),
-          _syncSummary('System Health', cloudHealth,
-            Icons.health_and_safety_outlined, Colors.tealAccent),
-        ]),
+            Icons.cloud_done_outlined, Colors.greenAccent, minHeight: 164),
+          _syncSummary('System Health', '',
+            Icons.health_and_safety_outlined, Colors.tealAccent, minHeight: 164,
+            detail: WindowsSyncSystemHealth(
+              key: ValueKey('$origin|$activeSchool'),
+              isCurrentSchool: () => db.activeProfileId == origin &&
+                  db.activeProfileIdentity['schoolSyncId'] == activeSchool,
+              schoolServer: () => _schoolServiceHealth(activeSchool?.toString() ?? '', mobile: false),
+              mobileServer: () => _schoolServiceHealth(activeSchool?.toString() ?? '', mobile: true),
+              selfRepair: () async => switch (engine.repairHealthFor(origin, activeSchool?.toString() ?? '')) {
+                true => SyncHealth.healthy,
+                false => SyncHealth.failed,
+                null => SyncHealth.unknown,
+              },
+            )),
+        ], equalHeight: true),
         const SizedBox(height: 12),
         LayoutBuilder(
           builder: (context, constraints) {WindowsAppearance.watch(context);
@@ -1202,11 +1262,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                 ],
               ),
             );
-            final activity = _panelBox(
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Row(
+            final activityHeader = const Row(
                     children: [
                       Icon(Icons.insights, color: _cyan),
                       SizedBox(width: 10),
@@ -1220,7 +1276,11 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                         ),
                       ),
                     ],
-                  ),
+                  );
+            final activityContents = Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                   const SizedBox(height: 12),
                   _RecentVerifiedSyncActivity(
                     event: activityEvents.isEmpty
@@ -1270,6 +1330,12 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                           : Text('${raw['syncState'] ?? raw['state'] ?? 'pending'}',
                               style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Color(0xFFFFC153)))),
                       ),
+                ],
+              );
+            final activityLinks = Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
                   const SizedBox(height: 10),
                   TextButton.icon(
                     onPressed: () => _jump(_queueKey),
@@ -1282,19 +1348,37 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     label: const Text('View full sync history'),
                   ),
                 ],
-              ),
-            );
-            if (constraints.maxWidth < 960)
-              return Column(
-                children: [progress, const SizedBox(height: 12), activity],
               );
-            return Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(flex: 2, child: progress),
-                const SizedBox(width: 18),
-                Expanded(child: activity),
-              ],
+            if (constraints.maxWidth < 960) {
+              return Column(children: [progress, const SizedBox(height: 12),
+                _panelBox(Column(mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [activityHeader, activityContents, activityLinks])),
+              ]);
+            }
+            // The flow determines the row height. Excess queue content scrolls inside its card.
+            return Table(
+              columnWidths: const {
+                0: FlexColumnWidth(2), 1: FixedColumnWidth(18), 2: FlexColumnWidth(1),
+              },
+              children: [TableRow(children: [
+                progress,
+                const SizedBox.shrink(),
+                TableCell(
+                  verticalAlignment: TableCellVerticalAlignment.fill,
+                  child: _panelBox(Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      activityHeader,
+                      Expanded(child: SingleChildScrollView(
+                        primary: false,
+                        child: activityContents,
+                      )),
+                      activityLinks,
+                    ],
+                  )),
+                ),
+              ])],
             );
           },
         ),

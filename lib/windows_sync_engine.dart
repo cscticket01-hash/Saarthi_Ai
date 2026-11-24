@@ -247,6 +247,33 @@ class WindowsSyncEngine with WidgetsBindingObserver {
 
   // The automatic owner checks local durable evidence. It cannot ACK or
   // discard anything; only a subsequent cloud read + local readback can heal.
+  DateTime? _repairHealthAt;
+  bool? _repairHealthOk;
+  String? _repairHealthProfile, _repairHealthSchool;
+
+  /// Health of the actual local repair owner, not proof of every remote lane.
+  bool? repairHealthFor(String profile, String school) {
+    if (school.isEmpty || profile != _activeProfileId || school != _activeSchoolSyncId ||
+        FirebaseFirestore.instance.activeProfileId != profile) return null;
+    if (!_initialized || _resetPaused) return false;
+    if (isPaused || !automaticScheduleExpected) return null;
+    if (_changeTimer?.isActive != true || !automaticScheduleRunning) return false;
+    final checked = _repairHealthAt;
+    if (checked == null || _repairHealthProfile != profile || _repairHealthSchool != school) return null;
+    final age = DateTime.now().difference(checked);
+    if (age.isNegative || age > const Duration(seconds: 95)) return null;
+    return _repairHealthOk;
+  }
+
+  void _recordRepairHealth(String profile, String school, bool ok) {
+    if (!automaticScheduleExpected || _activeProfileId != profile || _activeSchoolSyncId != school ||
+        FirebaseFirestore.instance.activeProfileId != profile) return;
+    _repairHealthAt = DateTime.now();
+    _repairHealthProfile = profile;
+    _repairHealthSchool = school;
+    _repairHealthOk = ok;
+  }
+
   Future<void> _scheduleStalledDownloadRepair() async {
     if (!automaticScheduleExpected || _syncing || _activating > 0) return;
     final db = FirebaseFirestore.instance;
@@ -266,7 +293,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       if (due.isNotEmpty) {
         scheduleSoon(delay: const Duration(milliseconds: 350));
       }
+      _recordRepairHealth(profile, school, true);
     } catch (_) {
+      _recordRepairHealth(profile, school, false);
       // Read-only diagnosis can fail during a local storage transition.
       // Never clear or manufacture a download checkpoint on diagnostic failure.
     }
@@ -1922,6 +1951,10 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       _lastIntegrityAttempt = null;
       _automaticMutationPending = false;
       _stalledDownloadRepairDue = false;
+      _repairHealthAt = null;
+      _repairHealthOk = null;
+      _repairHealthProfile = null;
+      _repairHealthSchool = null;
       _failures = 0;
       _nextRetry = null;
       _quotaRetryAt = null;
