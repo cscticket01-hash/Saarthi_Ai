@@ -106,6 +106,8 @@ export function validateDomainCandidate(input:DomainCandidate):void {
  boundedJson(next);
  if(operation==='delete'){
   if(next._syncDeleted!==true)reject('DOMAIN_DELETE_UNVERIFIED',400);
+  if(collection==='teacher_salary'&&current&&!current._syncDeleted&&current.netPaise!==undefined&&
+     (Number(current.paidPaise??0)>0||salaryEvents(current.payments).length||salaryEvents(current.paymentCorrections).length))reject('SALARY_HISTORY_IMMUTABLE');
   return;
  }
  if(next._syncDeleted===true)reject('DOMAIN_INVALID_WRITE',400);
@@ -147,9 +149,15 @@ export function validateDomainCandidate(input:DomainCandidate):void {
  if(collection==='teacher_salary'&&nonempty(next.staffId)){
   const history=current&&!current._syncDeleted&&['staffId','employeeId','personId','teacherId'].every(key=>current[key]===next[key]);
   if(!history){
-   const staff=owned(schoolId,readOwner('staff_payroll_directory',next.staffId));
-   if(staff.active===false||staff.deleted===true||staff._syncDeleted===true)reject('DOMAIN_STAFF_RETIRED');
-   if(nonempty(staff.employeeId)&&staff.employeeId!==next.employeeId)reject('DOMAIN_STAFF_IDENTITY_MISMATCH');
+   if(next.staffId.startsWith('teacher:')){
+    const teacher=owned(schoolId,readOwner('teachers_directory',next.staffId.slice('teacher:'.length)));
+    if(teacher.id!==next.staffId.slice('teacher:'.length)||teacher.active===false||teacher.inactive===true||teacher.deleted===true||teacher._syncDeleted===true)reject('DOMAIN_TEACHER_RETIRED');
+    if(!nonempty(next.teacherId)||String(teacher.teacherId||teacher.id)!==next.teacherId||next.employeeId!==next.teacherId)reject('DOMAIN_TEACHER_IDENTITY_MISMATCH');
+   }else{
+    const staff=owned(schoolId,readOwner('staff_payroll_directory',next.staffId));
+    if(staff.active===false||staff.deleted===true||staff._syncDeleted===true)reject('DOMAIN_STAFF_RETIRED');
+    if(nonempty(staff.employeeId)&&staff.employeeId!==next.employeeId)reject('DOMAIN_STAFF_IDENTITY_MISMATCH');
+   }
   }
  }
  // An explicit person ID without a parent binding cannot borrow a different
