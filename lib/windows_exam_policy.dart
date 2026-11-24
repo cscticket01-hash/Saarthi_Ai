@@ -1,6 +1,13 @@
 /// Exam Center validation shared by UI and service layer.
 /// Pure operations: never read or write school data or render a PDF.
 class WindowsExamPolicy {
+  static bool archived(Map<String, dynamic> exam, DateTime now) {
+    final completedAt = int.tryParse(exam['completedAt']?.toString() ?? '');
+    return completedAt != null && completedAt > 0 &&
+        now.millisecondsSinceEpoch - completedAt >=
+            const Duration(days: 15).inMilliseconds;
+  }
+
   static String groupKey(Map<String, dynamic> exam) {
     final school = (exam['schoolId'] ?? '').toString().trim();
     final session = (exam['academicSession'] ?? '').toString().trim();

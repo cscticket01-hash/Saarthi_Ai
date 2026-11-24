@@ -1665,6 +1665,11 @@ class _ExamCenterDataCache {
     return snapshot;
   }
 
+  static void invalidateAfterMutation() {
+    snapshot = null;
+    _inFlight = null;
+  }
+
   static Future<_ExamCenterSnapshot> refresh({bool force = false}) async {
     _invalidateOnSchoolChange();
     final profile = FirebaseFirestore.instance.activeProfileId;
@@ -1687,10 +1692,13 @@ class _ExamCenterDataCache {
       if (_profile != profile || _school != school) {
         throw StateError('School changed. Refresh the exam screen.');
       }
+      if (!identical(_inFlight, future)) {
+        return refresh(force: true);
+      }
       snapshot = value;
       return value;
     } finally {
-      if (_profile == profile && _school == school) _inFlight = null;
+      if (identical(_inFlight, future)) _inFlight = null;
     }
   }
 
@@ -21310,20 +21318,25 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
           e['_syncDeleted'] != true)
       .toList();
 
-  List<Map<String, dynamic>> get _visibleExams =>
-      _exams.where((exam) =>
-          exam['deleted'] != true &&
-          exam['_syncDeleted'] != true &&
-          (_sessionFilter.isEmpty ||
-              exam['academicSession']?.toString() == _sessionFilter)).toList();
+  Iterable<Map<String, dynamic>> get _activeExams {
+    final now = DateTime.now();
+    return _exams.where((exam) =>
+        exam['deleted'] != true &&
+        exam['_syncDeleted'] != true &&
+        !WindowsExamPolicy.archived(exam, now));
+  }
+
+  List<Map<String, dynamic>> get _visibleExams => _activeExams
+      .where((exam) => _sessionFilter.isEmpty ||
+          exam['academicSession']?.toString() == _sessionFilter)
+      .toList();
 
   List<Map<String, dynamic>> get _visibleResults {
     final examIds = _visibleExams.map((exam) => exam['examId']?.toString()).toSet();
     return _results.where((result) =>
         result['deleted'] != true &&
         result['_syncDeleted'] != true &&
-        (_sessionFilter.isEmpty ||
-            examIds.contains(result['examId']?.toString()))).toList();
+        examIds.contains(result['examId']?.toString())).toList();
   }
 
   List<List<Map<String, dynamic>>> _examGroups() {
@@ -21419,6 +21432,20 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
     final subjectsByClass = <String, TextEditingController>{};
     final fullByClass = <String, TextEditingController>{};
     final passByClass = <String, TextEditingController>{};
+    final customSubjects = <String>{};
+    final customFull = <String>{};
+    final customPass = <String>{};
+
+    void updateInherited(
+      Map<String, TextEditingController> fields,
+      Set<String> customized,
+      String value,
+    ) {
+      for (final entry in fields.entries) {
+        if (!customized.contains(entry.key)) entry.value.text = value;
+      }
+    }
+
     String? dialogError;
     bool isFinalExam=false;
 
@@ -21580,6 +21607,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                           const SizedBox(height: 10),
                           TextField(
                             controller: defaultSubjects,
+                            onChanged: (value) => updateInherited(subjectsByClass, customSubjects, value),
                             minLines: 1,
                             maxLines: 2,
                             style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
@@ -21594,6 +21622,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                               Expanded(
                                 child: TextField(
                                   controller: defaultFull,
+                            onChanged: (value) => updateInherited(fullByClass, customFull, value),
                                   keyboardType: TextInputType.number,
                                   style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                                   decoration: _dialogInput(
@@ -21606,6 +21635,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                               Expanded(
                                 child: TextField(
                                   controller: defaultPass,
+                            onChanged: (value) => updateInherited(passByClass, customPass, value),
                                   keyboardType: TextInputType.number,
                                   style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                                   decoration: _dialogInput(
@@ -21625,6 +21655,9 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                                   : () {
                                       for (final className in selectedClasses) {
                                         ensureClass(className);
+                                        customSubjects.remove(className);
+                                        customFull.remove(className);
+                                        customPass.remove(className);
                                         subjectsByClass[className]!.text =
                                             defaultSubjects.text;
                                         fullByClass[className]!.text =
@@ -21691,6 +21724,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                             children: [
                               TextField(
                                 controller: subjectsByClass[className],
+                                      onChanged: (_) { customSubjects.add(className); },
                                 minLines: 1,
                                 maxLines: 3,
                                 style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
@@ -21705,6 +21739,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                                   Expanded(
                                     child: TextField(
                                       controller: fullByClass[className],
+                                      onChanged: (_) { customFull.add(className); },
                                       keyboardType: TextInputType.number,
                                       style:
                                            TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
@@ -21718,6 +21753,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                                   Expanded(
                                     child: TextField(
                                       controller: passByClass[className],
+                                      onChanged: (_) { customPass.add(className); },
                                       keyboardType: TextInputType.number,
                                       style:
                                            TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
@@ -22054,6 +22090,27 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
       );
 
 
+  Future<void> _completeExam(String examId) async {
+    if (_saving) return;
+    final profile = FirebaseFirestore.instance.activeProfileId;
+    setState(() => _saving = true);
+    try {
+      await WindowsExamService.completeExam(examId);
+      if (FirebaseFirestore.instance.activeProfileId != profile) return;
+      _ExamCenterDataCache.invalidateAfterMutation();
+      if (!mounted) return;
+      await _load(silent: true);
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Exam completed. It remains in the Exam List for 15 days.'),
+      ));
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Completion blocked: $error')));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   Future<void> _deleteUnusedExam(Map<String, dynamic> exam) async {
     if (_saving) return;
     final examId = exam['examId']?.toString() ?? '';
@@ -22063,13 +22120,18 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
         Text('Cannot delete this exam while saved marks/results exist.')));
       return;
     }
+    final db = FirebaseFirestore.instance;
+    final profile = db.activeProfileId;
+    final school = db.activeProfileIdentity['schoolSyncId'];
+    bool sameSchool() => db.activeProfileId == profile &&
+        db.activeProfileIdentity['schoolSyncId'] == school;
     final name = exam['examName']?.toString() ?? 'Exam';
     final className = exam['studentClass']?.toString() ?? 'Class';
     final confirmed = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (ctx) { WindowsAppearance.watch(ctx); return AlertDialog(
-        title: const Text('Delete unused exam?'),
+        title: const Text('Are you sure you want to delete this exam?'),
         content: Text('Delete "$name" for $className? '
           'Only an exam with no saved results can be deleted. '
           'The cloud and other PCs will receive the deletion through existing sync.'),
@@ -22084,9 +22146,25 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
     if (confirmed != true || !mounted) return;
     setState(() => _saving = true);
     try {
+      if (!sameSchool()) return;
+      final target = 'exams/$examId';
+      final approval = await requestWindowsAdminApproval(
+        context, scope: 'protected-settings', target: target,
+      );
+      if (approval == null || !mounted || !sameSchool()) return;
+      await WindowsAdminSecurity.consumeApproval(
+        token: approval, scope: 'protected-settings', target: target,
+      );
+      if (!mounted || !sameSchool()) return;
       await WindowsExamService.deleteUnusedExam(examId);
+      if (!sameSchool()) return;
+      _ExamCenterDataCache.invalidateAfterMutation();
       if (!mounted) return;
-      await _load();
+      setState(() {
+        _exams.removeWhere((row) => row['examId']?.toString() == examId);
+        if (_selectedPromotionExamId == examId) _selectedPromotionExamId = '';
+      });
+      await _load(silent: true);
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Unused exam deleted. Sync will deliver the deletion.')));
     } catch (error) {
@@ -22228,6 +22306,15 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                               label: const Text('Marks & Results'),
                             ),
                             const SizedBox(width: 8),
+                            if (exam['completedAt'] != null)
+                              const Text('Completed')
+                            else TextButton(
+                              onPressed: _saving || results.isEmpty ? null : () {
+                                Navigator.pop(dialogContext);
+                                _completeExam(id);
+                              },
+                              child: const Text('Mark as Completed'),
+                            ),
                             IconButton(
                               key: ValueKey('delete-exam-$id'),
                               tooltip: results.isNotEmpty
@@ -22703,52 +22790,10 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
     );
   }
 
-  Widget _emptyState() => Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 42),
-        decoration: BoxDecoration(
-          color: WindowsAppearance.background(const Color(0xFF172229)),
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
-        ),
-        child: Column(
-          children: [
-            Icon(
-              Icons.add_task_rounded,
-              color: WindowsAppearance.foreground(Colors.orangeAccent),
-              size: 46,
-            ),
-            const SizedBox(height: 13),
-             Text(
-              'Create your first exam',
-              style: TextStyle(fontFamily: 'Segoe UI', 
-                color: WindowsAppearance.foreground(Colors.white),
-                fontSize: 17,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-            const SizedBox(height: 5),
-             Text(
-              'Final Exam, Half Yearly, Unit Test — ek exam ke andar Class 1–10 customize karein.',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white38), fontSize: 10.5),
-            ),
-            const SizedBox(height: 16),
-            ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: WindowsAppearance.primary,
-                foregroundColor: WindowsAppearance.onPrimary,
-              ),
-              onPressed: _saving ? null : _createExam,
-              icon: const Icon(Icons.add_rounded),
-              label: const Text('Create Exam'),
-            ),
-          ],
-        ),
-      );
-
   Widget _examListPanel(List<Map<String, dynamic>> exams, String selectedId,
       List<List<Map<String, dynamic>>> groups) {
+    final hasActiveExams = _activeExams.isNotEmpty;
+    final canShowCreate = !_loading && _error == null;
     final white = WindowsAppearance.foreground(Colors.white);
     final selected = exams.where((exam) => exam['examId']?.toString() == selectedId).toList();
     final current = selected.isEmpty ? null : selected.first;
@@ -22766,7 +22811,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
           const SizedBox(width: 8),
           Expanded(child: Text('Exam List', style: TextStyle(
               fontSize: 18, fontWeight: FontWeight.w800, color: white))),
-          IconButton(
+          if (canShowCreate && hasActiveExams) IconButton(
             tooltip: 'Create Exam', onPressed: _saving ? null : _createExam,
             icon: Icon(Icons.add_circle_outline_rounded,
                 color: WindowsAppearance.foreground(const Color(0xFF9EDBE8)))),
@@ -22781,12 +22826,14 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
               Icon(Icons.event_note_rounded, size: 42,
                   color: WindowsAppearance.foreground(const Color(0xFF9FDDE6))),
               const SizedBox(height: 10),
-              Text('No exams yet', style: TextStyle(
+              Text(hasActiveExams ? 'No exams match these filters' : 'No active exams', style: TextStyle(
                   color: white, fontSize: 15, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              FilledButton.icon(onPressed: _saving ? null : _createExam,
-                  icon: const Icon(Icons.add_rounded),
-                  label: const Text('Create First Exam')),
+              if (canShowCreate && !hasActiveExams) ...[
+                const SizedBox(height: 8),
+                FilledButton.icon(onPressed: _saving ? null : _createExam,
+                    icon: const Icon(Icons.add_rounded),
+                    label: const Text('Create Exam')),
+              ],
             ]))
           : ListView.separated(
               itemCount: exams.length,
@@ -22934,15 +22981,6 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
           ),
           IconButton(tooltip:'Refresh',onPressed:_loading?null:_load,
               icon:const Icon(Icons.refresh_rounded)),
-          const SizedBox(width:8),
-          Padding(padding:const EdgeInsets.symmetric(vertical:8,horizontal:12),
-            child:FilledButton.icon(
-              onPressed:_saving?null:_createExam,
-              icon:const Icon(Icons.add_rounded),
-              label:const Text('Create Exam'),
-              style:FilledButton.styleFrom(
-                  backgroundColor:WindowsAppearance.primary,
-                  foregroundColor:WindowsAppearance.onPrimary))),
         ],
       ),
       body: _loading ? Center(child: CircularProgressIndicator(
