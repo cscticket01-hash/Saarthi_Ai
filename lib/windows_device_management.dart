@@ -184,9 +184,9 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
   Future<void> revoke(Map<String,dynamic> row) async {
     final identity = row['deviceIdentity'];
     final session = ManagedSchoolSession.changed.value;
-    if (revoking || identity == current || identity is! String || !identityPattern.hasMatch(identity)) return;
+    if (revoking || row['status'] != 'active' || identity == current || identity is! String || !identityPattern.hasMatch(identity)) return;
     final queueOnly = !verified;
-    if (queueOnly ? cacheScope == null : !canRevoke) return;
+    if (queueOnly ? cacheScope == null || pendingRevoke != null : !canRevoke) return;
     final approved = await showDialog<bool>(context: context, builder: (context) { WindowsAppearance.watch(context); return  AlertDialog(
       title: Text(queueOnly ? 'Queue device removal?' : 'Revoke this PC?'),
       content: Text(queueOnly
@@ -198,7 +198,7 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
     if (approved != true || !mounted || session != ManagedSchoolSession.changed.value || revoking || identity==current) return;
     if (queueOnly) {
       final scope = cacheScope;
-      if (scope == null) return;
+      if (scope == null || pendingRevoke != null) return;
       try {
         await WindowsDeviceDirectoryCache.setPendingRevoke(scope, identity);
         if (mounted && session == ManagedSchoolSession.changed.value) setState(() => pendingRevoke = identity);
@@ -309,7 +309,7 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
                   );
                 }
                 Widget action(Map<String,dynamic> row) => row['status']=='active' && row['deviceIdentity']!=current
-                  ? TextButton(onPressed:revoking || (verified ? !canRevoke : cacheScope == null) ? null:()=>revoke(row),child:Text(pendingRevoke == row['deviceIdentity'] ? (verified ? 'Confirm removal' : 'Removal queued') : 'Remove'))
+                  ? TextButton(onPressed:revoking || (verified ? !canRevoke : cacheScope == null || pendingRevoke != null) ? null:()=>revoke(row),child:Text(pendingRevoke == row['deviceIdentity'] ? (verified ? 'Confirm removal' : 'Removal queued') : verified ? 'Remove' : 'Queue removal'))
                   :  Text('—',style:TextStyle(fontFamily: 'Segoe UI', color:muted));
                 return Column(children:[
                   if(!compact)  Padding(padding:EdgeInsets.symmetric(horizontal:20,vertical:12),child:Row(children:[
@@ -322,6 +322,7 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
                 ]);
               }),
             ])),
+          if(verified && !canRevoke)  Padding(padding:EdgeInsets.only(top:12),child:Text("Device enrollment is active. Revoke will be available after this school's device-access setup is completed.",style:TextStyle(fontFamily: 'Segoe UI', color:muted,fontSize:12))),
           if (devices.any((row) => row['status'] == 'active')) ...[
             const SizedBox(height: 16),
             _DeviceNetworkRadar(nodes: [
@@ -335,7 +336,6 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
                   ),
             ]),
           ],
-          if(verified && !canRevoke)  Padding(padding:EdgeInsets.only(top:12),child:Text("Device enrollment is active. Revoke will be available after this school's device-access setup is completed.",style:TextStyle(fontFamily: 'Segoe UI', color:muted,fontSize:12))),
            Padding(padding:EdgeInsets.only(top:14),child:Text('Offline appears when a verified PC heartbeat is stale. Wi-Fi/LAN is only the most recently reported adapter on a recently active PC, not proof of internet connectivity.',style:TextStyle(fontFamily: 'Segoe UI', color:muted,fontSize:12))),
         ]),
       )),
@@ -470,9 +470,10 @@ class _DeviceRadarLines extends CustomPainter {
       final path = Path()
         ..moveTo(0, size.height / 2)
         ..cubicTo(size.width * .45, size.height / 2, size.width * .55, y, size.width, y);
-      final metrics = path.computeMetrics();
-      if (metrics.isEmpty) continue;
-      final metric = metrics.first;
+      // PathMetrics is lazy; consume the iterator exactly once.
+      final metrics = path.computeMetrics().iterator;
+      if (!metrics.moveNext()) continue;
+      final metric = metrics.current;
       final paint = Paint()..color = connected ? color.withAlpha(115) : line
         ..style = PaintingStyle.stroke..strokeWidth = 1.5;
       if (connected) {
