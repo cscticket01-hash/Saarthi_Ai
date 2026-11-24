@@ -33,6 +33,71 @@ function owned(school:string,owner:Json|null):Json {
  if(owner.schoolId!==school)reject('DOMAIN_FOREIGN_OWNER',403);
  return owner;
 }
+// Validate the modern exact-paise ledger at the authoritative CAS boundary.
+// Legacy amount-only rows remain readable and compatible; a modern row must
+// never fall back to the legacy schema to discard its financial history.
+function salaryPaise(value:unknown):number {
+ if(typeof value!=='number'||!Number.isSafeInteger(value)||value<0)reject('SALARY_INVALID_AMOUNT',400);
+ return value;
+}
+function salaryEvents(value:unknown):Json[] {
+ if(value===undefined||value===null)return [];
+ if(!Array.isArray(value)||value.some(v=>!v||typeof v!=='object'||Array.isArray(v)))reject('SALARY_INVALID_HISTORY',400);
+ return value as Json[];
+}
+function salaryCanonical(value:unknown):string {
+ if(Array.isArray(value))return '['+value.map(salaryCanonical).join(',')+']';
+ if(value&&typeof value==='object')return '{'+Object.keys(value).sort().map(k=>JSON.stringify(k)+':'+salaryCanonical((value as Json)[k])).join(',')+'}';
+ return JSON.stringify(value)??'null';
+}
+function salaryAppendOnly(before:Json[],after:Json[]):void {
+ if(after.length<before.length||before.some((event,i)=>salaryCanonical(event)!==salaryCanonical(after[i])))reject('SALARY_HISTORY_IMMUTABLE');
+}
+function salaryEventTotal(row:Json):number {
+ const payments=salaryEvents(row.payments),corrections=salaryEvents(row.paymentCorrections);
+ const effective=new Map<string,number>(),originals=new Map<string,number>(),ids=new Set<string>();
+ for(const p of payments){
+  if(!nonempty(p.id)||ids.has(p.id))reject('SALARY_DUPLICATE_EVENT');
+  const amount=salaryPaise(p.amountPaise);
+  if(!amount)reject('SALARY_INVALID_AMOUNT',400);
+  ids.add(p.id);effective.set(p.id,amount);originals.set(p.id,amount);
+ }
+ for(const c of corrections){
+  if(!nonempty(c.id)||ids.has(c.id)||!nonempty(c.paymentId)||!effective.has(c.paymentId))reject('SALARY_INVALID_CORRECTION');
+  const before=salaryPaise(c.previousPaise),after=salaryPaise(c.correctedPaise);
+  if(before!==effective.get(c.paymentId)||before===after||c.originalPaise!==originals.get(c.paymentId)||c.differencePaise!==after-before)reject('SALARY_INVALID_CORRECTION');
+  ids.add(c.id);effective.set(c.paymentId,after);
+ }
+ return salaryPaise([...effective.values()].reduce((a,b)=>a+b,0));
+}
+function validateSalaryLedger(current:Json|null,next:Json):void {
+ if(next.netPaise===undefined){
+  if(current?.netPaise!==undefined)reject('SALARY_SCHEMA_DOWNGRADE');
+  return;
+ }
+ const net=salaryPaise(next.netPaise),paid=salaryPaise(next.paidPaise),balance=salaryPaise(next.balancePaise);
+ if(paid>net||balance!==net-paid)reject('SALARY_BALANCE_MISMATCH');
+ const expectedStatus=paid===net?'Paid':paid===0?'Pending':'Part paid';
+ if(next.status!==expectedStatus)reject('SALARY_STATUS_MISMATCH');
+ if(next.amount!==undefined&&(typeof next.amount!=='number'||Math.round(next.amount*100)!==net))reject('SALARY_NET_MISMATCH');
+ const keys=['basicPaise','allowancePaise','bonusPaise','overtimePaise','deductionPaise'];
+ if(keys.some(k=>next[k]!==undefined)){
+  const amounts=keys.map(k=>salaryPaise(next[k]??0));
+  if(amounts[0]+amounts[1]+amounts[2]+amounts[3]-amounts[4]!==net)reject('SALARY_NET_MISMATCH');
+ }
+ const prior=current&&!current._syncDeleted?current:null;
+ if(prior&&prior.month!==undefined&&prior.month!==next.month)reject('SALARY_MONTH_IMMUTABLE');
+ salaryAppendOnly(salaryEvents(prior?.payments),salaryEvents(next.payments));
+ salaryAppendOnly(salaryEvents(prior?.paymentCorrections),salaryEvents(next.paymentCorrections));
+ // Existing unitemized legacy balances must be retained, not manufactured.
+ let opening=0;
+ if(prior){
+  const priorPaid=prior.paidPaise!==undefined?salaryPaise(prior.paidPaise):
+   String(prior.status).toLowerCase()==='paid'?salaryPaise(prior.netPaise??Math.round(Number(prior.amount??0)*100)):0;
+  opening=priorPaid-salaryEventTotal(prior);
+ }
+ if(opening<0||paid!==opening+salaryEventTotal(next))reject('SALARY_PAYMENT_TOTAL_MISMATCH');
+}
 export function validateDomainCandidate(input:DomainCandidate):void {
  const {schoolId,collection,id,operation,current,next,readOwner}=input;
  if(!domainCollections.has(collection))reject('DOMAIN_COLLECTION_NOT_ADMITTED',412);
@@ -44,6 +109,7 @@ export function validateDomainCandidate(input:DomainCandidate):void {
   return;
  }
  if(next._syncDeleted===true)reject('DOMAIN_INVALID_WRITE',400);
+ if(collection==='teacher_salary')validateSalaryLedger(current,next);
  // A correction edits the original event. It cannot reassign a prior person's
  // payment/payroll history to another generation under the same event key.
  if(current&&!current._syncDeleted&&['fee_payments','fee_ledger','teacher_salary'].includes(collection)){
