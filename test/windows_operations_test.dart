@@ -329,6 +329,29 @@ void main() {
     expect(saved['balancePaise'], 0);
     expect(saved['payments'], hasLength(2));
   });
+  test('legacy normalization derives only known amounts and preserves ambiguous rows',(){
+    expect(StaffPayroll.legacyProposal({'month':'2026-10','netPaise':10000,'paidPaise':3000,'status':'Part paid'}),{'balancePaise':7000});
+    expect(StaffPayroll.legacyProposal({'month':'2026-10','amount':100,'status':'Paid'}),{'netPaise':10000,'paidPaise':10000,'balancePaise':0,'status':'Paid'});
+    expect(StaffPayroll.legacyProposal({'month':'2026-10','amount':100,'status':'Part paid'}),isNull);
+  });
+  test('advance ledger rejects duplicate events and repayments above outstanding',(){
+    final advance={'id':'a','type':'advance','amountPaise':5000};
+    final repayment={'id':'r','type':'repayment','amountPaise':2000};
+    expect(StaffPayroll.advanceBalance([advance,repayment]),3000);
+    expect(()=>StaffPayroll.advanceBalance([advance,advance]),throwsStateError);
+    expect(()=>StaffPayroll.advanceBalance([advance,{'id':'r','type':'repayment','amountPaise':6000}]),throwsStateError);
+  });
+  test('closed payroll month blocks future salary creation and permits reopening',()async{
+    final profile=db.activeProfileId;
+    final person=await teacher();
+    await WindowsSectionLocks.addPassword(sectionKey:'admin_section',password:'month-admin-456');
+    await StaffPayroll.setMonthClosed(profile,'2026-11',closed:true,adminPassword:'month-admin-456');
+    expect(await StaffPayroll.monthClosed(profile,'2026-11'),true);
+    await expectLater(StaffPayroll.save(profile,person,'2026-11',basic:10000),throwsStateError);
+    await StaffPayroll.setMonthClosed(profile,'2026-11',closed:false,adminPassword:'month-admin-456');
+    final saved=await StaffPayroll.save(profile,person,'2026-11',basic:10000);
+    expect(saved['netPaise'],10000);
+  });
   test('unpaid dates require distinct past dates without verified check-in',(){
     final today=DateTime(2026,11,24);
     expect(StaffPayroll.validatedUnpaidDays('2026-11','2026-11-01, 2026-11-02',{},today),{'2026-11-01','2026-11-02'});
