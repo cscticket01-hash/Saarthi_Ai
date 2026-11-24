@@ -21312,13 +21312,18 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
           e['_syncDeleted'] != true)
       .toList();
 
-  List<Map<String, dynamic>> get _visibleExams =>
-      _exams.where((exam) =>
-          exam['deleted'] != true &&
-          exam['_syncDeleted'] != true &&
-          !WindowsExamPolicy.archived(exam, DateTime.now()) &&
-          (_sessionFilter.isEmpty ||
-              exam['academicSession']?.toString() == _sessionFilter)).toList();
+  Iterable<Map<String, dynamic>> get _activeExams {
+    final now = DateTime.now();
+    return _exams.where((exam) =>
+        exam['deleted'] != true &&
+        exam['_syncDeleted'] != true &&
+        !WindowsExamPolicy.archived(exam, now));
+  }
+
+  List<Map<String, dynamic>> get _visibleExams => _activeExams
+      .where((exam) => _sessionFilter.isEmpty ||
+          exam['academicSession']?.toString() == _sessionFilter)
+      .toList();
 
   List<Map<String, dynamic>> get _visibleResults {
     final examIds = _visibleExams.map((exam) => exam['examId']?.toString()).toSet();
@@ -22779,52 +22784,10 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
     );
   }
 
-  Widget _emptyState() => Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 42),
-        decoration: BoxDecoration(
-          color: WindowsAppearance.background(const Color(0xFF172229)),
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
-        ),
-        child: Column(
-          children: [
-            Icon(
-              Icons.add_task_rounded,
-              color: WindowsAppearance.foreground(Colors.orangeAccent),
-              size: 46,
-            ),
-            const SizedBox(height: 13),
-             Text(
-              'Create your first exam',
-              style: TextStyle(fontFamily: 'Segoe UI', 
-                color: WindowsAppearance.foreground(Colors.white),
-                fontSize: 17,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-            const SizedBox(height: 5),
-             Text(
-              'Final Exam, Half Yearly, Unit Test — ek exam ke andar Class 1–10 customize karein.',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white38), fontSize: 10.5),
-            ),
-            const SizedBox(height: 16),
-            ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: WindowsAppearance.primary,
-                foregroundColor: WindowsAppearance.onPrimary,
-              ),
-              onPressed: _saving ? null : _createExam,
-              icon: const Icon(Icons.add_rounded),
-              label: const Text('Create Exam'),
-            ),
-          ],
-        ),
-      );
-
   Widget _examListPanel(List<Map<String, dynamic>> exams, String selectedId,
       List<List<Map<String, dynamic>>> groups) {
+    final hasActiveExams = _activeExams.isNotEmpty;
+    final canShowCreate = !_loading && _error == null;
     final white = WindowsAppearance.foreground(Colors.white);
     final selected = exams.where((exam) => exam['examId']?.toString() == selectedId).toList();
     final current = selected.isEmpty ? null : selected.first;
@@ -22842,7 +22805,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
           const SizedBox(width: 8),
           Expanded(child: Text('Exam List', style: TextStyle(
               fontSize: 18, fontWeight: FontWeight.w800, color: white))),
-          IconButton(
+          if (canShowCreate && hasActiveExams) IconButton(
             tooltip: 'Create Exam', onPressed: _saving ? null : _createExam,
             icon: Icon(Icons.add_circle_outline_rounded,
                 color: WindowsAppearance.foreground(const Color(0xFF9EDBE8)))),
@@ -22857,12 +22820,14 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
               Icon(Icons.event_note_rounded, size: 42,
                   color: WindowsAppearance.foreground(const Color(0xFF9FDDE6))),
               const SizedBox(height: 10),
-              Text('No exams yet', style: TextStyle(
+              Text(hasActiveExams ? 'No exams match these filters' : 'No active exams', style: TextStyle(
                   color: white, fontSize: 15, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              FilledButton.icon(onPressed: _saving ? null : _createExam,
-                  icon: const Icon(Icons.add_rounded),
-                  label: const Text('Create First Exam')),
+              if (canShowCreate && !hasActiveExams) ...[
+                const SizedBox(height: 8),
+                FilledButton.icon(onPressed: _saving ? null : _createExam,
+                    icon: const Icon(Icons.add_rounded),
+                    label: const Text('Create Exam')),
+              ],
             ]))
           : ListView.separated(
               itemCount: exams.length,
