@@ -1058,6 +1058,47 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
       result.state!=='superseded')fail(503,'Student slot review settlement unverified');
    return {success:true,...result};
   }
+  if(operation==='payroll-recovery-publish'||operation==='payroll-recovery-receipt'){
+   // Opt-in TEST only until local durable admission and the signed Drive
+   // paired write/recovery proof are complete. Never fall back to two writes.
+   if(!atomicBundleTestSchools.includes(m.schoolId))fail(412,'Payroll recovery pilot is disabled','ATOMIC_BUNDLE_TEST_DISABLED');
+   if(b.confirmIsolatedBundleTest!==true||!/^[A-Za-z0-9_-]{16,100}$/.test(b.bundleId||'')||
+      !Array.isArray(b.operations)||b.operations.length!==2||JSON.stringify(b).length>256000||
+      b.media!==undefined||b.mediaManifestHash!==undefined)fail(400,'Invalid paired payroll request');
+   const [salary,advance]=b.operations;
+   if(salary?.collection!=='teacher_salary'||advance?.collection!=='school_settings'||
+      !/^payroll_advance_[a-f0-9]{64}$/.test(advance?.id||'')||
+      b.operations.some(op=>!op||Object.keys(op).some(k=>!['collection','id','operation','operationId','expectedRevision','data'].includes(k))||
+       op.operation!=='write'||typeof op.id!=='string'||!op.id||op.id.length>200||op.id.includes('/')||
+       !/^[A-Za-z0-9_-]{16,100}$/.test(op.operationId||'')||
+       typeof op.expectedRevision!=='string'||!op.expectedRevision||op.expectedRevision.length>100||
+       !op.data||typeof op.data!=='object'||Array.isArray(op.data)||op.data.schoolId!==m.schoolId)||
+      salary.operationId===advance.operationId)fail(400,'Exact same-school payroll recovery snapshots required');
+   const operations=b.operations.map(item=>({...item,data:clean(item.data)}));
+   const wire={bundleId:b.bundleId,operations};
+   const verifiedReceipt=result=>result?.schoolId===m.schoolId&&result.bundleProtocol===1&&result.bundleId===b.bundleId&&
+    result.cloudState==='committed'&&['pending','verified'].includes(result.backupState)&&
+    Array.isArray(result.acknowledgements)&&result.acknowledgements.length===2&&
+    result.acknowledgements.every((ack,i)=>ack.operationId===operations[i].operationId&&
+     typeof ack.recordRevision==='string'&&ack.recordRevision.startsWith('live-')&&ack.cloudState==='committed');
+   if(operation==='payroll-recovery-receipt'){
+    const result=await liveSync.command(m.schoolId,{command:'bundleReceipt',...wire});
+    if(result?.found===false&&result.schoolId===m.schoolId)return {success:true,schoolId:m.schoolId,bundleProtocol:1,found:false};
+    if(result?.found!==true||!verifiedReceipt(result.receipt)||!Array.isArray(result.backups)||result.backups.length!==2||
+       !result.backups.every((proof,i)=>proof.operationId===operations[i].operationId&&proof.collection===operations[i].collection&&
+         proof.id===operations[i].id&&proof.recordRevision===result.receipt.acknowledgements[i].recordRevision)||
+       result.driveVerified!==result.backups.every(proof=>proof.driveVerified===true))
+      fail(502,'Paired payroll receipt cannot be verified');
+    return {success:true,schoolId:m.schoolId,...result};
+   }
+   const result=await liveMigration.live(m.schoolId,'teacher_salary',
+     ()=>liveSync.command(m.schoolId,{command:'bundleCommit',...wire}),
+     {action:'managed_records',operation:'write',collection:'teacher_salary',id:salary.id,
+      operationId:salary.operationId,expectedRecordRevision:salary.expectedRevision,data:operations[0].data},
+     ['school_settings']);
+   if(!verifiedReceipt(result))fail(502,'Paired payroll acknowledgement cannot be verified');
+   return {success:true,schoolId:m.schoolId,...result};
+  }
   if(operation==='bundle-media'){
    if(!atomicBundleTestSchools.includes(m.schoolId))
      fail(412,'Atomic media pilot is disabled','ATOMIC_BUNDLE_TEST_DISABLED');
