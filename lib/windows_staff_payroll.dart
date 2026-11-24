@@ -231,6 +231,8 @@ class StaffPayroll {
     final next = paid(row) + correctedPaise - effective;
     if (next < 0 || next > total(row)) throw StateError(
       'Correction exceeds the saved net salary. Review Edit salary first; original payment retained.');
+    await WindowsLocalSecurity.initialize();
+    _sameSchool(profile);
     final timestamp = DateTime.now().toUtc().millisecondsSinceEpoch;
     corrections.add({
       'id': correctionId,
@@ -274,14 +276,29 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
   final Set<String> _selected = {};
   bool _working = false;
   int _loadGeneration = 0;
+  StreamSubscription<QuerySnapshot<Map<String,dynamic>>>? _salarySubscription;
   @override
   void initState() { super.initState(); _profile = FirebaseFirestore.instance.activeProfileId; _load(); }
+  @override
+  void dispose() { _loadGeneration++; _salarySubscription?.cancel(); super.dispose(); }
+  void _changeMonth(DateTime month) {
+    setState(() { _month = DateTime(month.year,month.month); _selected.clear(); _rows=[]; });
+    _load();
+  }
   Future<void> _load() async {
+    if(!mounted)return;
     final generation = ++_loadGeneration;
+    final month = StaffPayroll.monthKey(_month);
+    final previous = _salarySubscription;
+    _salarySubscription = null;
     setState(() { _loading = true; _error = null; });
     try {
+      await previous?.cancel();
+      if(!mounted||generation!=_loadGeneration)return;
+      StaffPayroll._sameSchool(_profile);
       final people = await StaffPayroll.staff(_profile);
-      final salary = await FirebaseFirestore.instance.collection('teacher_salary').get();
+      final query = FirebaseFirestore.instance.collection('teacher_salary').where('month',isEqualTo:month);
+      final salary = await query.get();
       final branding=(await FirebaseFirestore.instance.collection('school_config').doc('school_profile_cache').get()).data();
       final local = await FirebaseFirestore.instance.localPersistenceEnabled();
       StaffPayroll._sameSchool(_profile);
@@ -289,6 +306,14 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
         _schoolName=branding?['schoolName']?.toString()??'';
         _staff = people; _rows = salary.docs.map((d) => {...d.data(), 'id': d.id}).toList(); _local = local;
       });
+      if(mounted&&generation==_loadGeneration){
+        _salarySubscription=query.snapshots().listen((snapshot){
+          if(!mounted||generation!=_loadGeneration||FirebaseFirestore.instance.activeProfileId!=_profile)return;
+          setState(()=>_rows=snapshot.docs.map((d)=>{...d.data(),'id':d.id}).toList());
+        },onError:(Object error){
+          if(mounted&&generation==_loadGeneration)setState(()=>_error='Salary live refresh unavailable: $error');
+        });
+      }
     } catch (e) { if (mounted && generation == _loadGeneration) setState(() => _error = '$e'); }
     finally { if (mounted && generation == _loadGeneration) setState(() => _loading = false); }
   }
@@ -321,7 +346,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
   Future<void> _salary(Map<String, dynamic> person, Map<String, dynamic>? old) async {
     final month = StaffPayroll.monthKey(_month);
     final adminPassword = old == null ? null : await _adminAuthorization('Edit Salary');
-    if (old != null && adminPassword == null || !mounted) return;
+    if ((old != null && adminPassword == null) || !mounted) return;
     const keys = ['basicPaise', 'allowancePaise', 'bonusPaise', 'overtimePaise', 'deductionPaise'];
     const labels = ['Basic salary', 'Allowances', 'Bonus', 'Overtime', 'Deductions / advance adjustment'];
     final controllers = [for (final k in keys) TextEditingController(text: StaffPayroll.format((old?[k] as num?)?.toInt() ?? 0))];
@@ -344,7 +369,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     final amount = TextEditingController(text: StaffPayroll.format(StaffPayroll.total(row) - StaffPayroll.paid(row)));
     final reference = TextEditingController();
     var mode = 'Bank transfer'; var date = DateTime.now();
-    final paymentId = '${row['id']}:${DateTime.now().microsecondsSinceEpoch}';
+    final paymentId = 'payment:${SchoolPersonIdentity.newGeneration()}';
     await _editor('Record payment • ${row['name']}', (setD) => [
       TextField(controller: amount, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'Amount', prefixText: '₹ ')),
       DropdownButtonFormField<String>(isExpanded: true, initialValue: mode, items: ['Cash', 'Bank transfer', 'UPI', 'Cheque'].map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(), onChanged: (v) => setD(() => mode = v!)),
@@ -441,7 +466,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     int effective(String id) => SalaryPaymentCorrectionPolicy.effectiveAmount(
       choices[id]!,corrections);
     amount.text=reverse?'0.00':StaffPayroll.format(effective(selected));
-    final correctionId='${salary['id']}:correction:${DateTime.now().microsecondsSinceEpoch}';
+    final correctionId='correction:${SchoolPersonIdentity.newGeneration()}';
     try {
       await _editor('${reverse?'Reverse Payment':'Modify Payment'} • ${salary['name']}', (setD) => [
         DropdownButtonFormField<String>(
@@ -561,12 +586,12 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
       body:_loading ? Center(child:CircularProgressIndicator()) : LayoutBuilder(builder:(context,constraints){ WindowsAppearance.watch(context); return
         ListView(padding:const EdgeInsets.all(20),children:[
           Wrap(spacing:12,runSpacing:12,crossAxisAlignment:WrapCrossAlignment.center,children:[
-            IconButton(tooltip:'Previous month',onPressed:()=>setState((){_month=DateTime(_month.year,_month.month-1);_selected.clear();}),icon:Icon(Icons.chevron_left)),
+            IconButton(tooltip:'Previous month',onPressed:()=>_changeMonth(DateTime(_month.year,_month.month-1)),icon:Icon(Icons.chevron_left)),
             OutlinedButton.icon(icon:Icon(Icons.calendar_month),label:Text(_monthLabel),onPressed:() async {
               final day=await showDatePicker(context:context,initialDate:_month,firstDate:DateTime(2000),lastDate:DateTime(2100));
-              if(day!=null&&mounted)setState((){_month=DateTime(day.year,day.month);_selected.clear();});
+              if(day!=null&&mounted)_changeMonth(day);
             }),
-            IconButton(tooltip:'Next month',onPressed:()=>setState((){_month=DateTime(_month.year,_month.month+1);_selected.clear();}),icon:Icon(Icons.chevron_right)),
+            IconButton(tooltip:'Next month',onPressed:()=>_changeMonth(DateTime(_month.year,_month.month+1)),icon:Icon(Icons.chevron_right)),
             FilledButton.icon(onPressed:_staff.isEmpty?null:_calculatePayroll,icon:Icon(Icons.calculate_outlined),label:Text('Calculate Payroll')),
             FilledButton.icon(style:FilledButton.styleFrom(backgroundColor: WindowsAppearance.primary, foregroundColor: WindowsAppearance.onPrimary),onPressed:_selected.isEmpty?null:_paySelected,icon:Icon(Icons.done_all),label:Text('Record Selected Payments')),
             OutlinedButton.icon(key: const ValueKey('salary-history'), onPressed:()=>_history(),icon:Icon(Icons.history),label:Text('Payment History')),
