@@ -1262,11 +1262,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                 ],
               ),
             );
-            final activityContents = Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Row(
+            final activityHeader = const Row(
                     children: [
                       Icon(Icons.insights, color: _cyan),
                       SizedBox(width: 10),
@@ -1280,7 +1276,11 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                         ),
                       ),
                     ],
-                  ),
+                  );
+            final activityContents = Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                   const SizedBox(height: 12),
                   _RecentVerifiedSyncActivity(
                     event: activityEvents.isEmpty
@@ -1330,6 +1330,12 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                           : Text('${raw['syncState'] ?? raw['state'] ?? 'pending'}',
                               style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Color(0xFFFFC153)))),
                       ),
+                ],
+              );
+            final activityLinks = Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
                   const SizedBox(height: 10),
                   TextButton.icon(
                     onPressed: () => _jump(_queueKey),
@@ -1344,7 +1350,11 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                 ],
               );
             if (constraints.maxWidth < 960) {
-              return Column(children: [progress, const SizedBox(height: 12), _panelBox(activityContents)]);
+              return Column(children: [progress, const SizedBox(height: 12),
+                _panelBox(Column(mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [activityHeader, activityContents, activityLinks])),
+              ]);
             }
             // The flow determines the row height. Excess queue content scrolls inside its card.
             return Table(
@@ -1356,7 +1366,17 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                 const SizedBox.shrink(),
                 TableCell(
                   verticalAlignment: TableCellVerticalAlignment.fill,
-                  child: _panelBox(SingleChildScrollView(child: activityContents)),
+                  child: _panelBox(Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      activityHeader,
+                      Expanded(child: SingleChildScrollView(
+                        primary: false,
+                        child: activityContents,
+                      )),
+                      activityLinks,
+                    ],
+                  )),
                 ),
               ])],
             );

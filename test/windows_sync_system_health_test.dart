@@ -3,6 +3,13 @@ import 'package:flutter_test/flutter_test.dart';
 import '../lib/windows_sync_system_health.dart';
 
 void main() {
+  testWidgets('disposing a real probe cancels its outstanding deadline', (tester) async {
+    final probe = SyncInternetProbe();
+    final pending = probe.check();
+    probe.dispose();
+    expect(await pending, InternetHealth.unknown);
+  });
+
   testWidgets('offline hides services; reconnection shows only verified results', (tester) async {
     var network = InternetHealth.offline;
     var repair = SyncHealth.failed;

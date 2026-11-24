@@ -9,18 +9,60 @@ enum SyncHealth { checking, healthy, failed, unknown }
 typedef SyncHealthProbe = Future<SyncHealth> Function();
 enum InternetHealth { connected, offline, unknown }
 
-// Read-only reachability; no school credentials or data leave the device.
-Future<InternetHealth> probeSyncInternet() async {
+// Cancel deadlines and sockets when the owning page is disposed. A late native
+// interface result must never start a new HTTP request for a closed page.
+class SyncInternetProbe {
+  bool _closed = false;
+  final _cancel = <void Function()>{};
+  final _clients = <HttpClient>{};
+
+  Future<T?> _bounded<T>(Future<T> work, Duration limit) {
+    if (_closed) return Future<T?>.value(null);
+    final done = Completer<T?>();
+    late final Timer timer;
+    late final void Function() cancel;
+    void finish(T? value) {
+      if (done.isCompleted) return;
+      timer.cancel();
+      _cancel.remove(cancel);
+      done.complete(value);
+    }
+    cancel = () => finish(null);
+    timer = Timer(limit, cancel);
+    _cancel.add(cancel);
+    work.then<void>(finish, onError: (Object error, StackTrace stack) {
+      if (done.isCompleted) return;
+      timer.cancel();
+      _cancel.remove(cancel);
+      done.completeError(error, stack);
+    });
+    return done.future;
+  }
+
+  void dispose() {
+    _closed = true;
+    for (final cancel in _cancel.toList()) { cancel(); }
+    for (final client in _clients.toList()) { client.close(force: true); }
+    _clients.clear();
+  }
+
+  // Read-only reachability; no school credentials or data leave the device.
+  Future<InternetHealth> check() async {
+    if (_closed) return InternetHealth.unknown;
   try {
-    final interfaces = await NetworkInterface.list(
+    final interfaces = await _bounded(NetworkInterface.list(
       includeLoopback: false, includeLinkLocal: false,
-    ).timeout(const Duration(seconds: 2));
-    if (interfaces.isEmpty) return InternetHealth.offline;
+    ), const Duration(seconds: 2));
+    if (_closed) return InternetHealth.unknown;
+    if (interfaces != null && interfaces.isEmpty) return InternetHealth.offline;
   } catch (_) {}
+  if (_closed) return InternetHealth.unknown;
   Future<InternetHealth> reach(Uri uri, int expectedCode) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 3);
+    if (_closed) return InternetHealth.unknown;
+    final client = HttpClient();
+    _clients.add(client);
     try {
-      return await (() async {
+      return await _bounded((() async {
         final request = await client.getUrl(uri);
         request.followRedirects = false;
         final response = await request.close();
@@ -30,7 +72,7 @@ Future<InternetHealth> probeSyncInternet() async {
           if (!body.contains('h=www.cloudflare.com')) return InternetHealth.unknown;
         }
         return InternetHealth.connected;
-      })().timeout(const Duration(seconds: 4));
+      })(), const Duration(seconds: 4)) ?? InternetHealth.unknown;
     } on SocketException {
       return InternetHealth.offline;
     } on TimeoutException {
@@ -39,6 +81,7 @@ Future<InternetHealth> probeSyncInternet() async {
       return InternetHealth.unknown;
     } finally {
       client.close(force: true);
+      _clients.remove(client);
     }
   }
   final results = await Future.wait([
@@ -48,6 +91,7 @@ Future<InternetHealth> probeSyncInternet() async {
   if (results.contains(InternetHealth.connected)) return InternetHealth.connected;
   if (results.every((v) => v == InternetHealth.offline)) return InternetHealth.offline;
   return InternetHealth.unknown;
+  }
 }
 
 class WindowsSyncSystemHealth extends StatefulWidget {
@@ -57,11 +101,11 @@ class WindowsSyncSystemHealth extends StatefulWidget {
     required this.selfRepair,
     required this.mobileServer,
     required this.isCurrentSchool,
-    this.internetProbe = probeSyncInternet,
+    this.internetProbe,
   });
   final SyncHealthProbe schoolServer, selfRepair, mobileServer;
   final bool Function() isCurrentSchool;
-  final Future<InternetHealth> Function() internetProbe;
+  final Future<InternetHealth> Function()? internetProbe;
 
   @override
   State<WindowsSyncSystemHealth> createState() => _WindowsSyncSystemHealthState();
@@ -75,6 +119,7 @@ class _WindowsSyncSystemHealthState extends State<WindowsSyncSystemHealth> {
     'Student Android App Server',
   ];
   final _states = List<SyncHealth>.filled(4, SyncHealth.unknown);
+  final _internet = SyncInternetProbe();
   Timer? _poll;
   bool _networkBusy = false, _serversBusy = false;
   int _generation = 0;
@@ -91,6 +136,7 @@ class _WindowsSyncSystemHealthState extends State<WindowsSyncSystemHealth> {
   void dispose() {
     _generation++;
     _poll?.cancel();
+    _internet.dispose();
     super.dispose();
   }
   bool get _current => mounted && widget.isCurrentSchool();
@@ -100,7 +146,7 @@ class _WindowsSyncSystemHealthState extends State<WindowsSyncSystemHealth> {
     _networkBusy = true;
     try {
       InternetHealth internet;
-      try { internet = await widget.internetProbe(); }
+      try { internet = await (widget.internetProbe ?? _internet.check)(); }
       catch (_) { internet = InternetHealth.unknown; }
       if (!_current) return;
       if (_network != internet) {
