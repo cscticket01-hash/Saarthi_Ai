@@ -81,7 +81,7 @@ const windowsThemePresets = <WindowsThemePreset>[
     'Aurora Liquid Glass',
     Color(0xFF436AE8),
     Color(0xFF7B73E8),
-    Color(0xFFDDE9FC),
+    Color(0xFF17243D),
     Color(0xFFD5E3FF),
     light: true,
   ),
