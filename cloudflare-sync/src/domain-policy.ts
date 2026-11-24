@@ -75,7 +75,7 @@ function validateSalaryLedger(current:Json|null,next:Json):void {
   if(current?.netPaise!==undefined)reject('SALARY_SCHEMA_DOWNGRADE');
   return;
  }
- const net=salaryPaise(next.netPaise),paid=salaryPaise(next.paidPaise),balance=salaryPaise(next.balancePaise);
+ const net=salaryPaise(next.netPaise),paid=salaryPaise(next.paidPaise),balance=salaryPaise(next.balancePaise===undefined&&(!current||current.balancePaise===undefined)?net-paid:next.balancePaise);
  if(paid>net||balance!==net-paid)reject('SALARY_BALANCE_MISMATCH');
  const expectedStatus=paid===net?'Paid':paid===0?'Pending':'Part paid';
  if(next.status!==expectedStatus)reject('SALARY_STATUS_MISMATCH');
