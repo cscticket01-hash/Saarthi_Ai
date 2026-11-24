@@ -329,6 +329,14 @@ void main() {
     expect(saved['balancePaise'], 0);
     expect(saved['payments'], hasLength(2));
   });
+  test('unpaid dates require distinct past dates without verified check-in',(){
+    final today=DateTime(2026,11,24);
+    expect(StaffPayroll.validatedUnpaidDays('2026-11','2026-11-01, 2026-11-02',{},today),{'2026-11-01','2026-11-02'});
+    for(final input in ['2026-11-24','2026-11-31','2026-10-01','2026-11-02,2026-11-02']){
+      expect(()=>StaffPayroll.validatedUnpaidDays('2026-11',input,{},today),throwsFormatException);
+    }
+    expect(()=>StaffPayroll.validatedUnpaidDays('2026-11','2026-11-03',{'2026-11-03'},today),throwsFormatException);
+  });
   test('bulk payment is guarded, atomic locally, durable and idempotent',()async{
     final profile=db.activeProfileId;
     final a=await teacher();
