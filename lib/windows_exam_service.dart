@@ -5,8 +5,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'windows_backend_bridge.dart';
-import 'windows_firebase_sync.dart';
-import 'platform/platform_config.dart';
+import 'windows_connect/managed_school_session.dart';
 import 'windows_connection_center.dart';
 import 'windows_local_firestore.dart';
 import 'windows_exam_policy.dart';
@@ -353,18 +352,35 @@ class WindowsExamService {
     if (!exams.any((row) => row['examId']?.toString() == examId)) {
       throw StateError('Exam no longer exists. Refresh the screen.');
     }
+    bool hasSavedMarks(Map row) =>
+        row['examId']?.toString() == examId &&
+        row['deleted'] != true && row['_syncDeleted'] != true;
     final results = (local['results'] as List? ?? []).whereType<Map>();
-    if (results.any((row) => row['examId']?.toString() == examId)) {
+    if (results.any(hasSavedMarks)) {
       throw StateError('Saved marks exist. Delete is blocked to protect report cards.');
     }
-    // Signed remote results must also be empty; offline deletes fail closed.
-    final idToken = await CentralSchoolCloud.firebaseToken();
+
+    // Ask the managed broker for a complete read from each current owner.
     for (final collection in const ['exam_center_results', 'exam_results']) {
       _requireProfile(profile);
-      final remote = await WindowsFirebaseRemote.readCollection(
-        projectId: platformProjectId, idToken: idToken, collection: collection,
+      final reply = await ManagedSchoolSession.callForSchool(
+        schoolId, 'managed/records', {
+          'operation': 'read',
+          'collection': collection,
+          'syncProtocol': 2,
+          'liveProtocol': 1,
+        },
       );
-      if (remote.values.any((row) => row['examId']?.toString() == examId)) {
+      _requireProfile(profile);
+      final records = reply['records'];
+      if (reply['success'] != true || reply['schoolId'] != schoolId ||
+          reply['syncProtocol'] != 2 ||
+          reply['partialRecords'] == true || reply['unchanged'] == true ||
+          records is! Map ||
+          records.values.any((row) => row is! Map || row['schoolId'] != schoolId)) {
+        throw StateError('Unable to verify school marks for exam deletion.');
+      }
+      if (records.values.whereType<Map>().any(hasSavedMarks)) {
         throw StateError('Cloud marks exist; deleting this exam is not allowed.');
       }
     }
