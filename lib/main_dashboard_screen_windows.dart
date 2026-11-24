@@ -18433,13 +18433,7 @@ class PasswordManagementScreen extends StatelessWidget {
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 900),
-            child: Column(
-              children: const [
-                WindowsAdminPasswordCard(),
-                SizedBox(height:14),
-                _WindowsSectionPasswordLocksPanel(),
-              ],
-            ),
+            child: const _WindowsSectionPasswordLocksPanel(),
           ),
         ),
       ),
@@ -19370,6 +19364,9 @@ class _WindowsSectionPasswordLocksPanelState
             ),
           ),
           const WindowsSettingsPanel(lockRowOnly:true),
+          const SizedBox(height: 8),
+          const WindowsAdminPasswordCard(),
+          const SizedBox(height: 8),
           if (_loading)
             Padding(
               padding: EdgeInsets.only(top: 18),
