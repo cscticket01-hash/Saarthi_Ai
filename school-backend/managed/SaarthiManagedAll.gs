@@ -7119,6 +7119,14 @@ function VS_validateSalaryLedger(current,next,operation){
   if(next.amount!==undefined&&(typeof next.amount!=='number'||Math.round(next.amount*100)!==net))fail('SALARY_NET_MISMATCH');
   const keys=['basicPaise','allowancePaise','bonusPaise','overtimePaise','deductionPaise'];
   if(keys.some(k=>next[k]!==undefined)){const a=keys.map(k=>paise(next[k]??0));if(a[0]+a[1]+a[2]+a[3]-a[4]!==net)fail('SALARY_NET_MISMATCH');}
+  if(next.attendanceAdjustment!==undefined){
+    const adj=next.attendanceAdjustment;
+    if(!adj||typeof adj!=='object'||Array.isArray(adj)||!Array.isArray(adj.unpaidDates)||typeof adj.reason!=='string'||!adj.reason.trim())fail('SALARY_ATTENDANCE_INVALID');
+    const dates=adj.unpaidDates;
+    if(dates.length>31||new Set(dates).size!==dates.length||dates.some(d=>typeof d!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(d)||!d.startsWith(String(next.month)+'-')))fail('SALARY_ATTENDANCE_INVALID');
+    const n=paise(adj.ratePaise)*dates.length;
+    if((dates.length>0&&n===0)||n!==adj.amountPaise||n>paise(next.deductionPaise))fail('SALARY_ATTENDANCE_INVALID');
+  }
   if(prior&&prior.month!==undefined&&prior.month!==next.month)fail('SALARY_MONTH_IMMUTABLE');
   append(events(prior&&prior.payments),events(next.payments));
   append(events(prior&&prior.paymentCorrections),events(next.paymentCorrections));
@@ -7130,7 +7138,7 @@ function VS_validateSalaryLedger(current,next,operation){
     locked=entry.locked;
   }
   if(locked!==(next.salaryLocked===true))fail('SALARY_LOCK_HISTORY_INVALID');
-  if(prior&&prior.salaryLocked===true&&(keys.concat(['netPaise','amount']).some(k=>prior[k]!==next[k])||canon(prior.paymentCorrections??[])!==canon(next.paymentCorrections??[])))fail('SALARY_LOCKED');
+  if(prior&&prior.salaryLocked===true&&(keys.concat(['netPaise','amount']).some(k=>prior[k]!==next[k])||canon(prior.paymentCorrections??[])!==canon(next.paymentCorrections??[])||canon(prior.attendanceAdjustment??null)!==canon(next.attendanceAdjustment??null)))fail('SALARY_LOCKED');
   let opening=0;
   if(prior){const priorPaid=prior.paidPaise!==undefined?paise(prior.paidPaise):String(prior.status).toLowerCase()==='paid'?paise(prior.netPaise??Math.round(Number(prior.amount??0)*100)):0;opening=priorPaid-sum(prior);}
   if(opening<0||paid!==opening+sum(next))fail('SALARY_PAYMENT_TOTAL_MISMATCH');
