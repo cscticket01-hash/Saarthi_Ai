@@ -139,8 +139,8 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
             );
             // Only the published glass preset uses the atmospheric backdrop.
             // Authentication, App Lock and school routing stay unchanged.
-            return WindowsAppearance.presetId == 'midnight-glass'
-                ? LiquidGlassBackdrop(child: gated)
+            return (WindowsAppearance.presetId == 'midnight-glass' || WindowsAppearance.presetId == 'aurora-liquid-glass')
+                ? LiquidGlassBackdrop(child: gated, aurora: WindowsAppearance.presetId == 'aurora-liquid-glass')
                 : gated;
           },
           routes: {
