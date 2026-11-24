@@ -1610,7 +1610,7 @@ Widget _windowsSharedAdminSidebar(BuildContext context, {required ValueChanged<W
               ? Icon(Icons.school_rounded, color: WindowsAppearance.foreground(Color(0xFF00D9A5)), size: 34)
               : _windowsSchoolProfileImage(logo, fallback: const Icon(Icons.school_rounded))),
             title: Text(_schoolName(profile), translate: false, maxLines: 2),
-            subtitle: Text('ADMIN NAVIGATION', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Color(0xFF00D9A5)), fontSize: 10)),
+            subtitle: Text('ADMIN PANEL', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Color(0xFF00D9A5)), fontSize: 10)),
           )));
       }));
 Future<void> _windowsConfirmLogout(BuildContext context) async {
@@ -5417,8 +5417,14 @@ Future<void> _printIdCard() async {
   /// Opens the protected Analytics page only after the currently signed-in
   /// Firebase Admin re-authenticates successfully. No password is stored.
   Future<void> _openAdminAnalyticsGate() async {
-    await Navigator.of(context).push(MaterialPageRoute<void>(
-      builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  const AdminAnalyticsScreen(); }));
+    WindowsAdminSecurity.clearPanelSession();
+    try {
+      await Navigator.of(context).push(MaterialPageRoute<void>(
+        builder: (_) => const WindowsAdminAccessGate(child: AdminAnalyticsScreen()),
+      ));
+    } finally {
+      WindowsAdminSecurity.clearPanelSession();
+    }
   }
 
   void _openAdminDrawerPage(

@@ -169,7 +169,7 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     }
   }, skip: !Platform.isWindows);
-  testWidgets('legacy Admin lock cannot open the independent admin panel', (
+  testWidgets('startup opens without enrolling an Admin Password', (
     tester,
   ) async {
     await tester.runAsync(() => WindowsSectionLocks.addPassword(
@@ -180,9 +180,9 @@ void main() {
       const MaterialApp(home: WindowsLocalDashboardGate()),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Admin Panel Security'), findsOneWidget);
+    expect(find.text('Admin Panel Security'), findsNothing);
     expect(find.text('Admin Section Password'), findsNothing);
-    expect(find.byType(WindowsAdminSessionDashboard), findsNothing);
+    expect(find.byType(WindowsAdminSessionDashboard), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });
   testWidgets(

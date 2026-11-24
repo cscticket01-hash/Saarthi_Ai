@@ -287,7 +287,7 @@ class _WindowsAdminSecurityGateState extends State<WindowsAdminSecurityGate> {
           return;
         }
         final configured=await WindowsAdminSecurity.configured();
-        if(mounted)setState(() { _legacy=true;_configured=configured;_loading=false; });
+        if(mounted)setState(() { _legacy=true;_configured=configured;_opened=!configured;_loading=false; });
         return;
       }
       if(await WindowsAdminSecurity.hasPanelSession()) {
@@ -495,13 +495,21 @@ class _WindowsAdminPasswordCardState extends State<WindowsAdminPasswordCard> {
   final _current=TextEditingController(), _next=TextEditingController(),
     _confirm=TextEditingController();
   bool _busy=false, _recover=false, _managed=true;
+  bool? _configured;
   String? _message;
   @override
   void initState(){
     super.initState();
-    WindowsAdminSecurity.isManaged.then((managed){
-      if(mounted)setState(()=>_managed=managed);
-    }).catchError((Object _){});
+    _loadStatus();
+  }
+  Future<void> _loadStatus() async {
+    try {
+      final managed = await WindowsAdminSecurity.isManaged;
+      final configured = await WindowsAdminSecurity.configured();
+      if (mounted) setState(() { _managed=managed; _configured=configured; _message=null; });
+    } catch (_) {
+      if (mounted) setState(() => _message='Unable to check Admin Password status.');
+    }
   }
   @override
   void dispose(){
@@ -509,7 +517,7 @@ class _WindowsAdminPasswordCardState extends State<WindowsAdminPasswordCard> {
     super.dispose();
   }
   Future<void> _save() async {
-    if(_busy)return;
+    if(_busy || _configured == null)return;
     if(_next.text.length<12 || _next.text.length>128 || _next.text != _confirm.text) {
       setState(() => _message='Use 12–128 characters and matching passwords.');
       return;
@@ -520,7 +528,9 @@ class _WindowsAdminPasswordCardState extends State<WindowsAdminPasswordCard> {
     }
     setState(() { _busy=true;_message=null; });
     try {
-      if(_recover) {
+      if(_configured == false) {
+        await WindowsAdminSecurity.enroll(schoolPassword:_current.text, newPassword:_next.text);
+      } else if(_recover) {
         if(!_managed)throw StateError('Standalone Admin Password recovery requires school owner verification.');
         await WindowsAdminSecurity.recover(
           schoolPassword:_current.text, newPassword:_next.text);
@@ -529,7 +539,7 @@ class _WindowsAdminPasswordCardState extends State<WindowsAdminPasswordCard> {
           currentPassword:_current.text, newPassword:_next.text);
       }
       _current.clear();_next.clear();_confirm.clear();
-      if(mounted)setState(() { _busy=false;_message='Admin Password updated. Reopen Admin Panel to unlock again.'; });
+      if(mounted)setState(() { _busy=false;_configured=true;_recover=false;_message='Admin Password updated. Reopen Admin Panel to unlock again.'; });
     } catch (_) {
       if(mounted)setState(() { _busy=false;_message='Password update failed. Check your credentials and connection.'; });
     }
@@ -544,23 +554,26 @@ class _WindowsAdminPasswordCardState extends State<WindowsAdminPasswordCard> {
         ? 'Separate from App Lock. Applies to authorized PCs for this managed school.'
         : 'Separate from App Lock. Stored only in this Windows school profile.'),
       const SizedBox(height:14),
+      if (_configured == null)
+        TextButton(onPressed: _loadStatus, child: Text(_message ?? 'Checking status…')),
+      if (_configured != null && (_managed || _configured == true))
       TextField(controller:_current,obscureText:true,enabled:!_busy,
-        decoration:InputDecoration(labelText:_recover
+        decoration:InputDecoration(labelText:_recover || _configured == false
           ? 'School Login Password (recovery)' : 'Current Admin Password')),
-      const SizedBox(height:9),
-      TextField(controller:_next,obscureText:true,enabled:!_busy,
+      if (_configured != null) const SizedBox(height:9),
+      if (_configured != null) TextField(controller:_next,obscureText:true,enabled:!_busy,
         decoration:const InputDecoration(labelText:'New Admin Password')),
       const SizedBox(height:9),
-      TextField(controller:_confirm,obscureText:true,enabled:!_busy,
+      if (_configured != null) TextField(controller:_confirm,obscureText:true,enabled:!_busy,
         decoration:const InputDecoration(labelText:'Confirm New Password')),
       if(_message != null) Padding(
         padding:const EdgeInsets.symmetric(vertical:8),
         child:Text(_message!)),
       const SizedBox(height:10),
-      Wrap(spacing:12,children:[
+      if (_configured != null) Wrap(spacing:12,children:[
         FilledButton(onPressed:_busy ? null : _save,
-          child:Text(_busy ? 'Saving...' : _recover ? 'Recover Admin Password' : 'Change Admin Password')),
-        if(_managed)TextButton(onPressed:_busy ? null : () => setState(() {
+          child:Text(_busy ? 'Saving...' : _recover ? 'Recover Admin Password' : _configured == true ? 'Change Admin Password' : 'Set Admin Password')),
+        if(_managed && _configured == true)TextButton(onPressed:_busy ? null : () => setState(() {
           _recover=!_recover; _current.clear();_message=null;
         }),child:Text(_recover ? 'Use current Admin Password' : 'Forgot Admin Password?')),
       ]),
