@@ -786,6 +786,12 @@ class SchoolSession {
   }
 
   final Future<Directory> Function()? cacheDirectory;
+  final auroraAppearance = ValueNotifier<bool>(false);
+  void _applyPublishedAppearance(dynamic value) {
+    if (value is Map && value['schemaVersion'] == 1) {
+      auroraAppearance.value = value['presetId'] == 'aurora-liquid-glass';
+    }
+  }
   Map<String, dynamic> dashboard = {};
   SchoolConnectionState connectionState = SchoolConnectionState.cachedOffline;
   String connectionMessage =
@@ -876,6 +882,7 @@ class SchoolSession {
       if (d['cacheSchool'] == link!.projectId &&
           d['cachePerson'] == link!.personId) {
         dashboard = Map<String, dynamic>.from(d['dashboard'] as Map? ?? {});
+        auroraAppearance.value = d['auroraAppearance'] == true;
         _dashboardQuotaAttempts = (d['dashboardQuotaAttempts'] as int? ?? 0).clamp(0, 5).toInt();
         _dashboardQuotaRetryAt = d['dashboardQuotaRetryAt'] as int? ?? 0;
         if (d['cacheRole'] == link!.role)
@@ -1173,6 +1180,7 @@ class SchoolSession {
       _expiresAt = (login['expiresAt'] as num).toInt();
       person = Map<String, dynamic>.from(login['person'] ?? {});
       schoolName = login['schoolName']?.toString() ?? newLink.projectId;
+      _applyPublishedAppearance(login['publishedAppearance']);
       messaging = login['messaging'] is Map
           ? Map<String, dynamic>.from(login['messaging'])
           : null;
@@ -1215,6 +1223,7 @@ class SchoolSession {
       'cacheRole': link!.role,
       'attendanceHistory': _attendanceHistoryCache,
       'dashboard': dashboard,
+      'auroraAppearance': auroraAppearance.value,
       'syncPaused': syncPaused,
       'dashboardQuotaAttempts': _dashboardQuotaAttempts,
       'dashboardQuotaRetryAt': _dashboardQuotaRetryAt,
@@ -1622,6 +1631,7 @@ class SchoolSession {
       merged['notices']=authoritativeEdgeNotices;
     if (jsonEncode(merged).length > 2 * 1024 * 1024)
       throw StateError('School response exceeds cache safety limit.');
+    _applyPublishedAppearance(result['publishedAppearance']);
     dashboard = merged;
     person = Map<String, dynamic>.from(dashboard['person'] as Map? ?? person);
     for (final key in removedPdfs.keys) _pdfCache.remove(key);
@@ -1933,6 +1943,7 @@ class SchoolSession {
     _pushRegisteredAt = null;
     person = {};
     schoolName = '';
+    auroraAppearance.value = false;
     dashboard = {};
     _attendanceHistoryCache = {};
     _attendanceHistoryFlights.clear();
