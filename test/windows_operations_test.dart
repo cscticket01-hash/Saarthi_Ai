@@ -9,7 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../lib/windows_staff_payroll.dart';
 import '../lib/windows_salary_payment_correction.dart';
-import '../lib/main_dashboard_screen_windows.dart' show TeachersDirectoryScreen;
+import '../lib/main_dashboard_screen_windows.dart' show TeachersDirectoryScreen, WindowsSectionLocks;
 import '../lib/windows_salary_history.dart';
 import '../lib/fitted_document_preview.dart';
 import 'package:printing/src/interface.dart';
@@ -57,6 +57,7 @@ void main() {
     final profile=db.activeProfileId;
     await WindowsLocalSecurity.initialize();
     await WindowsLocalSecurity.create(adminId:'School Admin',password:'secure-lock-123');
+    await WindowsSectionLocks.addPassword(sectionKey:'admin_section',password:'payroll-admin-456');
     const rowId='salary-correction-fixture',paymentId='payment-original';
     final original=<String,dynamic>{
       'id':rowId,'name':'Teacher Test','month':'2026-10','netPaise':500000,
@@ -71,11 +72,11 @@ void main() {
     expect(()=>SalaryPaymentCorrectionPolicy.validateNote(List.filled(301,'word').join(' ')),throwsFormatException);
     await expectLater(StaffPayroll.correctPayment(profile,rowId,paymentId,
         expectedPaise:50000,correctedPaise:500000,reason:reason,
-        correctionId:'correction-1',appLockPassword:'wrong'),throwsStateError);
+        correctionId:'correction-1',adminPassword:'secure-lock-123'),throwsStateError);
     expect((await db.collection('teacher_salary').doc(rowId).get()).data()?['paidPaise'],50000);
     await StaffPayroll.correctPayment(profile,rowId,paymentId,
         expectedPaise:50000,correctedPaise:500000,reason:reason,
-        correctionId:'correction-1',appLockPassword:'secure-lock-123');
+        correctionId:'correction-1',adminPassword:'payroll-admin-456');
     final saved=(await db.collection('teacher_salary').doc(rowId).get()).data()!;
     expect((saved['payments'] as List).single['amountPaise'],50000);
     expect((saved['paymentCorrections'] as List),hasLength(1));
@@ -89,14 +90,23 @@ void main() {
     expect(events.any((e)=>e['reference']?.toString().contains('Legacy paid total')==true),false);
     await StaffPayroll.correctPayment(profile,rowId,paymentId,
         expectedPaise:50000,correctedPaise:500000,reason:reason,
-        correctionId:'correction-1',appLockPassword:'secure-lock-123');
+        correctionId:'correction-1',adminPassword:'payroll-admin-456');
     expect(((await db.collection('teacher_salary').doc(rowId).get()).data()!['paymentCorrections'] as List),hasLength(1));
     await expectLater(StaffPayroll.correctPayment(profile,rowId,paymentId,
         expectedPaise:50000,correctedPaise:510000,reason:reason,
-        correctionId:'correction-2',appLockPassword:'secure-lock-123'),throwsStateError);
+        correctionId:'correction-2',adminPassword:'payroll-admin-456'),throwsStateError);
     final unchanged=(await db.collection('teacher_salary').doc(rowId).get()).data()!;
     expect(unchanged['paidPaise'],500000);
     expect((unchanged['payments'] as List).single['amountPaise'],50000);
+    await StaffPayroll.correctPayment(profile,rowId,paymentId,expectedPaise:500000,correctedPaise:0,reason:reason,correctionId:'reversal-1',adminPassword:'payroll-admin-456',reverse:true);
+    await StaffPayroll.correctPayment(profile,rowId,paymentId,expectedPaise:500000,correctedPaise:0,reason:reason,correctionId:'reversal-1',adminPassword:'payroll-admin-456',reverse:true);
+    final reversed=(await db.collection('teacher_salary').doc(rowId).get()).data()!;
+    expect(reversed['paidPaise'],0);
+    expect(reversed['balancePaise'],500000);
+    expect(reversed['status'],'Pending');
+    expect((reversed['payments'] as List).single['amountPaise'],50000);
+    expect((reversed['paymentCorrections'] as List),hasLength(2));
+    expect((reversed['paymentCorrections'] as List).last['eventType'],'reversal');
   });
   test('payment history keeps separate staff/month events and never invents missing times', () {
     final rows = [
@@ -782,7 +792,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Record payment'), findsOneWidget);
     expect(find.text('Payment history'), findsOneWidget);
-    expect(find.text('Modify Payment • App Lock'), findsNothing); // no payment yet
+    expect(find.text('Modify Payment • Admin Password'), findsNothing); // no payment yet
     await tester.tapAt(const Offset(20, 20));
     await tester.pumpAndSettle();
     expect(find.text('Net payroll'), findsOneWidget);
