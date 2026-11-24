@@ -4,6 +4,16 @@ import '../lib/windows_exam_policy.dart';
 
 void main() {
   group('Exam Center pure validation', () {
+    test('only completed exams leave the active list after 15 days', () {
+      final completed = DateTime.utc(2026, 11, 24);
+      final exam = {'completedAt': completed.millisecondsSinceEpoch};
+      expect(WindowsExamPolicy.archived(exam, completed.add(
+        const Duration(days: 15) - const Duration(milliseconds: 1),
+      )), isFalse);
+      final cutoff = completed.add(const Duration(days: 15));
+      expect(WindowsExamPolicy.archived(exam, cutoff), isTrue);
+      expect(WindowsExamPolicy.archived({}, cutoff), isFalse);
+    });
     test('exam group distinguishes academic sessions and immutable group IDs', () {
       final first = <String, dynamic>{
         'schoolId': 'school-a',
