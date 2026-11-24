@@ -3232,6 +3232,15 @@ class _LocalSchoolDatabase {
 
     final previous = queue[key];
     if (previous is Map) _requireRecordSchool(previous);
+    // Financial entries cannot replace an original operation that may have
+    // reached a provider. Only a wholly unsubmitted local snapshot may be
+    // superseded; a proof-safe conflict/receipt owner settles everything else.
+    if(previous is Map && isPayrollFinancialRecord(previous) &&
+        (previous['syncState']!='pending'||previous['retryCount']!=0||
+         ['wireData','wireMode','cloudTicketId','priorCloudWrite','priorDeletion',
+          'atomicBundleId','atomicState','reviewedFromOperationId'].any((field)=>previous[field]!=null))){
+      throw StateError('Original payroll operation requires verified settlement before another edit. No financial change was saved.');
+    }
     if(operation.collection=='students_directory' && !isDelete && finalDocs[operation.documentId] is Map) {
       final data=finalDocs[operation.documentId] as Map;
       final deletions=collections['_windows_local_deletions'];
