@@ -388,6 +388,22 @@ void main() {
     expect((await ref.get()).data()?['paidPaise'],100000);
     expect((await ref.get()).data()?['payments'],hasLength(1));
     expect(await db.localPersistenceEnabled(),true);
+    final journals=(await db.collection('_local_salary_bulk_journal').get()).docs;
+    expect(journals,hasLength(1));
+    expect(journals.single.data()['identity']['entries'],hasLength(2));
+    final report=await StaffPayroll.bulkVerification(profile);
+    expect(report,hasLength(1));
+    expect((report.single['entries'] as List).every((e)=>e['cloudflareRecordVerified']==false&&e['driveRecordVerified']==false),true);
+  });
+  test('bulk verification requires exact payment identity, amount and school',(){
+    const school='vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    final row={'schoolId':school,'id':'row-a','payments':[{'id':'payment-a','amountPaise':500,'date':'2026-11-05','mode':'Cash','reference':'evidence'}]};
+    final entry={'id':'row-a','paymentId':'payment-a','amountPaise':500};
+    final identity={'date':'2026-11-05','mode':'Cash','reference':'evidence'};
+    expect(StaffPayroll.containsBulkPayment(row,entry,identity,school),true);
+    expect(StaffPayroll.containsBulkPayment(row,{...entry,'amountPaise':501},identity,school),false);
+    expect(StaffPayroll.containsBulkPayment(row,entry,identity,'other-school'),false);
+    expect(StaffPayroll.containsBulkPayment(row,entry,{...identity,'reference':'changed'},school),false);
   });
   test('salary approval locks amounts but permits recording payment and authorized reopening',()async{
     final profile=db.activeProfileId;
