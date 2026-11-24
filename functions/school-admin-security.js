@@ -97,6 +97,7 @@ function createSchoolAdminSecurity({db, auth, now=Date.now}) {
       await freshSchoolLogin(body.freshIdToken, identity);
       const salt = randomBytes(16).toString('hex');
       const nextHash = await passwordHash(body.newPassword, salt);
+      const auditRef = db.doc('platform_audit/'+randomBytes(16).toString('hex'));
       await db.runTransaction(async tx => {
         const previous = await tx.get(ref);
         if (operation === 'enroll' && previous.exists)
@@ -108,10 +109,10 @@ function createSchoolAdminSecurity({db, auth, now=Date.now}) {
           hashVersion:1, failedAttempts:0, lockUntil:0,
           updatedAt:now(), updatedBy:identity.uid
         });
-      });
-      await db.collection('platform_audit').add({
-        action:operation === 'enroll'?'school_admin_password_enrolled':'school_admin_password_recovered',
-        schoolId:identity.schoolId, actor:identity.uid, at:now()
+        tx.set(auditRef, {
+          action:operation === 'enroll'?'school_admin_password_enrolled':'school_admin_password_recovered',
+          schoolId:identity.schoolId, actor:identity.uid, at:now()
+        });
       });
       return {success:true, schoolId:identity.schoolId, configured:true};
     }
@@ -122,6 +123,7 @@ function createSchoolAdminSecurity({db, auth, now=Date.now}) {
         denied(400, 'ADMIN_PASSWORD_REUSE', 'Choose a different Admin Password');
       const salt = randomBytes(16).toString('hex');
       const nextHash = await passwordHash(body.newPassword, salt);
+      const auditRef = db.doc('platform_audit/'+randomBytes(16).toString('hex'));
       await db.runTransaction(async tx => {
         const current = await tx.get(ref);
         if (!current.exists) denied(409, 'ADMIN_PASSWORD_NOT_CONFIGURED', 'Set the Admin Password first');
@@ -131,10 +133,10 @@ function createSchoolAdminSecurity({db, auth, now=Date.now}) {
           salt, passwordHash:nextHash, hashVersion:1, failedAttempts:0,
           lockUntil:0, updatedAt:now(), updatedBy:identity.uid
         });
-      });
-      await db.collection('platform_audit').add({
-        action:'school_admin_password_changed', schoolId:identity.schoolId,
-        actor:identity.uid, at:now()
+        tx.set(auditRef, {
+          action:'school_admin_password_changed', schoolId:identity.schoolId,
+          actor:identity.uid, at:now()
+        });
       });
       return {success:true, schoolId:identity.schoolId, configured:true};
     }
