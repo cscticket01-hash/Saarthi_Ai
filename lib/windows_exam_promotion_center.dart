@@ -27,6 +27,7 @@ class _PromotionPanelState extends State<WindowsExamPromotionCenter> {
   final _selected = <String>{};
   List<Map<String, dynamic>> _students = [];
   bool _loading = true, _working = false;
+  int _loadGeneration = 0;
   String _filter = '', _error = '';
 
   bool get _sameSchool => FirebaseFirestore.instance.activeProfileId == _origin &&
@@ -40,28 +41,40 @@ class _PromotionPanelState extends State<WindowsExamPromotionCenter> {
   @override
   void didUpdateWidget(covariant WindowsExamPromotionCenter old) {
     super.didUpdateWidget(old);
-    if (old.exam?['examId'] != widget.exam?['examId']) {
+    if (old.exam?['examId'] != widget.exam?['examId'] ||
+        old.exam?['studentClass'] != widget.exam?['studentClass'] ||
+        old.exam?['academicSession'] != widget.exam?['academicSession']) {
       _selected.clear();
+      _students = [];
       _load();
     }
   }
   Future<void> _load() async {
-    if (!_sameSchool) return;
-    if (mounted) setState(() { _loading = true; _error = ''; });
+    if (!_sameSchool || !mounted) return;
+    final generation = ++_loadGeneration;
+    final examId = _examId;
+    final className = _className;
+    setState(() { _loading = true; _error = ''; });
+    if (examId.isEmpty) {
+      setState(() { _students = []; _selected.clear(); _loading = false; });
+      return;
+    }
     try {
       final snapshot = await FirebaseFirestore.instance.collection('students_directory').get();
-      if (!mounted || !_sameSchool) return;
+      if (!mounted || !_sameSchool || generation != _loadGeneration) return;
       setState(() {
         _students = snapshot.docs.map((doc) => <String, dynamic>{'id':doc.id,...doc.data()})
             .where((row) => WindowsExamPolicy.activeStudent(row) &&
-                (row['class'] == _className || _examId.isNotEmpty && row['promotionExamId'] == _examId))
+                (row['class'] == className || row['promotionExamId'] == examId))
             .toList();
         _students.sort((a,b) => (a['name']?.toString() ?? '').compareTo(b['name']?.toString() ?? ''));
         _selected.removeWhere((id) => !_students.any((s) => s['id'] == id));
         _loading = false;
       });
     } catch (e) {
-      if (mounted && _sameSchool) setState(() { _loading = false; _error = '$e'; });
+      if (mounted && _sameSchool && generation == _loadGeneration) {
+        setState(() { _students = []; _selected.clear(); _loading = false; _error = '$e'; });
+      }
     }
   }
   Map<String,dynamic>? _result(String id) {
@@ -102,7 +115,7 @@ class _PromotionPanelState extends State<WindowsExamPromotionCenter> {
   }
 
   Future<void> _apply(String decision) async {
-    if (_working || !_sameSchool || widget.exam == null || !_isFinal) return;
+    if (_working || _loading || !_sameSchool || widget.exam == null || !_isFinal) return;
     final chosen = _students.where((student) {
       final id = student['id'].toString();
       return _selected.contains(id) && _status(student) == 'Review' &&
@@ -165,7 +178,7 @@ class _PromotionPanelState extends State<WindowsExamPromotionCenter> {
   }
 
   Future<void> _override() async {
-    if (_working || !_sameSchool || _selected.length != 1 || !_isFinal || widget.exam == null) return;
+    if (_working || _loading || !_sameSchool || _selected.length != 1 || !_isFinal || widget.exam == null) return;
     final matches = _students.where((row) => _selected.contains(row['id'])).toList();
     if (matches.isEmpty) return;
     final student = matches.first;
@@ -275,7 +288,7 @@ class _PromotionPanelState extends State<WindowsExamPromotionCenter> {
   }
 
   Future<void> _preview() async {
-    if (!_sameSchool || _selected.length != 1) {
+    if (_loading || !_sameSchool || _selected.length != 1) {
       _notice('Select one student to preview a report card.'); return;
     }
     final result = _result(_selected.first);
@@ -384,7 +397,7 @@ class _PromotionPanelState extends State<WindowsExamPromotionCenter> {
           child:Row(children:[
             SizedBox(width:30,child:Checkbox(
               value:visible.isNotEmpty&&visible.every((s)=>_selected.contains(s['id'])),
-              onChanged:_working?null:(v)=>setState((){
+              onChanged:(_working||_loading)?null:(v)=>setState((){
                 if(v==true) _selected.addAll(visible.map((s)=>s['id'].toString()));
                 else _selected.removeAll(visible.map((s)=>s['id'].toString()));
               }))),
@@ -410,7 +423,7 @@ class _PromotionPanelState extends State<WindowsExamPromotionCenter> {
                 child:Padding(padding:const EdgeInsets.symmetric(vertical:5,horizontal:7),
                   child:Row(children:[
                     SizedBox(width:30,child:Checkbox(value:_selected.contains(id),
-                      onChanged:_working?null:(v)=>setState((){
+                      onChanged:(_working||_loading)?null:(v)=>setState((){
                         if(v==true)_selected.add(id);else _selected.remove(id);
                       }))),
                     const SizedBox(width:5),
@@ -433,22 +446,22 @@ class _PromotionPanelState extends State<WindowsExamPromotionCenter> {
         const SizedBox(height:9),
         if(_working) const LinearProgressIndicator(),
         Wrap(spacing:7,runSpacing:6,children:[
-          FilledButton.icon(onPressed:_working?null:()=>_apply('PASS'),
+          FilledButton.icon(onPressed:(_working||_loading)?null:()=>_apply('PASS'),
             icon:const Icon(Icons.check_circle_outline,size:17),
             label:const Text('Approve Promotion'),
             style:FilledButton.styleFrom(
               backgroundColor:WindowsAppearance.primary,
               foregroundColor:WindowsAppearance.onPrimary)),
-          OutlinedButton.icon(onPressed:_working?null:()=>_apply('FAIL'),
+          OutlinedButton.icon(onPressed:(_working||_loading)?null:()=>_apply('FAIL'),
             icon:const Icon(Icons.person_off_outlined,size:17),
             label:const Text('Retain Selected')),
-          OutlinedButton.icon(onPressed:_working?null:_preview,
+          OutlinedButton.icon(onPressed:(_working||_loading)?null:_preview,
             icon:const Icon(Icons.visibility_outlined,size:17),
             label:const Text('Preview Report Card')),
           OutlinedButton.icon(onPressed:_working?null:_history,
             icon:const Icon(Icons.history_edu_rounded,size:17),
             label:const Text('Promotion History')),
-          TextButton.icon(onPressed:_working?null:_override,
+          TextButton.icon(onPressed:(_working||_loading)?null:_override,
             icon:const Icon(Icons.admin_panel_settings_outlined,size:17),
             label:const Text('Admin Override')),
         ]),
