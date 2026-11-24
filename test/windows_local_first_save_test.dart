@@ -488,7 +488,7 @@ void main() {
     expect(original['photoUrl'],'data:image/png;base64,YWJj');
   });
 
-  test('saved final results promote PASS offline, retain FAIL and audit the deliberate override', () async {
+  test('saved final results promote PASS offline, retain FAIL and reject unapproved override', () async {
     final exam={'examId':'final-local','examName':'Final','isFinal':true};
     await db.collection('_local_exam_center_exams').doc('final-local').set(exam);
     await db.collection('students_directory').doc('passed').set({'name':'Passed pupil','class':'Class 1','rollNo':'1'});
@@ -503,13 +503,18 @@ void main() {
     expect((await db.collection('students_directory').doc('failed').get()).data()?['classMovement'],'RETAINED');
     await db.collection('school_settings').doc('promotion_policy').set({'allowForcedPromotion':true});
     await expectLater(SchoolPromotionService.apply(studentId:'failed',student:{},exam:exam,result:'FAIL',force:true),throwsStateError);
-    await SchoolPromotionService.apply(studentId:'failed',student:{},exam:exam,result:'FAIL',force:true,reason:'Approved remedial review');
-    final audit=(await db.collection('school_settings').doc('promotion_audit_final-local_failed').get()).data()!;
-    expect(audit['manualAdminOverride'],true);
-    expect(audit['fromClass'],'Class 1');expect(audit['toClass'],'Class 2');
-    expect(audit['reason'],'Approved remedial review');
-    expect(audit['at'],isA<int>());
-    expect((await db.collection('students_directory').doc('Class 2_Roll_2').get()).data()?['classMovement'],'FORCE_PROMOTED');
+    // A managed school's offline client cannot approve an exceptional
+    // promotion using only the old App Lock or an entered reason.
+    await expectLater(
+      SchoolPromotionService.apply(studentId:'failed',student:{},exam:exam,
+        result:'FAIL',force:true,reason:'Approved remedial review'),
+      throwsA(isA<StateError>().having((e) => e.message, 'message',
+        contains('fresh independent Admin Password'))));
+    final retained=(await db.collection('students_directory').doc('failed').get()).data()!;
+    expect(retained['class'],'Class 1');
+    expect(retained['classMovement'],'RETAINED');
+    expect((await db.collection('students_directory').doc('Class 2_Roll_2').get()).exists,false);
+    expect((await db.collection('school_settings').doc('promotion_audit_final-local_failed').get()).exists,false);
   });
 
   test('nested photo preparation leaves exam marks and payment structures unchanged', () async {
