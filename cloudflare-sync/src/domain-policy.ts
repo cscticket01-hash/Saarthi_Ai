@@ -134,7 +134,7 @@ export function validatePayrollMonth(id:string,current:Json|null,next:Json,opera
 }
 export function validateClosedPayrollMonth(current:Json|null,next:Json,operation:string):void {
  if(operation==='delete'||!current||current._syncDeleted===true)reject('SALARY_MONTH_CLOSED');
- const allowed=new Set(['payments','paidPaise','balancePaise','status','updatedAt','salaryLocked','salaryLockHistory']);
+ const allowed=new Set(current.netPaise===undefined?['updatedAt']:['payments','paidPaise','balancePaise','status','updatedAt','salaryLocked','salaryLockHistory']);
  const immutable=(row:Json)=>Object.fromEntries(Object.entries(row).filter(([k])=>!allowed.has(k)&&!k.startsWith('_sync')));
  if(salaryCanonical(immutable(current))!==salaryCanonical(immutable(next)))reject('SALARY_MONTH_CLOSED');
 }
