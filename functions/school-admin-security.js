@@ -7,7 +7,8 @@ const {canonical} = require('./live-sync-canonical');
 const derive = promisify(scrypt);
 const hash = value => createHash('sha256').update(value).digest('hex');
 const ADMIN_WORK_FACTOR = {N:16384, r:8, p:1, maxmem:64*1024*1024};
-const PASSWORD_MIN = 12;
+const PASSWORD_MIN = 4;
+const NEW_PASSWORD_MAX = 10;
 const PASSWORD_MAX = 128;
 const LOCK_AFTER_FAILURES = 5;
 const LOCK_DURATION_MS = 15 * 60 * 1000;
@@ -23,8 +24,8 @@ function denied(status, code, message) {
 
 function goodPassword(password) {
   if (typeof password !== 'string' || password.length < PASSWORD_MIN ||
-      password.length > PASSWORD_MAX || password.trim() !== password)
-    denied(400, 'ADMIN_PASSWORD_POLICY', 'Admin password must contain 12–128 characters and no surrounding spaces');
+      password.length > NEW_PASSWORD_MAX || password.trim() !== password)
+    denied(400, 'ADMIN_PASSWORD_POLICY', 'Admin password must contain 4–10 characters and no surrounding spaces');
 }
 
 async function passwordHash(password, salt) {
@@ -132,7 +133,7 @@ function createSchoolAdminSecurity({db, auth, now=Date.now}) {
     }
     if (operation === 'enroll' || operation === 'recover') {
       goodPassword(body.newPassword);
-      await freshSchoolLogin(body.freshIdToken, identity);
+      if (operation === 'recover') await freshSchoolLogin(body.freshIdToken, identity);
       const salt = randomBytes(16).toString('hex');
       const nextHash = await passwordHash(body.newPassword, salt);
       const auditRef = db.doc('platform_audit/'+randomBytes(16).toString('hex'));
