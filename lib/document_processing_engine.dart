@@ -435,6 +435,37 @@ class DocumentProcessingEngine {
         }
       }
     }
+    // For inventory photos the measured encoded byte ceiling is mandatory.
+    // Reduce JPEG quality and then resolution, always from the processed
+    // pixels (never from the uncropped original or a prior JPEG).
+    if (!portrait && !pdfCompression && target <= photoTarget &&
+        optimized.length > target) {
+      var edge = math.max(optimizedWidth, optimizedHeight);
+      while (optimized.length > target) {
+        final candidateImage = edge == math.max(image.width, image.height)
+            ? image
+            : img.copyResize(image,
+                width: image.width >= image.height ? edge : null,
+                height: image.height > image.width ? edge : null,
+                interpolation: img.Interpolation.average);
+        for (final q in [78, 65, 50, 35, 20, 10]) {
+          final candidate = Uint8List.fromList(img.encodeJpg(candidateImage, quality: q));
+          if (candidate.length < optimized.length) {
+            optimized = candidate;
+            optimizedMime = 'image/jpeg';
+            optimizedWidth = candidateImage.width;
+            optimizedHeight = candidateImage.height;
+            quality = q;
+          }
+          if (optimized.length <= target) break;
+        }
+        if (optimized.length <= target || edge <= 32) break;
+        edge = (edge * .75).floor().clamp(32, edge - 1).toInt();
+      }
+      if (optimized.length > target) {
+        throw const FormatException('Image cannot fit the required byte limit.');
+      }
+    }
     // A recompression must not consume more than the safe existing source.
     // Retain the original container when processing expands it: this is an
     // explicitly reported fallback, not a claim that cleanup was applied.
@@ -474,7 +505,7 @@ class DocumentProcessingEngine {
           ? 'Existing compressed samples retained; original encoder quality unknown'
           : optimizedMime == 'image/png'
           ? 'Lossless processed pixels'
-          : 'JPEG quality floor preserved',
+          : 'JPEG quality selected from measured encoded size',
       'targetMet': targetMet,
       'actualBytes': optimized.length,
       'originalBytes': bytes.length,
