@@ -161,6 +161,61 @@ export function validateDomainCandidate(input:DomainCandidate):void {
  if(nonempty(next.personId)&&studentRole&&!nonempty(next.studentId))reject('DOMAIN_PARENT_NOT_READY',412);
 }
 
+/**
+ * Record-only payment + monthly ledger pair preflight for the atomic owner.
+ * The caller MUST supply the current ledger from its own transaction, never
+ * from a client claim. This helper does not perform writes or enable a route.
+ */
+export function validateRecordOnlyFeePair(input:{
+ schoolId:string;paymentId:string;payment:Json;ledger:Json;currentLedger:Json|null;
+}):void {
+ const {schoolId,paymentId,payment,ledger,currentLedger}=input;
+ if(!/^vs-[a-f0-9]{32}$/.test(schoolId)||!nonempty(paymentId)||
+    payment.schoolId!==schoolId||ledger.schoolId!==schoolId||
+    currentLedger&&currentLedger.schoolId!==schoolId)
+  reject('DOMAIN_FEE_PAIR_SCHOOL_MISMATCH',403);
+ if(payment.feeBillingPolicyVersion!==1||ledger.feeBillingPolicyVersion!==1||
+    payment.paymentId!==paymentId||ledger.lastPaymentId!==paymentId||
+    !nonempty(payment.personId)||!nonempty(payment.studentId)||
+    !nonempty(payment.feeIdentity)||
+    typeof payment.month!=='string'||!/^\d{4}-(0[1-9]|1[0-2])$/.test(payment.month)||
+    Boolean(payment.receiptDocumentId)||Boolean(ledger.receiptDocumentId))
+  reject('DOMAIN_FEE_PAIR_INVALID',400);
+ for(const key of ['personId','studentId','feeIdentity','month','expectedAmount',
+   'totalPaid','balance','status','feeItems','feeFrequencies','feeAdmissionMonth',
+   'feeAdmissionPersonId']){
+  if(stableJson(payment[key])!==stableJson(ledger[key]))
+   reject('DOMAIN_FEE_PAIR_MISMATCH');
+ }
+ const paise=(raw:unknown):number=>{
+  if(typeof raw!=='number'||!Number.isFinite(raw)||raw<0||
+     !Number.isSafeInteger(Math.round(raw*100))||
+     Math.abs(raw*100-Math.round(raw*100))>0.000001)
+   reject('DOMAIN_FEE_PAIR_AMOUNT_INVALID',400);
+  return Math.round(raw*100);
+ };
+ const expected=paise(payment.expectedAmount),total=paise(payment.totalPaid),
+   installment=paise(payment.installmentAmount),balance=paise(payment.balance);
+ if(expected<=0||installment<=0||total>expected||total+balance!==expected||
+    payment.status!==(total===expected?'PAID':'PARTIAL'))
+  reject('DOMAIN_FEE_PAIR_AMOUNT_INVALID',400);
+ if(currentLedger){
+  // Unbound legacy ledgers require explicit reconciliation before adoption.
+  if(currentLedger._syncDeleted===true||currentLedger.deleted===true||
+     currentLedger.personId!==payment.personId||
+     currentLedger.feeIdentity!==payment.feeIdentity||
+     currentLedger.month!==payment.month||
+     paise(currentLedger.expectedAmount)!==expected||
+     stableJson(currentLedger.feeItems)!==stableJson(payment.feeItems)||
+     currentLedger.feeBillingPolicyVersion!==1||
+     stableJson(currentLedger.feeFrequencies)!==stableJson(payment.feeFrequencies))
+   reject('DOMAIN_FEE_PAIR_LEDGER_CHANGED');
+ }
+ const previous=currentLedger?paise(currentLedger.totalPaid):0;
+ if(previous>expected||previous+installment!==total)
+  reject('DOMAIN_FEE_PAIR_STALE_BALANCE');
+}
+
 export interface PersonCandidate extends Omit<DomainCandidate,'readOwner'> {
  // Peers are sealed, school-scoped lifecycle metadata. No names/photos/contact
  // fields are necessary for identity uniqueness or retired-generation fences.
