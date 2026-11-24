@@ -438,7 +438,7 @@ class DocumentProcessingEngine {
     // For inventory photos the measured encoded byte ceiling is mandatory.
     // Reduce JPEG quality and then resolution, always from the processed
     // pixels (never from the uncropped original or a prior JPEG).
-    if (!portrait && !pdfCompression && target <= photoTarget &&
+    if (input['strictPhotoLimit'] == true && !portrait && !pdfCompression && target <= photoTarget &&
         optimized.length > target) {
       var edge = math.max(optimizedWidth, optimizedHeight);
       while (optimized.length > target) {
