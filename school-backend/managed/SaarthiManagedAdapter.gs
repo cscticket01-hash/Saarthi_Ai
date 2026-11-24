@@ -644,6 +644,37 @@ function VS_validateScanQuota(store,b,existing,school) {
 }
 // The signed Script owner applies the same exact-paise and append-only ledger
 // checks as the native live-record owner. Legacy amount-only rows are retained.
+function VS_validatePayrollAdvance(b,existing,school){
+  const current=existing&&existing.data;
+  if(b.operation==='delete'||!b.data||b.data._syncDeleted===true)throw new Error('SALARY_ADVANCE_HISTORY_IMMUTABLE');
+  const next=b.data,staffId=next.staffId;
+  if(typeof staffId!=='string'||!staffId||b.id!=='payroll_advance_'+VS_hash(staffId)||current&&current.staffId!==staffId)throw new Error('SALARY_ADVANCE_OWNER_IMMUTABLE');
+  const events=v=>{if(v===undefined||v===null)return [];if(!Array.isArray(v)||v.some(e=>!e||typeof e!=='object'||Array.isArray(e)))throw new Error('SALARY_ADVANCE_EVENT_INVALID');return v;};
+  const before=events(current&&current.events),after=events(next.events);
+  if(after.length<before.length||before.some((e,i)=>VS_layoutHash(e)!==VS_layoutHash(after[i])))throw new Error('SALARY_ADVANCE_HISTORY_IMMUTABLE');
+  let balance=0;const ids=new Set();
+  for(const e of after){
+    if(typeof e.id!=='string'||!e.id||e.id.length>200||ids.has(e.id)||!Number.isSafeInteger(e.amountPaise)||e.amountPaise<=0||typeof e.reference!=='string'||!e.reference.trim()||e.reference.length>500||!Number.isSafeInteger(e.recordedAt))throw new Error('SALARY_ADVANCE_EVENT_INVALID');
+    ids.add(e.id);
+    if(e.type==='advance'||e.type==='loan')balance+=e.amountPaise;
+    else if(e.type==='repayment')balance-=e.amountPaise;
+    else throw new Error('SALARY_ADVANCE_EVENT_INVALID');
+    if(!Number.isSafeInteger(balance)||balance<0)throw new Error('SALARY_ADVANCE_BALANCE_MISMATCH');
+  }
+  if(balance!==next.balancePaise)throw new Error('SALARY_ADVANCE_BALANCE_MISMATCH');
+  if(!current||after.slice(before.length).some(e=>e.type!=='repayment')){
+    let owner;
+    if(staffId.startsWith('teacher:')){
+      const item=VS_sheetItem(VS_managedSheet('teachers_directory'),staffId.slice(8));
+      owner=item&&item.schoolId===school?item.data:null;
+    }else{
+      const item=VS_sheetItem(VS_managedSheet('school_settings'),'staff_payroll_directory');
+      const staff=item&&item.schoolId===school&&Array.isArray(item.data.staff)?item.data.staff.filter(x=>x.id===staffId):[];
+      owner=staff.length===1?staff[0]:null;
+    }
+    if(!owner||owner.active===false||owner.inactive===true||owner.deleted===true||owner._syncDeleted===true)throw new Error('SALARY_ADVANCE_OWNER_RETIRED');
+  }
+}
 function VS_validateSalaryLedger(current,next,operation){
   const fail=code=>{throw new Error(code);};
   const paise=v=>{if(!Number.isSafeInteger(v)||v<0)fail('SALARY_INVALID_AMOUNT');return v;};
@@ -796,6 +827,7 @@ function VS_managedRecordUnlocked(b,readContext) {
   }
   if(b.operation==='write' && existing && existing.data._syncDeleted && !VS_reusableStudentChild(b,existing) && !(b.syncProtocol===2&&b.expectedRecordRevision===existing.data._syncRevision&&b.data&&(b.data._syncRecreatesDeletedRevision===existing.data._syncRevision||b.data._syncRecreatesDeletedOperationId&&b.data._syncRecreatesDeletedOperationId===existing.data._syncOperationId)&&b.collection!=='students_directory') && !(VS_sheetLifecycleEnabled()&&b.collection==='students_directory'&&b.syncProtocol===2&&/^p-[a-f0-9]{32,64}$/.test(b.data&&b.data.mobileStableId||'')&&b.data.mobileStableId!==existing.data._syncDeletedOwner&&(b.expectedRecordRevision===existing.data._syncRevision||b.data.replacesStudentGeneration===existing.data._syncDeletedOwner)))throw new Error('Record revision conflict');
   if(b.collection==='teacher_salary'&&(b.operation==='write'||b.operation==='delete'))VS_validateSalaryLedger(existing&&existing.data,b.data||{},b.operation);
+  if(b.collection==='school_settings'&&b.id.startsWith('payroll_advance_'))VS_validatePayrollAdvance(b,existing,school);
   if(b.operation==='delete'){
     if(VS_recycleEnabled()&&b.syncProtocol!==2)throw new Error('Invalid sync operation');
     if(existing&&existing.data._syncDeleted){VS_saveRecordHead(store,existing);if(existing.row){VS_refreshStudentReadable(store,existing,existing.row);VS_refreshRecordReadable(store,existing,existing.row);}VS_recordJsonBackup(store,existing);return {recordRevision:existing.data._syncRevision,syncProtocol:2,...(b.operation==='write'?{record:Object.assign({id:b.id},existing.data)}:{}),fileCleanup:VS_managedDeletedFile(store,b.id,existing.data)};}
