@@ -659,7 +659,7 @@ class WindowsLocalDashboardGate extends StatelessWidget {
   Widget build(BuildContext context) {
     WindowsAppearance.watch(context);
     // The startup App Lock already protects entry. No intermediate button.
-    return const WindowsAdminAccessGate(child: WindowsAdminSessionDashboard());
+    return const WindowsAdminSessionDashboard();
   }
 }
 
