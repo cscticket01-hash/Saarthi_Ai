@@ -18,6 +18,8 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart' hide Text, InputDecoration;
 import 'windows_ui_localization.dart';
 import 'windows_local_firestore.dart';
+import 'windows_payroll_recovery_pilot.dart';
+import 'windows_sync_engine.dart' show WindowsSyncEngine;
 import 'windows_sheet_recovery.dart' show sheetRecoveryCacheKey;
 import 'live_sync_protocol.dart' show isDriveRecoveryRevision;
 
@@ -367,6 +369,7 @@ class StaffPayroll {
     await _durable(profile);
     if(amount<=0||eventId.isEmpty||reference.trim().isEmpty||reference.length>500||!['advance','loan','repayment'].contains(type))throw ArgumentError('Enter a valid amount, event and payment reference.');
     final db=FirebaseFirestore.instance,ref=db.collection('school_settings').doc(advanceId(staffId));
+    await WindowsPayrollRecoveryPilot.guardStaff(staffId);
     final before=await advanceLedger(profile,staffId);
     final people=await staff(profile);
     if(!people.any((p)=>p['id']==staffId)&&(before==null||type!='repayment'))throw StateError('Active staff required for a new advance or loan.');
@@ -463,6 +466,7 @@ class StaffPayroll {
     final current = people.where((s) => s['id'] == person['id']);
     if (current.length != 1) throw StateError('Staff record is no longer available. Reload the page.');
     final employee = current.single;
+    await WindowsPayrollRecoveryPilot.guardStaff(employee['id'].toString());
     if(attendanceAdjustment!=null){
       final dates=attendanceAdjustment['unpaidDates'],rate=attendanceAdjustment['ratePaise'],reason=attendanceAdjustment['reason'];
       if(dates is! List||rate is! int||rate<0||reason is! String||reason.trim().isEmpty)throw StateError('Attendance adjustment requires approved dates, rate and reason.');
@@ -522,6 +526,7 @@ class StaffPayroll {
     final row = (await ref.get()).data();
     _sameSchool(profile);
     if (row == null || row['netPaise'] is! num) throw StateError('Create a monthly salary record first.');
+    await WindowsPayrollRecoveryPilot.guardStaff(row['staffId']?.toString()??'');
     final payments = List<dynamic>.from(row['payments'] as List? ?? []);
     if (payments.any((p) => p is! Map)) throw StateError('Stored payment history requires review. Original payments retained.');
     final prior = payments.where((p) => p is Map && p['id'] == paymentId).toList();
@@ -569,6 +574,7 @@ class StaffPayroll {
       final row=(await ref.get()).data();
       _sameSchool(profile);
       if(row==null||row['netPaise'] is! num)throw StateError('A selected salary record is missing. No bulk payments saved.');
+      await WindowsPayrollRecoveryPilot.guardStaff(row['staffId']?.toString()??'');
       final payments=List<dynamic>.from(row['payments'] as List? ?? []);
       if(payments.any((p)=>p is! Map))throw StateError('Payment history requires review.');
       final prior=payments.where((p)=>p is Map&&p['id']==paymentId).toList();
@@ -645,6 +651,7 @@ class StaffPayroll {
     final old=(await ref.get()).data();
     _sameSchool(profile);
     if(old==null||old['netPaise'] is! num)throw StateError('Modern salary record required.');
+    await WindowsPayrollRecoveryPilot.guardStaff(old['staffId']?.toString()??'');
     if((old['salaryLocked']==true)==locked)return;
     await WindowsLocalSecurity.initialize();
     await requireAdmin(profile,adminPassword);
@@ -685,6 +692,7 @@ class StaffPayroll {
             row['schoolId'] != FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'])) {
       throw StateError('Salary record or school changed. Reopen Staff Salary.');
     }
+    await WindowsPayrollRecoveryPilot.guardStaff(row['staffId']?.toString()??'');
     if(row['month'] is String)await _requireMonthOpen(profile,row['month'] as String);
     if(row['salaryLocked']==true)throw StateError('Salary is approved and locked. Reopen it before correcting a payment.');
     final payments = List<dynamic>.from(row['payments'] as List? ?? []);
@@ -1098,6 +1106,46 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
       }
     }catch(e){if(mounted)setState(()=>_error='$e');}
   }
+  Future<void> _recovery(Map<String,dynamic> row)async{
+    try{
+      if(!WindowsPayrollRecoveryPilot.enabled)return;
+      final password=await _adminAuthorization('TEST Salary Advance Recovery');
+      if(password==null||!mounted)return;
+      final amount=TextEditingController(),reference=TextEditingController();
+      try{
+        await _editor('TEST Salary Advance Recovery',(setD)=>[
+          const Text('Isolated TEST only. The original paired request is retained locally before Cloudflare publication. No money is transferred.'),
+          TextField(controller:amount,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Approved deduction',prefixText:'₹ ')),
+          TextField(controller:reference,decoration:const InputDecoration(labelText:'Approval reference')),
+        ],()=>StaffPayroll._serial(()async{
+          await StaffPayroll.requireAdmin(_profile,password);
+          final school=FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']?.toString()??'';
+          await StaffPayroll._requireMonthOpen(_profile,row['month'].toString());
+          await WindowsPayrollRecoveryPilot.prepare(_profile,school,salaryId:row['id'].toString(),
+            advanceId:StaffPayroll.advanceId(row['staffId'].toString()),amountPaise:StaffPayroll.money(amount.text),reference:reference.text);
+          WindowsSyncEngine.instance.scheduleSoon(localMutation:true);
+        }));
+      }finally{
+        await Future<void>.delayed(const Duration(milliseconds:250));amount.dispose();reference.dispose();
+      }
+    }catch(e){if(mounted)setState(()=>_error='$e');}
+  }
+  Future<void> _recoveryVerification()async{
+    try{
+      final db=FirebaseFirestore.instance;
+      final school=db.activeProfileIdentity['schoolSyncId'];
+      final rows=(await db.collection(WindowsPayrollRecoveryPilot.journal).get()).docs.where((r)=>r.data()['schoolId']==school).toList();
+      StaffPayroll._sameSchool(_profile);
+      if(!mounted)return;
+      await showDialog<void>(context:context,builder:(ctx)=>AlertDialog(title:const Text('TEST Recovery Verification'),
+        content:SizedBox(width:560,child:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,crossAxisAlignment:CrossAxisAlignment.start,children:[
+          if(rows.isEmpty)const Text('No original paired recovery recorded.'),
+          for(final r in rows)ListTile(title:Text(r.data()['bundleId'].toString()),subtitle:Text('₹${StaffPayroll.format((r.data()['amountPaise'] as int?)??0)} • ${r.data()['state']}')),
+          const Text('Cloud committed and Drive verified are separate states. Missing evidence retains the original request.'),
+        ]))),actions:[TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Close'))]));
+      WindowsSyncEngine.instance.scheduleSoon(localMutation:true);
+    }catch(e){if(mounted)setState(()=>_error='$e');}
+  }
   Future<void> _advance(Map<String,dynamic> person) async{
     try{
       final staffId=(person['staffId']??person['id']).toString();
@@ -1294,6 +1342,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
             OutlinedButton.icon(onPressed:_working?null:_toggleMonth,icon:Icon(_monthClosed?Icons.lock_open:Icons.lock),label:Text(_monthClosed?'Reopen Payroll Month':'Close Payroll Month')),
             FilledButton.icon(style:FilledButton.styleFrom(backgroundColor: WindowsAppearance.primary, foregroundColor: WindowsAppearance.onPrimary),onPressed:_selected.isEmpty?null:_paySelected,icon:Icon(Icons.done_all),label:Text('Record Selected Payments')),
             OutlinedButton.icon(onPressed:_working?null:_legacyReview,icon:Icon(Icons.fact_check_outlined),label:Text('Legacy Salary Review')),
+            if(WindowsPayrollRecoveryPilot.enabled)OutlinedButton.icon(onPressed:_working?null:_recoveryVerification,icon:Icon(Icons.fact_check),label:Text('TEST Recovery Verification')),
             OutlinedButton.icon(onPressed:_working?null:_bulkVerification,icon:Icon(Icons.fact_check),label:Text('Bulk Verification')),
             OutlinedButton.icon(key: const ValueKey('salary-history'), onPressed:()=>_history(),icon:Icon(Icons.history),label:Text('Payment History')),
             OutlinedButton.icon(onPressed:_working?null:()=>_output(csv:true),icon:Icon(Icons.download_outlined),label:Text('Export CSV')),
@@ -1366,6 +1415,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
           if(action=='edit')_salary(person,row);
           if(action=='structure')_editStructure(person);
           if(action=='advance')_advance(person);
+          if(action=='recovery'&&row!=null)_recovery(row);
           if(action=='leave')_leave(person);
           if(action=='lock'&&row!=null)_toggleSalaryLock(row);
           if(action=='pay'&&row!=null)_payment(row);
@@ -1376,6 +1426,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
           PopupMenuItem(value:'edit',enabled:!_monthClosed,child:Text(row==null?'Set salary':'Edit salary')),
           const PopupMenuItem(value:'structure',child:Text('Salary Structure • Admin Password')),
           const PopupMenuItem(value:'advance',child:Text('Advance / Loan Ledger • Admin Password')),
+          if(WindowsPayrollRecoveryPilot.enabled&&row!=null)PopupMenuItem(value:'recovery',enabled:!_monthClosed&&row['salaryLocked']!=true,child:const Text('TEST Advance Recovery • Admin Password')),
           PopupMenuItem(value:'leave',enabled:!_monthClosed,child:const Text('Approve Staff Leave • Admin Password')),
           if(row!=null)PopupMenuItem(value:'lock',child:Text(row['salaryLocked']==true?'Reopen Salary • Admin Password':'Approve & Lock Salary')),
           if(row!=null&&StaffPayroll.paid(row)<StaffPayroll.total(row))const PopupMenuItem(value:'pay',child:Text('Record payment')),
