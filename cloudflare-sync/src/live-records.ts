@@ -1,4 +1,4 @@
-import {domainCollections,personCollections,validateDomainCandidate,validatePersonCandidate,validatePayrollAdvance} from './domain-policy';
+import {domainCollections,personCollections,validateDomainCandidate,validatePersonCandidate,validatePayrollAdvance,validatePayrollMonth,validateClosedPayrollMonth} from './domain-policy';
 import {createHash,randomUUID} from 'node:crypto';
 import {canonical} from './spool';
 import {demand,schoolPattern} from './protocol';
@@ -66,7 +66,7 @@ export function initLive(storage:DurableObjectStorage){
  storage.sql.exec('CREATE TABLE IF NOT EXISTS live_retention(id INTEGER PRIMARY KEY,floor INTEGER NOT NULL)');
  storage.sql.exec('INSERT OR IGNORE INTO live_retention VALUES(1,0)');
 }
-const ownerFields=new Set(['schoolId','id','mobileStableId','teacherId','personId','studentId','studentDocId','studentDocumentId','teacherDocId','teacherDocumentId','documentId','oldStudentId','previousStudentId','previousStudentIds','employeeId','staffId','role','ownerRole','active','inactive','status','class','studentClass','section','rollNo','roll','replacesStudentGeneration','_syncDeleted','_syncDeletedOwner','_syncRetiredTeacherId','_syncRetiredStudentGenerations','_syncRetiredTeacherGenerations']);
+const ownerFields=new Set(['schoolId','id','mobileStableId','teacherId','personId','studentId','studentDocId','studentDocumentId','teacherDocId','teacherDocumentId','documentId','oldStudentId','previousStudentId','previousStudentIds','employeeId','staffId','role','ownerRole','active','inactive','status','month','closed','class','studentClass','section','rollNo','roll','replacesStudentGeneration','_syncDeleted','_syncDeletedOwner','_syncRetiredTeacherId','_syncRetiredStudentGenerations','_syncRetiredTeacherGenerations']);
 function ownerMetadata(data:Json,id:string):Json {return {...Object.fromEntries(Object.entries(data).filter(([key])=>ownerFields.has(key))),id};}
 function teacherPhoneKey(data:Json):string|null {
  if(data._syncDeleted===true||data.deleted===true)return null;
@@ -658,6 +658,10 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    }
    const readOwner=(collection:string,id:string)=>findOwner(storage,collection,id);
    const readPeers=(collection:string)=>storage.sql.exec<{body:string}>('SELECT body FROM live_record_owners WHERE collection=?',collection).toArray().map(row=>JSON.parse(row.body) as Json);
+   const monthControl=col==='school_settings'&&String(b.id).startsWith('payroll_month_');
+   const salaryMonth=col==='teacher_salary'?String(data.month||old.month||''):'';
+   if(monthControl)validatePayrollMonth(String(b.id),current?old:null,data,String(b.operation));
+   if(salaryMonth&&readOwner('school_settings','payroll_month_'+salaryMonth)?.closed===true)validateClosedPayrollMonth(current?old:null,data,String(b.operation));
    if(col==='school_settings'&&String(b.id).startsWith('payroll_advance_')){
     if(b.operation!=='delete')demand(typeof data.staffId==='string'&&b.id==='payroll_advance_'+createHash('sha256').update(data.staffId).digest('hex'),'Invalid payroll advance identity',409);
     validatePayrollAdvance(String(b.id),current?old:null,data,String(b.operation),readOwner,school);
@@ -706,6 +710,15 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
     }
    }
    for(const predecessor of dependencies)sql.exec('INSERT OR IGNORE INTO live_backup_dependencies VALUES(?,?)',appended.seq,predecessor);
+   // Preserve month-control ordering on the independent Script backup path.
+   // A closure follows all already accepted salary revisions for that month;
+   // later salary revisions wait for the preceding control revision.
+   if(monthControl||salaryMonth){
+    const pending=monthControl
+      ?sql.exec<{seq:number}>("SELECT seq FROM live_backup WHERE collection='teacher_salary' AND seq<? AND state!='verified' AND json_extract(body,'$.month')=?",appended.seq,String(data.month)).toArray()
+      :sql.exec<{seq:number}>("SELECT seq FROM live_backup WHERE collection='school_settings' AND id=? AND seq<? AND state!='verified' ORDER BY seq DESC LIMIT 1",'payroll_month_'+salaryMonth,appended.seq).toArray();
+    for(const item of pending)sql.exec('INSERT OR IGNORE INTO live_backup_dependencies VALUES(?,?)',appended.seq,item.seq);
+   }
    // Parent registration must be durably handed to Drive before its dependent
    // child can reach the old lifecycle engine. Acceptance at the edge is atomic.
    if(!personCollections.has(col)&&b.operation!=='delete'){
