@@ -30,7 +30,16 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
  const windowsTheme=createWindowsTheme({db,now});
  const developerPasswordOtp=createDeveloperPasswordOtp({auth,db,now,fetchImpl});
  const repairKnowledge=createRepairKnowledge({...repairKnowledgeOptions,db,now});
- const deviceAccess=createManagedDeviceAccess({store:deviceStore||firestoreManagedDeviceStore(db),enforced:deviceAccessEnforced,managementEnabled:deviceManagementEnabled,enrollmentEnabled:deviceEnrollmentEnabled,offlinePrivateKey:deviceOfflinePrivateKey,now,...(deviceOfflineWindowMs==null?{}:{offlineWindowMs:deviceOfflineWindowMs})});
+ const deviceAccess=createManagedDeviceAccess({
+  authorizeRevoke:async(identity,body)=>{
+   if(!/^[a-f0-9]{64}$/.test(body.targetDeviceIdentity||''))
+    fail(400,'Invalid target PC','DEVICE_TARGET_INVALID');
+   const result=await schoolAdminSecurity.consumeApproval(
+    identity,body.adminApprovalToken,'protected-settings','device/'+body.targetDeviceIdentity);
+   if(result.authorized!==true)
+    fail(403,'Set an Admin Password before removing a PC','ADMIN_APPROVAL_REQUIRED');
+  },
+  store:deviceStore||firestoreManagedDeviceStore(db),enforced:deviceAccessEnforced,managementEnabled:deviceManagementEnabled,enrollmentEnabled:deviceEnrollmentEnabled,offlinePrivateKey:deviceOfflinePrivateKey,now,...(deviceOfflineWindowMs==null?{}:{offlineWindowMs:deviceOfflineWindowMs})});
  const cardAuthority=createManagedCardIssueAuthority({db,now});
  const cardReader=createManagedCardReader({db,enforced:cardReaderEnforced,privateKey:cardReaderPrivateKey,now});
  if(cardIssueEnabled&&!cardReaderEnforced)throw Error('Card issuance requires all-reader enforcement');
