@@ -14,6 +14,7 @@ Future<File> downloadVerifiedWindowsInstaller({
   required int sizeBytes,
   required File destination,
   http.Client? client,
+  http.Client Function()? createClient,
   Duration headerTimeout = const Duration(seconds: 30),
   Duration idleTimeout = const Duration(seconds: 30),
   Duration overallTimeout = const Duration(minutes: 15),
@@ -55,7 +56,7 @@ Future<File> downloadVerifiedWindowsInstaller({
     for (var attempt = 1; ; attempt++) {
       try {
         return await _downloadAttempt(
-          uri, hash, sizeBytes, destination, client ?? http.Client(),
+          uri, hash, sizeBytes, destination, client ?? createClient?.call() ?? http.Client(),
           budget, headerTimeout, idleTimeout, onProgress,
         );
       } on Exception catch (error) {
