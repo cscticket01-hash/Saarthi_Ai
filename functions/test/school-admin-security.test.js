@@ -5,36 +5,36 @@ const assert = require('node:assert/strict');
 const {createSchoolAdminSecurity} = require('../school-admin-security');
 
 function memoryDatabase() {
-  const values = new Map(), audits = [];
+  let values = new Map(), failAudit = false;
   const snapshot = path => ({
     exists:values.has(path),
     data:()=>values.get(path) && {...values.get(path)}
   });
-  const doc = path => ({
-    get:async()=>snapshot(path),
-    set:async(data,{merge}={})=>{
-      values.set(path,merge?{...values.get(path),...data}:{...data});
-    },
-    update:async(data)=>{
-      if(!values.has(path))throw Error('missing update target');
-      values.set(path,{...values.get(path),...data});
-    },
-    create:async(data)=>{
-      if(values.has(path))throw Error('duplicate grant');
-      values.set(path,{...data});
-    }
-  });
+  const doc = path => ({path,get:async()=>snapshot(path)});
   return {
-    audits,
+    get audits(){return [...values.entries()].filter(([key])=>key.startsWith('platform_audit/')).map(([,value])=>value);},
+    rejectNextAudit(){failAudit=true;},
     doc,
-    collection:name=>({
-      add:async data=>{audits.push({collection:name,...data});return {id:'audit-'+audits.length}}
-    }),
-    runTransaction:async work=>work({
-      get:async ref=>ref.get(),
-      set:(ref,data)=>{ref.set(data);},
-      update:(ref,data)=>{ref.update(data);}
-    }),
+    runTransaction:async work=>{
+      const next=new Map(values);
+      const write=(ref,data,mode)=>{
+        if(ref.path.startsWith('platform_audit/')&&failAudit){
+          failAudit=false;
+          throw Error('synthetic audit failure');
+        }
+        if(mode==='update'&&!next.has(ref.path))throw Error('missing update target');
+        if(mode==='create'&&next.has(ref.path))throw Error('duplicate grant');
+        next.set(ref.path,mode==='update'?{...next.get(ref.path),...data}:{...data});
+      };
+      const result=await work({
+        get:async ref=>ref.get(),
+        set:(ref,data)=>write(ref,data,'set'),
+        update:(ref,data)=>write(ref,data,'update'),
+        create:(ref,data)=>write(ref,data,'create')
+      });
+      values=next;
+      return result;
+    }
   };
 }
 
@@ -114,4 +114,25 @@ test('five bad passwords temporarily block unlock',async()=>{
   await assert.rejects(admin.handle({operation:'unlock',password},school),/temporarily locked/);
   advance(15*60*1000+1);
   assert.equal((await admin.handle({operation:'unlock',password},school)).verified,true);
+});
+
+test('failed audit writes cannot partially commit credentials or consume approval',async()=>{
+  const {admin,db}=harness();
+  db.rejectNextAudit();
+  await assert.rejects(admin.handle({operation:'enroll',freshIdToken:proof,newPassword:password},school),/synthetic audit failure/);
+  assert.equal((await admin.handle({operation:'status'},school)).configured,false);
+  await admin.handle({operation:'enroll',freshIdToken:proof,newPassword:password},school);
+  db.rejectNextAudit();
+  await assert.rejects(admin.handle({operation:'change',password,newPassword:'NewAdminPassword-99!'},school),/synthetic audit failure/);
+  assert.equal((await admin.handle({operation:'unlock',password},school)).verified,true);
+  const target='students_directory/Student_1';
+  const request={operation:'authorize',password,scope:'person-delete',target};
+  db.rejectNextAudit();
+  await assert.rejects(admin.handle(request,school),/synthetic audit failure/);
+  const grant=await admin.handle(request,school);
+  const consume={operation:'consume',approvalToken:grant.approvalToken,scope:'person-delete',target};
+  db.rejectNextAudit();
+  await assert.rejects(admin.handle(consume,school),/synthetic audit failure/);
+  assert.equal((await admin.handle(consume,school)).authorized,true);
+  assert.equal(db.audits.filter(a=>a.action==='school_admin_action_consumed').length,1);
 });
