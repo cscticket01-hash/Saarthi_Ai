@@ -2,6 +2,7 @@
 
 const {randomBytes, createHash, timingSafeEqual, scrypt} = require('node:crypto');
 const {promisify} = require('node:util');
+const {canonical} = require('./live-sync-canonical');
 
 const derive = promisify(scrypt);
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -31,10 +32,47 @@ async function passwordHash(password, salt) {
   return bytes.toString('hex');
 }
 
+// A durable approval binds the original immutable business operation. It is
+// not an interchangeable password token and carries no credential material.
+// The mutation owner must recompute the same binding from its actual request
+// and verified revisions; this function alone is not a provider gate.
+function mutationBinding(identity, intent) {
+  const id = value => typeof value==='string' && /^[^/]{1,200}$/.test(value) &&
+    !['.','..','__proto__','constructor','prototype'].includes(value);
+  const revision = value => typeof value==='string' && value.length>0 && value.length<=100;
+  if(!intent || typeof intent!=='object' || Array.isArray(intent) ||
+     !/^vs-[a-f0-9]{32}$/.test(identity.schoolId||'') ||
+     typeof identity.uid!=='string'||!identity.uid ||
+     !/^[A-Za-z0-9_-]{16,100}$/.test(intent.operationId||'') ||
+     !id(intent.id)||!revision(intent.recordRevision) ||
+     !/^p-[a-f0-9]{32,64}$/.test(intent.generation||'') ||
+     !/^[a-f0-9]{64}$/.test(intent.payloadHash||''))
+    denied(400,'ADMIN_MUTATION_INVALID','Exact original record operation required');
+  const base=['scope','collection','id','operationId','recordRevision','generation','payloadHash'];
+  let target;
+  if(intent.scope==='person-delete'){
+    if(!['students_directory','teachers_directory'].includes(intent.collection) ||
+       Object.keys(intent).some(k=>!base.includes(k)))
+      denied(400,'ADMIN_MUTATION_INVALID','Invalid person deletion binding');
+    target=intent.collection+'/'+intent.id;
+  }else if(intent.scope==='force-promotion'){
+    if(intent.collection!=='students_directory'||!id(intent.examId)||
+       !revision(intent.examRevision)||!revision(intent.resultRevision)||
+       Object.keys(intent).some(k=>![...base,'examId','examRevision','resultRevision'].includes(k)))
+      denied(400,'ADMIN_MUTATION_INVALID','Exact final exam and result revisions required');
+    target=intent.id+'/'+intent.examId;
+  }else denied(400,'ADMIN_MUTATION_INVALID','Unknown protected mutation');
+  const fingerprint=hash(canonical({version:1,schoolId:identity.schoolId,uid:identity.uid,intent}));
+  return {target,fingerprint};
+}
+
 function createSchoolAdminSecurity({db, auth, now=Date.now}) {
   const credentialRef = school => db.doc('school_admin_security/' + school);
   const approvalRef = (school, uid, token) =>
     db.doc('school_admin_action_approvals/' + hash(school + '/' + uid + '/' + token));
+
+  const mutationRef = (school, operationId) =>
+    db.doc('school_admin_mutation_approvals/'+hash(school+'/'+operationId));
 
   async function freshSchoolLogin(proof, identity) {
     if (typeof proof !== 'string' || proof.length < 100 || proof.length > 10000)
@@ -174,6 +212,9 @@ function createSchoolAdminSecurity({db, auth, now=Date.now}) {
       return {success:true, schoolId:identity.schoolId, authorized:true,
         approvalToken:token, expiresAt};
     }
+    if(operation==='bind-mutation') {
+      return bindMutation(identity,body.approvalToken,body.intent);
+    }
     if(operation==='consume') {
       const scope=body.scope, target=body.target;
       if(!['person-delete','force-promotion','protected-settings'].includes(scope) ||
@@ -221,7 +262,53 @@ function createSchoolAdminSecurity({db, auth, now=Date.now}) {
     });
     return {authorized:true};
   }
-  return {handle, consumeApproval};
+  async function bindMutation(identity, token, intent) {
+    const {target,fingerprint}=mutationBinding(identity,intent);
+    const durable=mutationRef(identity.schoolId,intent.operationId);
+    const auditRef=db.doc('platform_audit/'+randomBytes(16).toString('hex'));
+    // Consume the short-lived approval and write the immutable retry binding
+    // together. A lost response can replay the identical original operation.
+    const credential=credentialRef(identity.schoolId);
+    await db.runTransaction(async tx=>{
+      const current=await tx.get(credential),existing=await tx.get(durable);
+      if(existing.exists){
+        const row=existing.data();
+        if(row.fingerprint!==fingerprint||row.uid!==identity.uid||
+           row.schoolId!==identity.schoolId)
+          denied(409,'ADMIN_MUTATION_CONFLICT','Original admin-approved operation differs');
+        return;
+      }
+      if(!current.exists||typeof token!=='string'||!/^[a-f0-9]{64}$/.test(token))
+        denied(403,'ADMIN_APPROVAL_REQUIRED','Verify the independent Admin Password');
+      const grantRef=approvalRef(identity.schoolId,identity.uid,token);
+      const snapshot=await tx.get(grantRef),grant=snapshot.exists?snapshot.data():null;
+      if(!grant||grant.schoolId!==identity.schoolId||grant.uid!==identity.uid||
+         grant.scope!==intent.scope||grant.targetHash!==hash(target)||
+         grant.credentialFingerprint!==current.data().passwordHash||
+         grant.usedAt!==0||grant.expiresAt<=now())
+        denied(403,'ADMIN_APPROVAL_EXPIRED','Admin approval expired or does not match this action');
+      const acceptedAt=now();
+      tx.update(grantRef,{usedAt:acceptedAt});
+      tx.create(durable,{version:1,schoolId:identity.schoolId,uid:identity.uid,
+        operationId:intent.operationId,scope:intent.scope,fingerprint,acceptedAt});
+      tx.set(auditRef,{action:'school_admin_mutation_bound',schoolId:identity.schoolId,
+        actor:identity.uid,scope:intent.scope,operationId:intent.operationId,
+        fingerprint,at:acceptedAt});
+    });
+    return {success:true,schoolId:identity.schoolId,authorized:true,operationId:intent.operationId};
+  }
+
+  async function assertMutationApproval(identity,intent) {
+    const {fingerprint}=mutationBinding(identity,intent);
+    const snapshot=await mutationRef(identity.schoolId,intent.operationId).get();
+    const row=snapshot.exists?snapshot.data():null;
+    if(!row||row.version!==1||row.schoolId!==identity.schoolId||
+       row.uid!==identity.uid||row.operationId!==intent.operationId||
+       row.scope!==intent.scope||row.fingerprint!==fingerprint)
+      denied(403,'ADMIN_MUTATION_APPROVAL_REQUIRED','Original Admin Password approval required');
+    return {authorized:true,operationId:intent.operationId};
+  }
+  return {handle, consumeApproval, assertMutationApproval};
 }
 
 module.exports = {createSchoolAdminSecurity};
