@@ -89,6 +89,19 @@ function validateSalaryLedger(current:Json|null,next:Json):void {
  if(prior&&prior.month!==undefined&&prior.month!==next.month)reject('SALARY_MONTH_IMMUTABLE');
  salaryAppendOnly(salaryEvents(prior?.payments),salaryEvents(next.payments));
  salaryAppendOnly(salaryEvents(prior?.paymentCorrections),salaryEvents(next.paymentCorrections));
+ const oldLocks=salaryEvents(prior?.salaryLockHistory),newLocks=salaryEvents(next.salaryLockHistory);
+ salaryAppendOnly(oldLocks,newLocks);
+ let locked=prior?.salaryLocked===true;
+ for(const entry of newLocks.slice(oldLocks.length)){
+  if(!nonempty(entry.id)||typeof entry.locked!=='boolean'||entry.locked===locked||!Number.isSafeInteger(entry.at))reject('SALARY_LOCK_HISTORY_INVALID');
+  locked=entry.locked;
+ }
+ if(locked!==(next.salaryLocked===true))reject('SALARY_LOCK_HISTORY_INVALID');
+ if(prior?.salaryLocked===true){
+  if(['basicPaise','allowancePaise','bonusPaise','overtimePaise','deductionPaise','netPaise','amount'].some(k=>prior[k]!==next[k])||
+     salaryCanonical(prior.paymentCorrections??[])!==salaryCanonical(next.paymentCorrections??[]))reject('SALARY_LOCKED');
+ }
+
  // Existing unitemized legacy balances must be retained, not manufactured.
  let opening=0;
  if(prior){
@@ -107,7 +120,7 @@ export function validateDomainCandidate(input:DomainCandidate):void {
  if(operation==='delete'){
   if(next._syncDeleted!==true)reject('DOMAIN_DELETE_UNVERIFIED',400);
   if(collection==='teacher_salary'&&current&&!current._syncDeleted&&current.netPaise!==undefined&&
-     (Number(current.paidPaise??0)>0||salaryEvents(current.payments).length||salaryEvents(current.paymentCorrections).length))reject('SALARY_HISTORY_IMMUTABLE');
+     (Number(current.paidPaise??0)>0||current.salaryLocked===true||salaryEvents(current.salaryLockHistory).length||salaryEvents(current.payments).length||salaryEvents(current.paymentCorrections).length))reject('SALARY_HISTORY_IMMUTABLE');
   return;
  }
  if(next._syncDeleted===true)reject('DOMAIN_INVALID_WRITE',400);
