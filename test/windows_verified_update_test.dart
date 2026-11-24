@@ -48,6 +48,26 @@ void main() {
     expect(await file.readAsBytes(), bytes);
     expect(await dir.list().length, 1);
   });
+  test('a socket timeout restarts with a fresh client and verifies the download', () async {
+    var attempts = 0;
+    final target = File('${dir.path}/setup.exe');
+    final file = await downloadVerifiedWindowsInstaller(
+      url: url,
+      digest: digest,
+      sizeBytes: bytes.length,
+      destination: target,
+      createClient: () {
+        final attempt = ++attempts;
+        return MockClient((_) async {
+          if (attempt == 1) throw http.ClientException('socket timed out');
+          return http.Response.bytes(bytes, 200);
+        });
+      },
+    );
+    expect(attempts, 2);
+    expect(await file.readAsBytes(), bytes);
+    expect(await dir.list().length, 1);
+  });
   test('truncated or corrupt installer never replaces an existing file and removes temporary bytes', () async {
     for (final payload in [
       bytes.sublist(1),
