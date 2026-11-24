@@ -172,10 +172,10 @@ void main() {
   testWidgets('legacy Admin lock cannot open the independent admin panel', (
     tester,
   ) async {
-    await WindowsSectionLocks.addPassword(
+    await tester.runAsync(() => WindowsSectionLocks.addPassword(
       sectionKey: 'admin_section',
       password: 'admin-only-pass',
-    );
+    ));
     await tester.pumpWidget(
       const MaterialApp(home: WindowsLocalDashboardGate()),
     );
