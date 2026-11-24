@@ -527,3 +527,4 @@ const windowsIdleServerTimeoutMessage =
 // Windows release requested for the merged Exam Center update in PR #399.
 
 // Windows release requested for Password Management and Exam Center updates.
+// Release verification includes the corrected Windows Admin startup tests.
