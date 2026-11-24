@@ -541,7 +541,7 @@ class StaffPayroll {
         if(raw is! Map||raw['id'] is! String||raw['paymentId'] is! String)continue;
         _sameSchool(profile);
         final id=raw['id'] as String;
-        final baselineKey=base64Url.encode(utf8.encode('teacher_salary\\\\n$id')).replaceAll('=', '');
+        final baselineKey=base64Url.encode(utf8.encode('teacher_salary\\n$id')).replaceAll('=', '');
         final baseline=(await db.collection('_windows_sync_baselines').doc(baselineKey).get()).data();
         final drive=(await db.collection('_windows_verified_cloud_records').doc(sheetRecoveryCacheKey('teacher_salary',id)).get()).data();
         _sameSchool(profile);
