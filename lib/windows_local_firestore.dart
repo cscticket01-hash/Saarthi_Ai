@@ -1335,11 +1335,11 @@ class WriteBatch {
 
   Future<void> commit() async {
     if(firestore.activeProfileId!=originProfile)throw StateError('School profile changed during batch.');
-    for (final collection in _expected.entries) {
-      for (final id in collection.value.keys) {
-        if (!_operations.any((o) => o.collection == collection.key && o.documentId == id))
-          throw StateError('A guarded record must be included in the batch.');
-      }
+    // The storage owner's serialized CAS checks every expected record,
+    // including read-only dependencies of a journal write. Do not require
+    // rewriting the financial originals just to assert their revisions.
+    if (_expected.isNotEmpty && _operations.isEmpty) {
+      throw StateError('A guarded batch must contain a write.');
     }
     await firestore._database.applyOperations(
       _operations,
