@@ -1,6 +1,7 @@
 import 'windows_appearance.dart';
 import 'windows_admin_security.dart';
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'windows_connect/central_school_cloud.dart';
@@ -306,7 +307,7 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
                   );
                 }
                 Widget action(Map<String,dynamic> row) => row['status']=='active' && row['deviceIdentity']!=current
-                  ? TextButton(onPressed:revoking || (verified ? !canRevoke : cacheScope == null) ? null:()=>revoke(row),child:Text(pendingRevoke == row['deviceIdentity'] ? (verified ? 'Confirm revoke' : 'Revoke queued') : 'Revoke'))
+                  ? TextButton(onPressed:revoking || (verified ? !canRevoke : cacheScope == null) ? null:()=>revoke(row),child:Text(pendingRevoke == row['deviceIdentity'] ? (verified ? 'Confirm removal' : 'Removal queued') : 'Remove'))
                   :  Text('—',style:TextStyle(fontFamily: 'Segoe UI', color:muted));
                 return Column(children:[
                   if(!compact)  Padding(padding:EdgeInsets.symmetric(horizontal:20,vertical:12),child:Row(children:[
@@ -319,10 +320,179 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
                 ]);
               }),
             ])),
+          if (devices.any((row) => row['status'] == 'active')) ...[
+            const SizedBox(height: 16),
+            _DeviceNetworkRadar(nodes: [
+              for (final row in devices)
+                if (row['status'] == 'active')
+                  (
+                    name: row['name'] as String,
+                    type: !verified ? 'Not verified' : !recentlyActive(row)
+                        ? 'Offline' : row['connectionType'] == 'WiFi'
+                        ? 'Wi-Fi' : row['connectionType'] == 'LAN' ? 'LAN' : 'Unknown',
+                  ),
+            ]),
+          ],
           if(verified && !canRevoke)  Padding(padding:EdgeInsets.only(top:12),child:Text("Device enrollment is active. Revoke will be available after this school's device-access setup is completed.",style:TextStyle(fontFamily: 'Segoe UI', color:muted,fontSize:12))),
            Padding(padding:EdgeInsets.only(top:14),child:Text('Offline appears when a verified PC heartbeat is stale. Wi-Fi/LAN is only the most recently reported adapter on a recently active PC, not proof of internet connectivity.',style:TextStyle(fontFamily: 'Segoe UI', color:muted,fontSize:12))),
         ]),
       )),
     );
   }
+}
+
+typedef _RadarNode = ({String name, String type});
+
+class _DeviceNetworkRadar extends StatefulWidget {
+  const _DeviceNetworkRadar({required this.nodes});
+  final List<_RadarNode> nodes;
+
+  @override
+  State<_DeviceNetworkRadar> createState() => _DeviceNetworkRadarState();
+}
+
+class _DeviceNetworkRadarState extends State<_DeviceNetworkRadar>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _motion = AnimationController(
+    vsync: this, duration: const Duration(milliseconds: 2400),
+  );
+
+  void _updateMotion() {
+    final moving = widget.nodes.any((node) => node.type == 'Wi-Fi' || node.type == 'LAN');
+    if (moving && !MediaQuery.disableAnimationsOf(context)) {
+      if (!_motion.isAnimating) _motion.repeat();
+    } else {
+      _motion.stop();
+      _motion.value = 0;
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _updateMotion();
+  }
+
+  @override
+  void didUpdateWidget(covariant _DeviceNetworkRadar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _updateMotion();
+  }
+
+  @override
+  void dispose() {
+    _motion.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final textColor = WindowsAppearance.foreground(Colors.white);
+    final line = WindowsAppearance.outline(const Color(0xff567184));
+    final moving = widget.nodes.any((node) => node.type == 'Wi-Fi' || node.type == 'LAN') &&
+        !MediaQuery.disableAnimationsOf(context);
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: WindowsAppearance.background(const Color(0xff162c3e)),
+        borderRadius: BorderRadius.circular(16), border: Border.all(color: line),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('Network Radar', style: TextStyle(color: textColor, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 10),
+        Row(children: [
+          SizedBox(width: 84, child: Column(children: [
+            Icon(Icons.dns_outlined, size: 30, color: textColor),
+            const SizedBox(height: 5),
+            Text('School Server', textAlign: TextAlign.center,
+                style: TextStyle(color: textColor, fontSize: 11)),
+          ])),
+          Expanded(child: SizedBox(
+            height: widget.nodes.length * 44.0,
+            child: RepaintBoundary(child: CustomPaint(
+              painter: _DeviceRadarLines(widget.nodes, _motion, line, moving),
+            )),
+          )),
+          Flexible(flex: 2, child: Column(children: [
+            for (final node in widget.nodes)
+              SizedBox(height: 44, child: Row(children: [
+                Icon(switch (node.type) {
+                  'Wi-Fi' => Icons.wifi_rounded,
+                  'LAN' => Icons.lan_outlined,
+                  'Offline' => Icons.wifi_off_rounded,
+                  _ => Icons.help_outline_rounded,
+                }, size: 18, color: _radarColor(node.type, line)),
+                const SizedBox(width: 8),
+                Expanded(child: Text(node.name, maxLines: 1,
+                    overflow: TextOverflow.ellipsis, style: TextStyle(color: textColor))),
+                const SizedBox(width: 6),
+                Flexible(child: Text(node.type, maxLines: 1,
+                    overflow: TextOverflow.ellipsis, style: TextStyle(color: textColor, fontSize: 11))),
+              ])),
+          ])),
+        ]),
+      ]),
+    );
+  }
+}
+
+Color _radarColor(String type, Color fallback) => switch (type) {
+  'Wi-Fi' => WindowsAppearance.foreground(const Color(0xff7de2ff)),
+  'LAN' => WindowsAppearance.foreground(const Color(0xff9be9c2)),
+  _ => fallback,
+};
+
+class _DeviceRadarLines extends CustomPainter {
+  _DeviceRadarLines(this.nodes, this.motion, this.line, this.moving)
+      : super(repaint: motion);
+  final List<_RadarNode> nodes;
+  final Animation<double> motion;
+  final Color line;
+  final bool moving;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (var index = 0; index < nodes.length; index++) {
+      final type = nodes[index].type;
+      final connected = type == 'Wi-Fi' || type == 'LAN';
+      final color = _radarColor(type, line);
+      final y = 22.0 + index * 44;
+      final path = Path()
+        ..moveTo(0, size.height / 2)
+        ..cubicTo(size.width * .45, size.height / 2, size.width * .55, y, size.width, y);
+      final metrics = path.computeMetrics();
+      if (metrics.isEmpty) continue;
+      final metric = metrics.first;
+      final paint = Paint()..color = connected ? color.withAlpha(115) : line
+        ..style = PaintingStyle.stroke..strokeWidth = 1.5;
+      if (connected) {
+        canvas.drawPath(path, paint);
+      } else {
+        for (var d = 0.0; d < metric.length; d += 9) {
+          canvas.drawPath(metric.extractPath(d, math.min(d + 4, metric.length)), paint);
+        }
+      }
+      if (!connected || !moving) continue;
+      final marker = Paint()..color = color;
+      for (final offset in [0.0, .5]) {
+        final distance = metric.length * ((motion.value + offset + index * .09) % 1);
+        final point = metric.getTangentForOffset(distance)?.position;
+        if (point == null) continue;
+        if (type == 'Wi-Fi') {
+          canvas.drawCircle(point, 3, marker);
+        } else {
+          canvas.drawPath(Path()
+            ..moveTo(point.dx - 4, point.dy)
+            ..lineTo(point.dx, point.dy - 3)
+            ..lineTo(point.dx + 4, point.dy)
+            ..lineTo(point.dx, point.dy + 3)
+            ..close(), marker);
+        }
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _DeviceRadarLines oldDelegate) =>
+      oldDelegate.nodes != nodes || oldDelegate.line != line || oldDelegate.moving != moving;
 }
