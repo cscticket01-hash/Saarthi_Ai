@@ -39,8 +39,8 @@ class WindowsLocalAdminSecurity {
   }
 
   static void _policy(String password) {
-    if(password.length<12||password.length>128||password!=password.trim())
-      throw StateError('Admin Password must contain 12–128 characters without surrounding spaces.');
+    if(password.length<4||password.length>10||password!=password.trim())
+      throw StateError('Admin Password must contain 4–10 characters without surrounding spaces.');
     if(WindowsLocalSecurity.verifyPassword(password))
       throw StateError('Admin Password must be different from App Lock.');
   }
