@@ -1058,6 +1058,12 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
       result.state!=='superseded')fail(503,'Student slot review settlement unverified');
    return {success:true,...result};
   }
+  const requirePayrollBackup=async()=>{
+   const health=await signedRequest(m,{action:'managed_health'});
+   if(health?.success!==true||health.schoolId!==m.schoolId||health.storageReady!==true||
+      health.payrollLedgerVersion!==2||health.payrollLeaveVersion!==1||health.payrollRecoveryBackupVersion!==1)
+    fail(412,'Deploy the updated school-owner Apps Script before paired salary recovery','PAYROLL_SCRIPT_UPGRADE_REQUIRED');
+  };
   if(operation==='payroll-recovery-preview'){
    if(!atomicBundleTestSchools.includes(m.schoolId))fail(412,'Payroll recovery pilot is disabled','ATOMIC_BUNDLE_TEST_DISABLED');
    const validOp=value=>typeof value==='string'&&/^[A-Za-z0-9_-]{16,100}$/.test(value);
@@ -1067,6 +1073,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
       typeof b.eventId!=='string'||!b.eventId||b.eventId.length>200||typeof b.reference!=='string'||!b.reference.trim()||b.reference.length>500)
      fail(400,'Invalid payroll recovery proposal');
    for(const collection of ['teacher_salary','school_settings'])await liveMigration.assertActive(m.schoolId,collection);
+   await requirePayrollBackup();
    const result=await liveSync.payrollRecovery(m.schoolId,{command:'payrollRecoveryPreview',bundleId:b.bundleId,
     salaryId:b.salaryId,advanceId:b.advanceId,salaryOperationId:b.salaryOperationId,advanceOperationId:b.advanceOperationId,
     amountPaise:b.amountPaise,eventId:b.eventId,reference:b.reference.trim()},body=>signedRequest(m,body));
@@ -1112,7 +1119,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
     return {success:true,schoolId:m.schoolId,...result};
    }
    const result=await liveMigration.live(m.schoolId,'teacher_salary',
-     ()=>liveSync.payrollRecovery(m.schoolId,{command:'bundleCommit',...wire},body=>signedRequest(m,body)),
+     async()=>{await requirePayrollBackup();return liveSync.payrollRecovery(m.schoolId,{command:'bundleCommit',...wire},body=>signedRequest(m,body));},
      {action:'managed_records',operation:'write',collection:'teacher_salary',id:salary.id,
       operationId:salary.operationId,expectedRecordRevision:salary.expectedRevision,data:operations[0].data},
      ['school_settings']);
