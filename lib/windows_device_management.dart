@@ -29,10 +29,11 @@ List<Map<String,dynamic>> deviceDirectoryCurrentFirst(List<Map<String,dynamic>> 
 }
 
 class WindowsDeviceManagement extends StatefulWidget {
-  const WindowsDeviceManagement({super.key, this.request, this.cacheScope, this.localConnectionDetector});
+  const WindowsDeviceManagement({super.key, this.request, this.cacheScope, this.localConnectionDetector, this.requestRemovalApproval});
   final Future<Map<String,dynamic>> Function(String action, Map<String,dynamic> body)? request;
   final Future<String?> Function()? cacheScope;
   final Future<String?> Function()? localConnectionDetector;
+  final Future<String?> Function(String target)? requestRemovalApproval;
   @override
   State<WindowsDeviceManagement> createState() => _WindowsDeviceManagementState();
 }
@@ -207,8 +208,9 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
       return;
     }
     if (!verified || !canRevoke) return;
-    final token = await requestWindowsAdminApproval(context,
-        scope: 'protected-settings', target: 'device/$identity');
+    final target = 'device/$identity';
+    final token = await (widget.requestRemovalApproval?.call(target) ??
+        requestWindowsAdminApproval(context, scope: 'protected-settings', target: target));
     if (token == null || !mounted || session != ManagedSchoolSession.changed.value || !verified || !canRevoke || revoking) return;
     readGeneration++; // A prior list response cannot undo this mutation.
     setState(() { busy = true; revoking=true; error = null; });
