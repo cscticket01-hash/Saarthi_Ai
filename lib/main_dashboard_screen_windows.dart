@@ -16908,6 +16908,16 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                             return;
                           }
 
+                          final birthText = dobCtrl.text.trim();
+                          final birthDate = parsePersonBirthDate(birthText);
+                          if (birthText.isNotEmpty && (birthDate == null ||
+                              birthDate.year < 1900 || birthDate.isAfter(DateTime.now()) ||
+                              birthDate.isAfter(parsedDate))) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Enter a valid date of birth before admission.')));
+                            return;
+                          }
+
                           String normalizeRoll(String value) {
                             final cleaned = value.trim();
                             final number = int.tryParse(cleaned);
@@ -17850,15 +17860,15 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                               final pin = pinCtrl.text.trim();
                               final admission = admissionCtrl.text.trim();
                               final birth = dobCtrl.text.trim();
-                              if (pin.isNotEmpty && !isValidPostalPin(pin)) {
+                              if (pin.isNotEmpty && pin != (data['pinCode']?.toString().trim() ?? '') && !isValidPostalPin(pin)) {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   const SnackBar(content: Text('PIN Code mein exactly 6 digits daalein.')));
                                 return;
                               }
                               if ((admission.isNotEmpty && admission != (data['joiningDate']?.toString() ?? '') &&
-                                  parsePersonBirthDate(admission) == null) ||
+                                  (parsePersonBirthDate(admission) == null || parsePersonBirthDate(admission)!.year < 1900)) ||
                                   (birth.isNotEmpty && birth != (data['dateOfBirth']?.toString() ?? '') &&
-                                  (parsePersonBirthDate(birth) == null ||
+                                  (parsePersonBirthDate(birth) == null || parsePersonBirthDate(birth)!.year < 1900 ||
                                   parsePersonBirthDate(birth)!.isAfter(DateTime.now())))) {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   const SnackBar(content: Text('Enter a valid calendar date.')));
