@@ -525,3 +525,5 @@ const windowsIdleServerTimeoutMessage =
 // backup; SCRIPT_TIMEOUT remains a separate school-server warning.
 
 // Windows release requested for the merged Exam Center update in PR #399.
+
+// Windows release requested for Password Management and Exam Center updates.
