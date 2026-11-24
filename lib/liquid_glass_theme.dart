@@ -24,7 +24,8 @@ class _LiquidGlassBackdropState extends State<LiquidGlassBackdrop>
   void didChangeDependencies() {
     super.didChangeDependencies();
     // Respect Android/Windows reduced-motion accessibility preferences.
-    if (MediaQuery.maybeOf(context)?.disableAnimations ?? false) {
+    if ((MediaQuery.maybeOf(context)?.disableAnimations ?? false) ||
+        Theme.of(context).platform == TargetPlatform.windows) {
       _motion.stop();
     } else if (!_motion.isAnimating) {
       _motion.repeat(reverse: true);
@@ -40,7 +41,7 @@ class _LiquidGlassBackdropState extends State<LiquidGlassBackdrop>
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
         animation: _motion,
-        child: widget.child,
+        child: RepaintBoundary(child: widget.child),
         builder: (context, child) {
           final shift = _motion.value;
           return Stack(
@@ -145,6 +146,7 @@ class LiquidGlassPanel extends StatelessWidget {
       child: ClipRRect(
         borderRadius: corners,
         child: BackdropFilter(
+          enabled: Theme.of(context).platform != TargetPlatform.windows,
           filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
           child: DecoratedBox(
             decoration: BoxDecoration(
@@ -189,6 +191,7 @@ class LiquidGlassSurface extends StatelessWidget {
     return ClipRRect(
       borderRadius: BorderRadius.circular(radius),
       child: BackdropFilter(
+        enabled: Theme.of(context).platform != TargetPlatform.windows,
         filter: ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
         child: child,
       ),
