@@ -6,8 +6,9 @@ import 'package:flutter/material.dart';
 /// The background is drawn locally so the native apps work offline without
 /// downloading a remote video or relying on browser-only CSS/WebGL.
 class LiquidGlassBackdrop extends StatefulWidget {
-  const LiquidGlassBackdrop({super.key, required this.child});
+  const LiquidGlassBackdrop({super.key, required this.child, this.aurora = false});
   final Widget child;
+  final bool aurora;
 
   @override
   State<LiquidGlassBackdrop> createState() => _LiquidGlassBackdropState();
@@ -47,12 +48,12 @@ class _LiquidGlassBackdropState extends State<LiquidGlassBackdrop>
           return Stack(
             fit: StackFit.expand,
             children: [
-              const DecoratedBox(
+              DecoratedBox(
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
-                    colors: [
+                    colors: widget.aurora ? const [Color(0xFFE4F9FF), Color(0xFFB9CFFF), Color(0xFFD8CAFF)] : const [
                       Color(0xFF06121F),
                       Color(0xFF152C40),
                       Color(0xFF081926),
