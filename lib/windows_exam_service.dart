@@ -327,8 +327,8 @@ class WindowsExamService {
     await batch.commit();
   }
 
-  /// Only unused class exams may be removed. Failed verification keeps data.
-  static Future<void> deleteUnusedExam(String examId) async {
+  /// Remove a class exam and its verified saved marks together.
+  static Future<void> deleteExamWithResults(String examId) async {
     if (!RegExp(r'^[A-Za-z0-9_-]{3,128}$').hasMatch(examId)) {
       throw StateError('Invalid exam identifier.');
     }
@@ -355,11 +355,7 @@ class WindowsExamService {
     bool hasSavedMarks(Map row) =>
         row['examId']?.toString() == examId &&
         row['deleted'] != true && row['_syncDeleted'] != true;
-    final results = (local['results'] as List? ?? []).whereType<Map>();
-    if (results.any(hasSavedMarks)) {
-      throw StateError('Saved marks exist. Delete is blocked to protect report cards.');
-    }
-
+    final remoteMatches = <String, Map<String, Map>>{};
     // Ask the managed broker for a complete read from each current owner.
     for (final collection in const ['exam_center_results', 'exam_results']) {
       _requireProfile(profile);
@@ -380,23 +376,52 @@ class WindowsExamService {
           records.values.any((row) => row is! Map || row['schoolId'] != schoolId)) {
         throw StateError('Unable to verify school marks for exam deletion.');
       }
-      if (records.values.whereType<Map>().any(hasSavedMarks)) {
-        throw StateError('Cloud marks exist; deleting this exam is not allowed.');
-      }
+      remoteMatches[collection] = {
+        for (final entry in records.entries)
+          if (hasSavedMarks(entry.value as Map)) entry.key.toString(): entry.value as Map,
+      };
     }
     _requireProfile(profile);
     final current = await CentralSchoolCloud.saved();
     if (current['schoolId'] != schoolId || current['uid'] != managed['uid']) {
       throw StateError('School identity changed. Delete cancelled.');
     }
-    // Existing sync-tombstone tracking propagates this deletion to peer PCs.
     final db = FirebaseFirestore.instance;
     final batch = db.batch();
-    // Atomic local delete avoids half-removed definitions in this PC.
-    // The existing outbox still tracks cloud tombstones for peers.
-    batch.delete(db.collection('exams').doc(examId));
-    batch.delete(db.collection('_local_exam_center_exams').doc(examId));
-    batch.delete(db.collection('school_settings').doc('exam_$examId'));
+    for (final collection in const [
+      'exam_center_results', 'exam_results', '_local_exam_center_results',
+    ]) {
+      final ref = db.collection(collection);
+      final snapshot = await ref.get();
+      _requireProfile(profile);
+      final matching = {
+        for (final row in snapshot.docs)
+          if (hasSavedMarks(row.data())) row.id: row,
+      };
+      for (final entry in remoteMatches[collection]?.entries ?? const <MapEntry<String, Map>>[]) {
+        final row = matching[entry.key]?.data();
+        final revision = entry.value['_syncRevision'];
+        if (row == null || revision is! String || revision.isEmpty ||
+            row['_syncRevision'] != revision) {
+          throw StateError('Sync the latest marks to this PC and retry delete.');
+        }
+      }
+      for (final row in matching.values) {
+        batch.requireUnchanged(row.reference, row.data());
+        batch.delete(row.reference);
+      }
+    }
+    for (final entry in {
+      'exams': examId,
+      '_local_exam_center_exams': examId,
+      'school_settings': 'exam_$examId',
+    }.entries) {
+      final ref = db.collection(entry.key).doc(entry.value);
+      final record = (await ref.get()).data();
+      _requireProfile(profile);
+      batch.requireUnchanged(ref, record);
+      if (record != null) batch.delete(ref);
+    }
     _requireProfile(profile);
     await batch.commit();
   }
