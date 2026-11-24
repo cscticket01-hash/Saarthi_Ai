@@ -352,6 +352,16 @@ void main() {
     final saved=await StaffPayroll.save(profile,person,'2026-11',basic:10000);
     expect(saved['netPaise'],10000);
   });
+  test('salary calendar excludes holidays and respects explicit working day overrides',(){
+    final days=StaffPayroll.schoolWorkingDays('2026-11',[
+      {'date':'2026-11-02','isOpen':false},{'date':'2026-11-01','isOpen':true}
+    ],[0]);
+    expect(days.contains('2026-11-01'),true);
+    expect(days.contains('2026-11-02'),false);
+    expect(days.contains('2026-11-08'),false);
+    expect(StaffPayroll.proratedDailyRate(260000,26),10000);
+    expect(()=>StaffPayroll.validatedUnpaidDays('2026-11','2026-11-02',{},DateTime(2026,11,24),workingDays:days),throwsFormatException);
+  });
   test('unpaid dates require distinct past dates without verified check-in',(){
     final today=DateTime(2026,11,24);
     expect(StaffPayroll.validatedUnpaidDays('2026-11','2026-11-01, 2026-11-02',{},today),{'2026-11-01','2026-11-02'});
