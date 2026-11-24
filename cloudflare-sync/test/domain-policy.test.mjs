@@ -60,3 +60,20 @@ test('native teacher identities remain reserved after retirement and cannot coll
  assert.throws(()=>check({readPeers:collection=>collection==='staff_payroll_directory'?[{schoolId:school,id:'staff',employeeId:'T1',active:false}]:[]}),e=>e.code==='PERSON_PAYROLL_IDENTITY_CONFLICT');
  assert.throws(()=>check({current:{...next,id:'teacher-new',teacherId:'T2'}}),e=>e.code==='PERSON_TEACHER_REASSIGNMENT_REQUIRES_REVIEW');
 });
+
+test('exact-paise payroll ledger retains immutable payment and correction history',()=>{
+ const base={schoolId:school,staffId:'teacher:teacher',employeeId:'T1',teacherId:'T1',month:'2026-11',basicPaise:10000,netPaise:10000,amount:100,paidPaise:0,balancePaise:10000,status:'Pending'};
+ const options={collection:'teacher_salary',owner:teacher};
+ assert.doesNotThrow(()=>run(base,options));
+ const p={id:'payment-1',amountPaise:3000};
+ const paid={...base,paidPaise:3000,balancePaise:7000,status:'Part paid',payments:[p]};
+ assert.doesNotThrow(()=>run(paid,{...options,current:base}));
+ assert.throws(()=>run({...paid,balancePaise:9000},{...options,current:base}),e=>e.code==='SALARY_BALANCE_MISMATCH');
+ assert.throws(()=>run({...paid,payments:[]},{...options,current:paid}),e=>e.code==='SALARY_HISTORY_IMMUTABLE');
+ assert.throws(()=>run({...paid,payments:[p,p]},{...options,current:paid}),e=>e.code==='SALARY_DUPLICATE_EVENT');
+ assert.throws(()=>run({...paid,paidPaise:4000,balancePaise:6000},{...options,current:paid}),e=>e.code==='SALARY_PAYMENT_TOTAL_MISMATCH');
+ const reversed={...paid,paidPaise:0,balancePaise:10000,status:'Pending',paymentCorrections:[{id:'reversal-1',paymentId:p.id,originalPaise:3000,previousPaise:3000,correctedPaise:0,differencePaise:-3000,eventType:'reversal'}]};
+ assert.doesNotThrow(()=>run(reversed,{...options,current:paid}));
+ assert.throws(()=>run({_syncDeleted:true},{...options,current:reversed,operation:'delete'}),e=>e.code==='SALARY_HISTORY_IMMUTABLE');
+ assert.throws(()=>run({...base,staffId:'teacher:wrong'},{...options}),e=>e.code==='DOMAIN_TEACHER_RETIRED');
+});
