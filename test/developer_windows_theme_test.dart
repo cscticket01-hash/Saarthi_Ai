@@ -83,7 +83,7 @@ void main() {
         expect(File(preset.image).existsSync(), isTrue);
         for (final page in ['dashboard', 'students', 'fees', 'settings'])
           expect(
-            File('assets/theme_preview_${(preset.id=='midnight-glass'||preset.id=='aurora-liquid-glass')?'electric-blue':preset.id}_${page=='settings'?'settings_v2':page}.webp').existsSync(),
+            File('assets/theme_preview_${preset.id=='midnight-glass'?'electric-blue':preset.id=='aurora-liquid-glass'?'mint-light':preset.id}_${page=='settings'?'settings_v2':page}.webp').existsSync(),
             isTrue,
           );
         await tester.tap(find.byKey(ValueKey('theme-preset-${preset.id}')));
@@ -102,7 +102,7 @@ void main() {
           find.byKey(const ValueKey('theme-preview-image')),
         );
         expect((image.image as AssetImage).assetName,
-          'assets/theme_preview_${(preset.id == 'midnight-glass' || preset.id == 'aurora-liquid-glass') ? 'electric-blue' : preset.id}_dashboard.webp',
+          'assets/theme_preview_${preset.id == 'midnight-glass' ? 'electric-blue' : preset.id == 'aurora-liquid-glass' ? 'mint-light' : preset.id}_dashboard.webp',
           reason:'Every preset, including Glass, must preview a real Windows screen');
       }
       expect(find.text('Unsaved preset'), findsOneWidget);
