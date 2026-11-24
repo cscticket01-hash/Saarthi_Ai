@@ -412,10 +412,13 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
     ...(typeof found[0].fileId==='string'?{fileId:found[0].fileId}:{})};
  }
  if(command==='bundleReceipt'){
-  demand(opId(b.bundleId)&&Array.isArray(b.operations)&&Array.isArray(b.media)&&
-    typeof b.mediaManifestHash==='string','Invalid bundle replay identity');
+  const payrollPair=Array.isArray(b.operations)&&b.operations.length===2&&b.operations[0]?.collection==='teacher_salary'&&
+   b.operations[1]?.collection==='school_settings'&&String(b.operations[1]?.id||'').startsWith('payroll_advance_')&&
+   b.media===undefined&&b.mediaManifestHash===undefined;
+  demand(opId(b.bundleId)&&Array.isArray(b.operations)&&(payrollPair||
+    Array.isArray(b.media)&&typeof b.mediaManifestHash==='string'),'Invalid bundle replay identity');
   const fingerprint=hash({schoolId:school,bundleId:b.bundleId,operations:b.operations,
-    media:b.media,mediaManifestHash:b.mediaManifestHash});
+    ...(payrollPair?{}:{media:b.media,mediaManifestHash:b.mediaManifestHash})});
   const prior=sql.exec<{fingerprint:string;receipt:string}>(
     'SELECT fingerprint,receipt FROM live_bundles WHERE bundle_id=?',String(b.bundleId)).toArray()[0];
   if(!prior)return {found:false,bundleProtocol:1,schoolId:school};
