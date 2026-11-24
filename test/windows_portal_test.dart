@@ -36,11 +36,11 @@ void main() {
     await local.FirebaseFirestore.instance.collection('exams')
       .doc('EXAM-preserved').set({'examId':'EXAM-preserved','examName':'Unit Test'});
     await expectLater(
-      WindowsExamService.deleteUnusedExam('../other-school'),
+      WindowsExamService.deleteExamWithResults('../other-school'),
       throwsA(isA<StateError>()),
     );
     await expectLater(
-      WindowsExamService.deleteUnusedExam('EXAM-preserved'),
+      WindowsExamService.deleteExamWithResults('EXAM-preserved'),
       throwsA(isA<StateError>()),
     );
     final unchanged = await local.FirebaseFirestore.instance.collection('exams')
