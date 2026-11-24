@@ -165,6 +165,69 @@ class StaffPayroll {
     if(closed is! List)throw StateError('School calendar settings require review.');
     return schoolWorkingDays(month,[for(final r in rows.docs){...r.data(),'id':r.id}],closed);
   }
+  static String leaveId(String staffId,String month)=>'payroll_leave_'+rowId(staffId,month);
+  static Map<String,String> effectiveLeave(String month,Iterable<dynamic> events){
+    final result=<String,String>{},ids=<String>{};
+    for(final e in events){
+      if(e is! Map||e['id'] is! String||(e['id'] as String).isEmpty||!ids.add(e['id'] as String)||
+          e['date'] is! String||e['reason'] is! String||(e['reason'] as String).trim().isEmpty||
+          !['paid','unpaid','cancelled'].contains(e['kind']))throw StateError('Leave history requires review.');
+      final date=e['date'] as String,kind=e['kind'] as String,day=DateTime.tryParse(date);
+      if(!RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(date)||!date.startsWith('$month-')||
+          day==null||day.toIso8601String().substring(0,10)!=date||
+          result[date]==kind||kind=='cancelled'&&!result.containsKey(date))throw StateError('Invalid leave decision history.');
+      result[date]=kind;
+    }
+    return result;
+  }
+  static Future<Map<String,String>> approvedLeave(String profile,String staffId,String month)async{
+    _sameSchool(profile);
+    final row=(await FirebaseFirestore.instance.collection('school_settings').doc(leaveId(staffId,month)).get()).data();
+    _sameSchool(profile);
+    if(row==null)return {};
+    if(row['staffId']!=staffId||row['month']!=month||row['events'] is! List)throw StateError('Leave record identity mismatch.');
+    return effectiveLeave(month,row['events'] as List);
+  }
+  static Future<void> recordLeave(String profile,Map<String,dynamic> person,String month,{required String date,required String kind,required String reason,required String eventId,required String adminPassword})=>_serial(()async{
+    await requireAdmin(profile,adminPassword);
+    await _durable(profile);
+    await _requireMonthOpen(profile,month);
+    final staffId=person['id']?.toString()??'';
+    final active=(await staff(profile)).where((p)=>p['id']==staffId).toList();
+    if(active.length!=1)throw StateError('Active staff record required.');
+    if(reason.trim().isEmpty||reason.length>500||eventId.isEmpty)throw ArgumentError('Approved leave reason required.');
+    final working=await loadWorkingDays(profile,month);
+    if(kind!='cancelled'&&!working.contains(date))throw StateError('Choose a school working day.');
+    final present=await verifiedAttendanceDays(profile,active.single,month);
+    if(kind=='unpaid'&&present.contains(date))throw StateError('Recorded attendance conflicts with unpaid leave.');
+    final db=FirebaseFirestore.instance,ref=db.collection('school_settings').doc(leaveId(staffId,month));
+    final before=(await ref.get()).data();
+    _sameSchool(profile);
+    if(before!=null&&(before['staffId']!=staffId||before['month']!=month||before['events'] is! List))throw StateError('Leave identity mismatch.');
+    final events=List<dynamic>.from(before?['events'] as List? ?? []);
+    final prior=events.where((e)=>e is Map&&e['id']==eventId).toList();
+    if(prior.isNotEmpty){
+      if(prior.length!=1||prior.single['date']!=date||prior.single['kind']!=kind||prior.single['reason']!=reason.trim())throw StateError('Leave decision identity conflict.');
+      return;
+    }
+    final effective=effectiveLeave(month,events);
+    if(effective[date]==kind)return;
+    await WindowsLocalSecurity.initialize();
+    await requireAdmin(profile,adminPassword);
+    events.add({'id':eventId,'date':date,'kind':kind,'reason':reason.trim(),'at':DateTime.now().millisecondsSinceEpoch,
+      if(WindowsLocalSecurity.configured)'recordedBy':WindowsLocalSecurity.adminId});
+    effectiveLeave(month,events);
+    final batch=db.batch();
+    batch.requireUnchanged(ref,before);
+    batch.set(ref,{'staffId':staffId,'month':month,'events':events,'updatedAt':DateTime.now().millisecondsSinceEpoch});
+    await batch.commit();
+  });
+  static Set<String> approvedUnpaidDays(Map<String,String> leave,Set<String> working,Set<String> present,DateTime now){
+    final today=now.toIso8601String().substring(0,10);
+    final dates=leave.entries.where((e)=>e.value=='unpaid'&&e.key.compareTo(today)<0).map((e)=>e.key).toSet();
+    if(dates.any((d)=>!working.contains(d)||present.contains(d)))throw StateError('Approved unpaid leave conflicts with attendance or calendar. Review leave first.');
+    return dates;
+  }
   static int proratedDailyRate(int basicPaise,int workingDays){
     if(basicPaise<0||workingDays<=0)throw ArgumentError('A valid basic salary and school working days are required.');
     return (basicPaise+workingDays~/2)~/workingDays;
@@ -367,7 +430,14 @@ class StaffPayroll {
       if(template==null){missing++;continue;}
       final basic=template['basicPaise'],allowance=template['allowancePaise'],deduction=template['deductionPaise'];
       if(basic is! int||allowance is! int||deduction is! int)throw StateError('Invalid saved salary structure for ${p['name']}.');
-      final amount=net(basic:basic,allowance:allowance,deduction:deduction);
+      final leave=await approvedLeave(profile,staffId,month);
+      final working=await loadWorkingDays(profile,month);
+      final present=await verifiedAttendanceDays(profile,p,month);
+      final unpaid=approvedUnpaidDays(leave,working,present,DateTime.now());
+      final rate=unpaid.isEmpty?0:proratedDailyRate(basic,working.length);
+      final attendance=unpaid.length*rate;
+      if(unpaid.isNotEmpty&&rate<=0)throw StateError('Approved leave deduction rate requires review for '+p['name'].toString());
+      final amount=net(basic:basic,allowance:allowance,deduction:deduction+attendance);
       final id=rowId(staffId,month);
       final ref=db.collection('teacher_salary').doc(id);
       if((await ref.get()).data()!=null){skipped++;continue;}
@@ -375,7 +445,9 @@ class StaffPayroll {
       batch.requireUnchanged(ref,null);
       batch.set(ref,{'id':id,'staffId':staffId,'teacherId':p['teacherId']??'','employeeId':p['employeeId']??p['teacherId']??'',
        'name':p['name'],'role':p['role'],'designation':p['designation'],'month':month,'basicPaise':basic,
-       'allowancePaise':allowance,'bonusPaise':0,'overtimePaise':0,'deductionPaise':deduction,'netPaise':amount,
+       'allowancePaise':allowance,'bonusPaise':0,'overtimePaise':0,'deductionPaise':deduction+attendance,'netPaise':amount,
+       if(unpaid.isNotEmpty)'attendanceAdjustment':{'unpaidDates':unpaid.toList()..sort(),'ratePaise':rate,'amountPaise':attendance,'reason':'Admin-approved leave; basic salary / school working days'},
+       if(unpaid.isNotEmpty)'attendanceSummary':'${unpaid.length} approved unpaid days',
        'amount':amount/100,'paidPaise':0,'balancePaise':amount,'status':amount==0?'Paid':'Pending','updatedAt':now});
       created++;
     }
@@ -397,8 +469,15 @@ class StaffPayroll {
       final present=await verifiedAttendanceDays(profile,employee,month);
       final workingDays=await loadWorkingDays(profile,month);
       final checked=validatedUnpaidDays(month,dates.join(','),present,DateTime.now(),workingDays:workingDays);
+      final leave=await approvedLeave(profile,employee['id'].toString(),month);
+      final required=approvedUnpaidDays(leave,workingDays,present,DateTime.now());
+      if(!checked.containsAll(required)||checked.any((d)=>leave[d]=='paid'))throw StateError('Attendance deduction must include approved unpaid leave and exclude paid leave.');
       if(checked.length*rate>deduction||attendanceAdjustment['amountPaise']!=checked.length*rate)throw StateError('Invalid attendance deduction.');
       await requireAdmin(profile,adminPassword);
+    }
+    if(attendanceAdjustment==null){
+      final leave=await approvedLeave(profile,employee['id'].toString(),month);
+      if(leave.entries.any((e)=>e.value=='unpaid'&&e.key.compareTo(DateTime.now().toIso8601String().substring(0,10))<0))throw StateError('Review approved unpaid leave before saving salary.');
     }
     final amount = net(basic: basic, allowance: allowance, bonus: bonus, overtime: overtime, deduction: deduction);
     final id = rowId(employee['id'].toString(), month);
@@ -760,6 +839,8 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     if(!mounted)return;
     final present=await StaffPayroll.verifiedAttendanceDays(_profile,person,month);
     final workingDays=await StaffPayroll.loadWorkingDays(_profile,month);
+    final leave=await StaffPayroll.approvedLeave(_profile,person['id'].toString(),month);
+    final approved=StaffPayroll.approvedUnpaidDays(leave,workingDays,present,DateTime.now());
     if(!mounted)return;
     final priorAttendance=old?['attendanceAdjustment'] is Map?Map<String,dynamic>.from(old!['attendanceAdjustment'] as Map):<String,dynamic>{};
     final controllers = [for (final k in keys) TextEditingController(text: StaffPayroll.format((((old??template)?[k] as num?)?.toInt() ?? 0)-(k=='deductionPaise'?((priorAttendance['amountPaise'] as num?)?.toInt()??0):0)))];
@@ -768,6 +849,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     final reason=TextEditingController(text:priorAttendance['reason']?.toString()??'');
     Map<String,dynamic>? adjustment(){
       final dates=StaffPayroll.validatedUnpaidDays(month,unpaid.text,present,DateTime.now(),workingDays:workingDays);
+      if(!dates.containsAll(approved)||dates.any((d)=>leave[d]=='paid'))throw StateError('Include approved unpaid leave; exclude paid leave.');
       if(dates.isEmpty&&priorAttendance.isEmpty)return null;
       final perDay=StaffPayroll.money(rate.text);
       if(dates.isNotEmpty&&perDay<=0)throw StateError('Enter a positive approved deduction per day.');
@@ -781,6 +863,8 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
         keyboardType: const TextInputType.numberWithOptions(decimal: true), onChanged: (_) => setD(() {}),
         decoration: InputDecoration(labelText: labels[i], prefixText: '₹ ')),
         Text('School working days: ${workingDays.length} • Recorded QR present days: ${present.where(workingDays.contains).length}. Closed days cannot be deducted. Missing scans do not establish absence. Enter only approved unpaid dates; paid leave is excluded.'),
+        Text('Approved paid leave: ${leave.values.where((v)=>v=='paid').length} • Eligible approved unpaid leave: ${approved.length}'),
+        OutlinedButton(onPressed:workingDays.isEmpty?null:(){try{final days=approved.toList()..sort();final daily=StaffPayroll.proratedDailyRate(StaffPayroll.money(controllers.first.text),workingDays.length);setD(()=>{unpaid.text=days.join(', '),rate.text=StaffPayroll.format(daily),reason.text='Admin-approved leave; basic salary / school working days'});}catch(_){setD(()=>rate.text='');}},child:const Text('Apply approved unpaid leave')),
         TextField(controller:unpaid,onChanged:(_)=>setD((){}),decoration:const InputDecoration(labelText:'Approved unpaid dates (YYYY-MM-DD, comma separated)')),
         TextField(controller:rate,onChanged:(_)=>setD((){}),keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Approved deduction per day',prefixText:'₹ ')),
         OutlinedButton(onPressed:workingDays.isEmpty?null:(){try{final daily=StaffPayroll.proratedDailyRate(StaffPayroll.money(controllers.first.text),workingDays.length);setD(()=>rate.text=StaffPayroll.format(daily));}catch(_){setD(()=>rate.text='');}},child:const Text('Calculate rate from basic salary / working days')),
@@ -990,6 +1074,29 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
       }
     } catch(e) { if(mounted) setState(() => _error='$e'); }
     finally { if(mounted) setState(() => _working=false); }
+  }
+  Future<void> _leave(Map<String,dynamic> person) async{
+    try{
+      final month=StaffPayroll.monthKey(_month);
+      final leave=await StaffPayroll.approvedLeave(_profile,person['id'].toString(),month);
+      if(!mounted)return;
+      final password=await _adminAuthorization('Approve Staff Leave');
+      if(password==null||!mounted)return;
+      final date=TextEditingController(),reason=TextEditingController();
+      var kind='paid';final eventId=SchoolPersonIdentity.newGeneration();
+      try{
+        await _editor('Approved Leave • '+person['name'].toString()+' • '+month,(setD)=>[
+          for(final e in leave.entries)Text('${e.key} • ${e.value}'),
+          const Divider(),
+          TextField(controller:date,decoration:const InputDecoration(labelText:'Leave date (YYYY-MM-DD)')),
+          DropdownButtonFormField<String>(initialValue:kind,items:['paid','unpaid','cancelled'].map((v)=>DropdownMenuItem(value:v,child:Text(v))).toList(),onChanged:(v)=>setD(()=>kind=v!)),
+          TextField(controller:reason,decoration:const InputDecoration(labelText:'Approval reason / reference')),
+          const Text('Record an approved decision only. Existing payroll and payments are not changed until the salary is reviewed or generated.'),
+        ],()=>StaffPayroll.recordLeave(_profile,person,month,date:date.text.trim(),kind:kind,reason:reason.text,eventId:eventId,adminPassword:password));
+      }finally{
+        await Future<void>.delayed(const Duration(milliseconds:250));date.dispose();reason.dispose();
+      }
+    }catch(e){if(mounted)setState(()=>_error='$e');}
   }
   Future<void> _advance(Map<String,dynamic> person) async{
     try{
@@ -1259,6 +1366,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
           if(action=='edit')_salary(person,row);
           if(action=='structure')_editStructure(person);
           if(action=='advance')_advance(person);
+          if(action=='leave')_leave(person);
           if(action=='lock'&&row!=null)_toggleSalaryLock(row);
           if(action=='pay'&&row!=null)_payment(row);
           if(action=='correct'&&row!=null)_correctPayment(row);
@@ -1268,6 +1376,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
           PopupMenuItem(value:'edit',enabled:!_monthClosed,child:Text(row==null?'Set salary':'Edit salary')),
           const PopupMenuItem(value:'structure',child:Text('Salary Structure • Admin Password')),
           const PopupMenuItem(value:'advance',child:Text('Advance / Loan Ledger • Admin Password')),
+          PopupMenuItem(value:'leave',enabled:!_monthClosed,child:const Text('Approve Staff Leave • Admin Password')),
           if(row!=null)PopupMenuItem(value:'lock',child:Text(row['salaryLocked']==true?'Reopen Salary • Admin Password':'Approve & Lock Salary')),
           if(row!=null&&StaffPayroll.paid(row)<StaffPayroll.total(row))const PopupMenuItem(value:'pay',child:Text('Record payment')),
           if(row!=null&&StaffPayroll.paid(row)>0)const PopupMenuItem(value:'correct',child:Text('Modify Payment • Admin Password')),
