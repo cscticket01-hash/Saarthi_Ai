@@ -181,7 +181,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('Admin Panel Security'), findsOneWidget);
-    expect(find.widgetWithText(TextField, 'New Admin Password'), findsOneWidget);
+    expect(find.text('Create Admin Password'), findsWidgets);
     expect(find.text('Admin Section Password'), findsNothing);
     expect(find.byType(WindowsAdminSessionDashboard), findsNothing);
     await tester.pumpWidget(const SizedBox());
