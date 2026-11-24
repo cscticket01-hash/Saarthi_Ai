@@ -864,7 +864,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
         decoration: InputDecoration(labelText: labels[i], prefixText: '₹ ')),
         Text('School working days: ${workingDays.length} • Recorded QR present days: ${present.where(workingDays.contains).length}. Closed days cannot be deducted. Missing scans do not establish absence. Enter only approved unpaid dates; paid leave is excluded.'),
         Text('Approved paid leave: ${leave.values.where((v)=>v=='paid').length} • Eligible approved unpaid leave: ${approved.length}'),
-        OutlinedButton(onPressed:workingDays.isEmpty?null:(){try{final days=approved.toList()..sort();final daily=StaffPayroll.proratedDailyRate(StaffPayroll.money(controllers.first.text),workingDays.length);setD(()=>{unpaid.text=days.join(', '),rate.text=StaffPayroll.format(daily),reason.text='Admin-approved leave; basic salary / school working days'});}catch(_){setD(()=>rate.text='');}},child:const Text('Apply approved unpaid leave')),
+        OutlinedButton(onPressed:workingDays.isEmpty?null:(){try{final days=approved.toList()..sort();final daily=StaffPayroll.proratedDailyRate(StaffPayroll.money(controllers.first.text),workingDays.length);setD((){unpaid.text=days.join(', ');rate.text=StaffPayroll.format(daily);reason.text='Admin-approved leave; basic salary / school working days';});}catch(_){setD(()=>rate.text='');}},child:const Text('Apply approved unpaid leave')),
         TextField(controller:unpaid,onChanged:(_)=>setD((){}),decoration:const InputDecoration(labelText:'Approved unpaid dates (YYYY-MM-DD, comma separated)')),
         TextField(controller:rate,onChanged:(_)=>setD((){}),keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Approved deduction per day',prefixText:'₹ ')),
         OutlinedButton(onPressed:workingDays.isEmpty?null:(){try{final daily=StaffPayroll.proratedDailyRate(StaffPayroll.money(controllers.first.text),workingDays.length);setD(()=>rate.text=StaffPayroll.format(daily));}catch(_){setD(()=>rate.text='');}},child:const Text('Calculate rate from basic salary / working days')),
@@ -1154,7 +1154,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     if(password==null||!mounted)return;
     final confirmed=await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(
       title:Text('Generate salary • $month'),
-      content:const Text('Create unpaid salary rows using each active staff member’s saved salary structure. Existing rows are skipped. No payment is recorded. Staff without a structure are skipped.'),
+      content:const Text('Create unpaid salary rows using saved salary structures and approved elapsed unpaid leave. Existing rows are skipped. No payment is recorded. Staff without a structure are skipped.'),
       actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Generate'))]));
     if(confirmed!=true||!mounted)return;
     setState(()=>_working=true);
