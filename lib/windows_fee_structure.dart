@@ -128,19 +128,27 @@ class WindowsFeeStructure {
       for (final key in previous.keys) key: replaceHeads ? 0.0 : previous[key],
       ...normalized,
     };
+    // Partial edits must retain the cadence and display order of untouched
+    // heads. Otherwise an annual/admission head can silently become monthly.
     final existingFrequencies = frequencies(old);
+    final nextHeads = replaceHeads
+        ? normalized.keys.toList()
+        : <String>{...heads(old), ...normalized.keys}.toList();
     final nextFrequencies = <String, String>{
-      for (final head in normalized.keys)
+      for (final head in nextHeads)
         head: feeFrequencies?[head] ?? existingFrequencies[head] ?? 'monthly',
     };
-    final configuredHeads = merged.entries.where((e) => e.value is num && e.value > 0).map((e) => e.key).toList();
+    final configuredHeads = nextHeads.where((head) {
+      final value = merged[head];
+      return value is num && value > 0;
+    }).toList();
     final retained = Map<String, dynamic>.from(old)..removeWhere((key, _) => key.startsWith('_sync') || key == 'operationId');
     final batch = db.batch();
     batch.set(db.collection('fee_settings').doc(documentId(className, session)), {
       ...retained, 'className': className, 'academicSession': session, 'fees': merged,
       'configured': configuredHeads.isNotEmpty, 'configuredHeads': configuredHeads,
       'feeFrequencies': nextFrequencies,
-      if (replaceHeads) 'feeHeadOrder': normalized.keys.toList(),
+      'feeHeadOrder': nextHeads,
       if (replaceHeads) 'feeStructureSaved': true,
       'updatedAt': FieldValue.serverTimestamp(),
     }, const SetOptions(merge: true));
