@@ -153,20 +153,26 @@ function createSchoolAdminSecurity({db, auth, now=Date.now}) {
         denied(400, 'ADMIN_APPROVAL_INVALID', 'Invalid protected action');
       const verifiedHash = await checkPassword(identity, body.password);
       const token = randomBytes(32).toString('hex');
-      await approvalRef(identity.schoolId, identity.uid, token).create({
-        schoolId:identity.schoolId, uid:identity.uid, scope, targetHash:hash(target),
-        credentialFingerprint:verifiedHash,
-        issuedAt:now(), expiresAt:now()+APPROVAL_WINDOW_MS,
-        // Firestore TTL can later be enabled on ttlAt; expiration is enforced
-        // by the handler even without a configured TTL deletion policy.
-        ttlAt:new Date(now()+APPROVAL_WINDOW_MS), usedAt:0
-      });
-      await db.collection('platform_audit').add({
-        action:'school_admin_action_authorized', scope, targetHash:hash(target),
-        schoolId:identity.schoolId, actor:identity.uid, at:now()
+      const grantRef = approvalRef(identity.schoolId, identity.uid, token);
+      const auditRef = db.doc('platform_audit/'+randomBytes(16).toString('hex'));
+      const expiresAt = now()+APPROVAL_WINDOW_MS;
+      await db.runTransaction(async tx => {
+        const latest = await tx.get(ref);
+        if (!latest.exists || latest.data().passwordHash !== verifiedHash)
+          denied(409, 'ADMIN_PASSWORD_CHANGED', 'Admin Password changed. Re-enter it');
+        tx.create(grantRef, {
+          schoolId:identity.schoolId, uid:identity.uid, scope, targetHash:hash(target),
+          credentialFingerprint:verifiedHash,
+          issuedAt:expiresAt-APPROVAL_WINDOW_MS, expiresAt,
+          ttlAt:new Date(expiresAt), usedAt:0
+        });
+        tx.set(auditRef, {
+          action:'school_admin_action_authorized', scope, targetHash:hash(target),
+          schoolId:identity.schoolId, actor:identity.uid, at:now()
+        });
       });
       return {success:true, schoolId:identity.schoolId, authorized:true,
-        approvalToken:token, expiresAt:now()+APPROVAL_WINDOW_MS};
+        approvalToken:token, expiresAt};
     }
     if(operation==='consume') {
       const scope=body.scope, target=body.target;
@@ -177,11 +183,6 @@ function createSchoolAdminSecurity({db, auth, now=Date.now}) {
       const result=await consumeApproval(identity,body.approvalToken,scope,target);
       if(result.authorized!==true)
         denied(403,'ADMIN_APPROVAL_REQUIRED','Verify Admin Password for this action');
-      await db.collection('platform_audit').add({
-        action:'school_admin_action_consumed',
-        schoolId:identity.schoolId,actor:identity.uid,
-        scope,targetHash:hash(target),at:now()
-      });
       return {success:true,schoolId:identity.schoolId,authorized:true};
     }
     denied(400, 'ADMIN_SECURITY_OPERATION_INVALID', 'Unknown school Admin Security operation');
@@ -196,6 +197,7 @@ function createSchoolAdminSecurity({db, auth, now=Date.now}) {
     if (typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token))
       denied(403, 'ADMIN_APPROVAL_REQUIRED', 'Verify the independent Admin Password for this action');
     const ref = approvalRef(identity.schoolId, identity.uid, token);
+    const auditRef = db.doc('platform_audit/'+randomBytes(16).toString('hex'));
     await db.runTransaction(async tx => {
       // Re-read the active credential together with this grant. A password
       // rotation on another PC must invalidate pending approvals atomically.
@@ -209,7 +211,13 @@ function createSchoolAdminSecurity({db, auth, now=Date.now}) {
           record.credentialFingerprint !== currentCredential.data().passwordHash ||
           record.usedAt !== 0 || record.expiresAt <= now())
         denied(403, 'ADMIN_APPROVAL_EXPIRED', 'Admin approval expired or does not match this action');
-      tx.update(ref, {usedAt:now()});
+      const consumedAt=now();
+      tx.update(ref, {usedAt:consumedAt});
+      tx.set(auditRef, {
+        action:'school_admin_action_consumed',
+        schoolId:identity.schoolId,actor:identity.uid,
+        scope,targetHash:hash(target),at:consumedAt
+      });
     });
     return {authorized:true};
   }
