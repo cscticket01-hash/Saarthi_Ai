@@ -1,4 +1,4 @@
-import {domainCollections,personCollections,validateDomainCandidate,validatePersonCandidate} from './domain-policy';
+import {domainCollections,personCollections,validateDomainCandidate,validatePersonCandidate,validatePayrollAdvance} from './domain-policy';
 import {createHash,randomUUID} from 'node:crypto';
 import {canonical} from './spool';
 import {demand,schoolPattern} from './protocol';
@@ -658,6 +658,10 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    }
    const readOwner=(collection:string,id:string)=>findOwner(storage,collection,id);
    const readPeers=(collection:string)=>storage.sql.exec<{body:string}>('SELECT body FROM live_record_owners WHERE collection=?',collection).toArray().map(row=>JSON.parse(row.body) as Json);
+   if(col==='school_settings'&&String(b.id).startsWith('payroll_advance_')){
+    if(b.operation!=='delete')demand(typeof data.staffId==='string'&&b.id==='payroll_advance_'+createHash('sha256').update(data.staffId).digest('hex'),'Invalid payroll advance identity',409);
+    validatePayrollAdvance(String(b.id),current?old:null,data,String(b.operation),readOwner,school);
+   }
    if(domainCollections.has(col))validateDomainCandidate({schoolId:school,collection:col,id:String(b.id),operation:String(b.operation),current:current?old:null,next:data,readOwner});
    if(personCollections.has(col))validatePersonCandidate({schoolId:school,collection:col,id:String(b.id),operation:String(b.operation),current:current?old:null,next:data,readPeers});
    if(col==='teachers_directory'&&b.operation!=='delete'){
