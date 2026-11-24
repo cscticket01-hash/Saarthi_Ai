@@ -166,7 +166,7 @@ void main(){
     await tester.pumpWidget(const MaterialApp(home:WindowsAdminAccessGate(child:Text('Direct admin panel'))));
     await tester.pumpAndSettle();
     expect(find.text('Admin Panel Security'), findsOneWidget);
-    expect(find.widgetWithText(TextField, 'New Admin Password'), findsOneWidget);
+    expect(find.text('Create Admin Password'), findsWidgets);
     expect(find.text('Direct admin panel'),findsNothing);
     expect(find.text('Admin Section Password'),findsNothing);
     await tester.pumpWidget(const SizedBox());
