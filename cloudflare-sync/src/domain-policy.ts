@@ -398,6 +398,11 @@ export function validatePersonContactFields(collection:string,current:Json|null,
    reject('PERSON_POSTAL_PIN_INVALID',400);
  }
  const parse=(value:unknown):number|null=>{
+  if(value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).length===1){
+   const iso=(value as Json).__vsTimestamp;
+   if(typeof iso!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(iso)||!Number.isFinite(Date.parse(iso)))return null;
+   value=iso.slice(0,10);
+  }
   if(typeof value!=='string')return null;
   const s=value.trim(),d=/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s),i=/^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
   if(!d&&!i)return null;
