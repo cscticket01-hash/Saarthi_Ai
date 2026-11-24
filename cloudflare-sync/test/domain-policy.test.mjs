@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {validateDomainCandidate,validatePayrollAdvance,validatePayrollMonth,validateClosedPayrollMonth} from '../src/domain-policy.ts';
+import {validateDomainCandidate,validatePayrollAdvance,validatePayrollMonth,validateClosedPayrollMonth,validatePayrollLeave} from '../src/domain-policy.ts';
 const school='vs-'+'a'.repeat(32),foreign='vs-'+'b'.repeat(32);
 const student={schoolId:school,id:'student',mobileStableId:'generation-one'},teacher={schoolId:school,id:'teacher',teacherId:'T1',mobileStableId:'teacher-generation'};
 function run(next,{collection='fee_payments',current=null,owner=student,operation='write'}={}){
@@ -127,4 +127,17 @@ test('month closure prevents new records and changes, but allows payments',()=>{
  assert.throws(()=>validateClosedPayrollMonth(null,base,'write'),e=>e.code==='SALARY_MONTH_CLOSED');
  assert.throws(()=>validateClosedPayrollMonth(base,{...base,netPaise:11000},'write'),e=>e.code==='SALARY_MONTH_CLOSED');
  assert.doesNotThrow(()=>validateClosedPayrollMonth(base,{...base,paidPaise:1000,balancePaise:9000,status:'Part paid',payments:[{id:'p',amountPaise:1000}]},'write'));
+});
+
+test('payroll leave decisions preserve history and reject closed months and invalid dates',()=>{
+ const owner={schoolId:school,id:'staff-one',active:true};
+ const leave={schoolId:school,staffId:'staff-one',month:'2026-11',events:[{id:'a',date:'2026-11-03',kind:'unpaid',reason:'approved',at:1}]};
+ const lookup=(collection,id)=>collection==='staff_payroll_directory'?owner:null;
+ const check=(current,next,readOwner=lookup,operation='write')=>validatePayrollLeave(current,next,operation,readOwner,school);
+ assert.doesNotThrow(()=>check(null,leave));
+ assert.doesNotThrow(()=>check(leave,{...leave,events:[...leave.events,{id:'b',date:'2026-11-03',kind:'paid',reason:'reviewed',at:2}]}));
+ assert.throws(()=>check(leave,{...leave,events:[]}),e=>e.code==='SALARY_HISTORY_IMMUTABLE');
+ assert.throws(()=>check(null,{...leave,events:[{...leave.events[0],date:'2026-11-31'}]}),e=>e.code==='SALARY_LEAVE_EVENT_INVALID');
+ assert.throws(()=>check(null,leave,(collection,id)=>collection==='school_settings'?{schoolId:school,closed:true}:owner),e=>e.code==='SALARY_MONTH_CLOSED');
+ assert.throws(()=>check(leave,{},lookup,'delete'),e=>e.code==='SALARY_LEAVE_HISTORY_IMMUTABLE');
 });
