@@ -119,6 +119,33 @@ function validateSalaryLedger(current:Json|null,next:Json):void {
  }
  if(opening<0||paid!==opening+salaryEventTotal(next))reject('SALARY_PAYMENT_TOTAL_MISMATCH');
 }
+export function validatePayrollAdvance(id:string,current:Json|null,next:Json,operation:string,readOwner:(collection:string,id:string)=>Json|null,school:string):void {
+ if(!id.startsWith('payroll_advance_'))return;
+ if(operation==='delete'||next._syncDeleted===true)reject('SALARY_ADVANCE_HISTORY_IMMUTABLE');
+ if(!nonempty(next.staffId)||current&&current.staffId!==next.staffId)reject('SALARY_ADVANCE_OWNER_IMMUTABLE');
+ boundedJson(next);
+ const before=salaryEvents(current?.events),after=salaryEvents(next.events);
+ salaryAppendOnly(before,after);
+ let balance=0;
+ const ids=new Set<string>();
+ for(const e of after){
+  if(!nonempty(e.id)||ids.has(e.id)||typeof e.reference!=='string'||!e.reference.trim()||e.reference.length>500||!Number.isSafeInteger(e.recordedAt))reject('SALARY_ADVANCE_EVENT_INVALID');
+  ids.add(e.id);
+  const amount=salaryPaise(e.amountPaise);
+  if(!amount)reject('SALARY_ADVANCE_EVENT_INVALID');
+  if(e.type==='advance'||e.type==='loan')balance+=amount;
+  else if(e.type==='repayment')balance-=amount;
+  else reject('SALARY_ADVANCE_EVENT_INVALID');
+  salaryPaise(balance);
+ }
+ if(balance!==salaryPaise(next.balancePaise))reject('SALARY_ADVANCE_BALANCE_MISMATCH');
+ const staffId=next.staffId;
+ if(!current||after.slice(before.length).some(e=>e.type!=='repayment')){
+  const teacher=staffId.startsWith('teacher:');
+  const owner=owned(school,readOwner(teacher?'teachers_directory':'staff_payroll_directory',teacher?staffId.slice(8):staffId));
+  if(owner.id!==(teacher?staffId.slice(8):staffId)||owner.active===false||owner.inactive===true||owner.deleted===true||owner._syncDeleted===true)reject('SALARY_ADVANCE_OWNER_RETIRED');
+ }
+}
 export function validateDomainCandidate(input:DomainCandidate):void {
  const {schoolId,collection,id,operation,current,next,readOwner}=input;
  if(!domainCollections.has(collection))reject('DOMAIN_COLLECTION_NOT_ADMITTED',412);
