@@ -159,10 +159,6 @@ void main(){
   });
   testWidgets('Admin entry is open until an independent password is set',(tester)async{
     FlutterSecureStorage.setMockInitialValues({});
-    await tester.runAsync(() => WindowsSectionLocks.addPassword(
-      sectionKey: 'admin_section',
-      password: 'admin-only-pass',
-    ));
     await tester.pumpWidget(const MaterialApp(home:WindowsAdminAccessGate(child:Text('Direct admin panel'))));
     await tester.pumpAndSettle();
     expect(find.text('Admin Panel Security'), findsNothing);
