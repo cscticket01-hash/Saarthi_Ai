@@ -402,7 +402,15 @@ class _DeviceNetworkRadarState extends State<_DeviceNetworkRadar>
         const SizedBox(height: 10),
         Row(children: [
           SizedBox(width: 84, child: Column(children: [
-            Icon(Icons.dns_outlined, size: 30, color: textColor),
+            SizedBox.square(dimension: 60, child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Positioned.fill(child: RepaintBoundary(child: CustomPaint(
+                  painter: _SchoolRadarSweep(_motion, line, moving),
+                ))),
+                Icon(Icons.dns_outlined, size: 26, color: textColor),
+              ],
+            )),
             const SizedBox(height: 5),
             Text('School Server', textAlign: TextAlign.center,
                 style: TextStyle(color: textColor, fontSize: 11)),
@@ -495,4 +503,31 @@ class _DeviceRadarLines extends CustomPainter {
   @override
   bool shouldRepaint(covariant _DeviceRadarLines oldDelegate) =>
       oldDelegate.nodes != nodes || oldDelegate.line != line || oldDelegate.moving != moving;
+}
+
+class _SchoolRadarSweep extends CustomPainter {
+  _SchoolRadarSweep(this.motion, this.line, this.moving) : super(repaint: motion);
+  final Animation<double> motion;
+  final Color line;
+  final bool moving;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = size.center(Offset.zero);
+    final ring = Paint()..color = line..style = PaintingStyle.stroke;
+    canvas.drawCircle(center, 23, ring);
+    canvas.drawCircle(center, 29, ring);
+    if (moving) {
+      final sweep = Paint()
+        ..color = _radarColor('Wi-Fi', line)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2;
+      canvas.drawArc(Rect.fromCircle(center: center, radius: 29),
+          motion.value * 2 * math.pi, math.pi / 2, false, sweep);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _SchoolRadarSweep oldDelegate) =>
+      oldDelegate.line != line || oldDelegate.moving != moving;
 }
