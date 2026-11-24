@@ -56,7 +56,7 @@ bool recordFieldIntentSatisfied(Map queued,Map remote) {
 bool isPayrollFinancialRecord(Map queued) =>
   queued['collection']=='teacher_salary' ||
   queued['collection']=='school_settings' &&
-    ['payroll_advance_','payroll_month_','payroll_salary_structure_'].any((prefix)=>
+    ['payroll_advance_','payroll_month_','payroll_salary_structure_','payroll_leave_'].any((prefix)=>
       (queued['documentId']?.toString()??'').startsWith(prefix));
 
 bool firstCommittedCreateWins(Map queued, Map remote) =>
