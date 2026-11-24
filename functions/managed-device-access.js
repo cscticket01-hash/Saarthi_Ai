@@ -10,7 +10,7 @@ function header(req,key){const value=req?.headers?.[key];if(typeof value!=='stri
  * Enabling enforcement must be an explicit TEST-approved server configuration.
  */
 function createManagedDeviceAccess({store,enforced=false,managementEnabled=false,enrollmentEnabled=false,
- offlinePrivateKey,now=Date.now,offlineWindowMs=MAX_OFFLINE_MS}){
+ authorizeRevoke,offlinePrivateKey,now=Date.now,offlineWindowMs=MAX_OFFLINE_MS}){
  // The long device token is an explicit, reviewed rollout: existing brokers
  // keep 15-minute revocation exposure until the daily gate is enabled.
  if(![MAX_OFFLINE_MS,DAILY_OFFLINE_MS].includes(offlineWindowMs))
@@ -74,6 +74,7 @@ function createManagedDeviceAccess({store,enforced=false,managementEnabled=false
   if(action==='managed/device/check')return {handled:true,mode,result:{success:true,schoolId:auth.schoolId,...access(device)}};
   if(action==='managed/device/list')return {handled:true,mode,result:{success:true,schoolId:auth.schoolId,serverTime:now(),deviceLimit:5,canRevoke:!enrollmentOnly,recentActivityWindowMs:120000,devices:(await registry.list(auth)).map(row=>({...row,current:row.deviceIdentity===device.deviceIdentity}))}};
   if(action==='managed/device/revoke'){
+   if(authorizeRevoke)await authorizeRevoke(auth,body);
    const target=await registry.revoke(auth,{currentDeviceId:proof.deviceId,currentCredential:proof.credential,targetDeviceIdentity:body.targetDeviceIdentity});
    return {handled:true,mode,result:{success:true,schoolId:auth.schoolId,device:target}};
   }

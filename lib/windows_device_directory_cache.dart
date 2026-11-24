@@ -51,8 +51,23 @@ class WindowsDeviceDirectoryCache {
       return validate(data['devices']);
     } catch (_) { return []; }
   }
-  static Future<void> write(String scope,List<Map<String,dynamic>> rows) async {
+  static Future<int?> lastVerified(String scope) async {
+    final value = (await SharedPreferences.getInstance()).getInt('${_key(scope)}_verified');
+    return value != null && value > 0 && value <= 8640000000000000 ? value : null;
+  }
+  static Future<String?> pendingRevoke(String scope) async =>
+      (await SharedPreferences.getInstance()).getString('${_key(scope)}_revoke');
+  static Future<void> setPendingRevoke(String scope, String? identity) async {
+    final prefs = await SharedPreferences.getInstance();
+    final key = '${_key(scope)}_revoke';
+    final saved = identity == null ? await prefs.remove(key) : await prefs.setString(key, identity);
+    if (!saved) throw StateError('Could not save the pending revoke request.');
+  }
+
+  static Future<void> write(String scope,List<Map<String,dynamic>> rows, {int? verifiedAt}) async {
     final safe=validate(rows);
-    await (await SharedPreferences.getInstance()).setString(_key(scope),jsonEncode({'version':1,'devices':safe}));
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_key(scope),jsonEncode({'version':1,'devices':safe}));
+    if (verifiedAt != null) await prefs.setInt('${_key(scope)}_verified', verifiedAt);
   }
 }

@@ -1,5 +1,7 @@
 import 'windows_appearance.dart';
+import 'windows_admin_security.dart';
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'windows_connect/central_school_cloud.dart';
@@ -41,7 +43,9 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
   bool busy = false, verified = false, revoking=false;
   int readGeneration=0;
   Timer? refreshTimer, activityTimer;
-  String? cacheScope;
+  String? cacheScope, pendingRevoke;
+  int? lastVerifiedAt;
+  int deviceLimit = 5;
   bool hasSnapshot=false, canRevoke=false;
   String activityFrame='';
   int? serverTime;
@@ -94,7 +98,12 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
       cacheScope=scope;
       final cached=scope==null ? <Map<String,dynamic>>[] : await WindowsDeviceDirectoryCache.read(scope);
       if(!mounted || session!=ManagedSchoolSession.changed.value) return;
+      final cachedVerified = scope == null ? null : await WindowsDeviceDirectoryCache.lastVerified(scope);
+      final pending = scope == null ? null : await WindowsDeviceDirectoryCache.pendingRevoke(scope);
+      if (!mounted || session != ManagedSchoolSession.changed.value) return;
       if(cached.isNotEmpty) setState(() {
+        lastVerifiedAt = cachedVerified;
+        pendingRevoke = pending;
         devices=deviceDirectoryCurrentFirst(cached); hasSnapshot=true;
         current=cached.singleWhere((r)=>r['current']==true && r['status']=='active')['deviceIdentity'] as String;
       });
@@ -112,7 +121,7 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
   void sessionChanged() {
     if (!mounted) return;
     readGeneration++;
-    setState(() { busy=false; revoking=false; devices = []; current = null; localConnectionType = null; verified = false; hasSnapshot=false; cacheScope=null; });
+    setState(() { busy=false; revoking=false; devices = []; current = null; localConnectionType = null; verified = false; hasSnapshot=false; cacheScope=null; pendingRevoke=null; lastVerifiedAt=null; });
     // A response from the previous session must never populate this page.
     Navigator.of(context).maybePop();
   }
@@ -155,11 +164,13 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
         current = marked['deviceIdentity'] as String;
         verified = true;
         canRevoke = response['canRevoke'] != false;
+        if (response['deviceLimit'] is int && response['deviceLimit'] > 0) deviceLimit = response['deviceLimit'] as int;
+        lastVerifiedAt = serverTime ?? DateTime.now().millisecondsSinceEpoch;
       });
       unawaited(refreshLocalConnection(session));
       final scope=cacheScope;
       if(scope!=null) {
-        try { await WindowsDeviceDirectoryCache.write(scope,ordered); } catch (_) { /* Cache is optional; server result remains authoritative. */ }
+        try { await WindowsDeviceDirectoryCache.write(scope,ordered,verifiedAt:lastVerifiedAt); } catch (_) { /* Cache is optional; server result remains authoritative. */ }
       }
     } catch (e) {
       if (mounted && session == ManagedSchoolSession.changed.value && generation==readGeneration) {
@@ -172,24 +183,49 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
   Future<void> revoke(Map<String,dynamic> row) async {
     final identity = row['deviceIdentity'];
     final session = ManagedSchoolSession.changed.value;
-    if (!verified || !canRevoke || revoking || identity == current || identity is! String || !identityPattern.hasMatch(identity)) return;
+    if (revoking || identity == current || identity is! String || !identityPattern.hasMatch(identity)) return;
+    final queueOnly = !verified;
+    if (queueOnly ? cacheScope == null : !canRevoke) return;
     final approved = await showDialog<bool>(context: context, builder: (context) { WindowsAppearance.watch(context); return  AlertDialog(
-      title: const Text('Revoke this PC?'),
-      content: Text('${row['name'] ?? 'PC'} will lose online school access. An offline PC receives this change when it reconnects; its existing offline authorization policy still applies. Local records will remain preserved.'),
+      title: Text(queueOnly ? 'Queue device removal?' : 'Revoke this PC?'),
+      content: Text(queueOnly
+        ? 'Queue removal for ${row['name'] ?? 'PC'}. Confirm with Admin Password when this PC reconnects.'
+        : '${row['name'] ?? 'PC'} will lose online school access. An offline PC receives this change when it reconnects; its existing offline authorization policy still applies. Local records will remain preserved.'),
       actions: [TextButton(onPressed: () => Navigator.pop(context,false), child: const Text('Cancel')),
         FilledButton(onPressed: () => Navigator.pop(context,true), child: const Text('Revoke'))],
     ); });
-    if (approved != true || !mounted || session != ManagedSchoolSession.changed.value || !verified || !canRevoke || revoking || identity==current) return;
+    if (approved != true || !mounted || session != ManagedSchoolSession.changed.value || revoking || identity==current) return;
+    if (queueOnly) {
+      final scope = cacheScope;
+      if (scope == null) return;
+      try {
+        await WindowsDeviceDirectoryCache.setPendingRevoke(scope, identity);
+        if (mounted && session == ManagedSchoolSession.changed.value) setState(() => pendingRevoke = identity);
+      } catch (failure) {
+        if (mounted && session == ManagedSchoolSession.changed.value) setState(() => error = failure.toString());
+      }
+      return;
+    }
+    if (!verified || !canRevoke) return;
+    final token = await requestWindowsAdminApproval(context,
+        scope: 'protected-settings', target: 'device/$identity');
+    if (token == null || !mounted || session != ManagedSchoolSession.changed.value || !verified || !canRevoke || revoking) return;
     readGeneration++; // A prior list response cannot undo this mutation.
     setState(() { busy = true; revoking=true; error = null; });
     try {
-      final result = await request('managed/device/revoke', {'targetDeviceIdentity':identity});
+      final result = await request('managed/device/revoke', {'targetDeviceIdentity':identity,'adminApprovalToken':token});
       if (result['success'] != true || result['device'] is! Map ||
           result['device']['deviceIdentity'] != identity || result['device']['status'] != 'revoked') {
         throw StateError('Revocation not verified. Refresh before retrying.');
       }
       if (!mounted || session != ManagedSchoolSession.changed.value) return;
-      setState(() { busy = false; revoking=false; verified = false; });
+      if (pendingRevoke == identity && cacheScope != null) {
+        await WindowsDeviceDirectoryCache.setPendingRevoke(cacheScope!, null);
+      }
+      if (!mounted || session != ManagedSchoolSession.changed.value) return;
+      setState(() { busy = false; revoking=false; verified = false;
+        if (pendingRevoke == identity) pendingRevoke = null;
+      });
       await load(silent:true);
     } catch(e) {
       if(mounted && session==ManagedSchoolSession.changed.value) setState(() { error=e.toString(); busy=false; revoking=false; verified=false; });
@@ -208,11 +244,12 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
       body: Align(alignment: Alignment.topCenter, child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth:1100),
         child: ListView(padding:const EdgeInsets.all(24), children:[
-          Text('Authorized PCs: ${hasSnapshot ? active : '—'} / 5   |   Recently active: ${verified ? recent : '—'}',
+          Text('Authorized PCs: ${hasSnapshot ? active : '—'} / $deviceLimit   |   Recently active: ${verified ? recent : '—'}',
             style:  TextStyle(fontFamily: 'Segoe UI', color:WindowsAppearance.foreground(Colors.white),fontSize:15)),
           const SizedBox(height:20),
           if(busy && !hasSnapshot) const LinearProgressIndicator(minHeight:2),
           if(hasSnapshot && !verified)  Padding(padding:EdgeInsets.only(bottom:10),child:Text('Saved device list • Activity not verified',style:TextStyle(fontFamily: 'Segoe UI', color:muted,fontSize:12))),
+          if (lastVerifiedAt != null) Text('Last verified: ${deviceTimeLabel(lastVerifiedAt)}'),
           if(error!=null) Padding(padding:const EdgeInsets.symmetric(vertical:12),child:Text(error!,style:TextStyle(fontFamily: 'Segoe UI', color:WindowsAppearance.foreground(Color(0xffffb4ab))))),
           Container(key:const ValueKey('device-directory-panel'),decoration:BoxDecoration(color:WindowsAppearance.background(const Color(0xff121f34)),borderRadius:BorderRadius.circular(16),border:Border.all(color:WindowsAppearance.outline(const Color(0xff26364f)))),
             child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
@@ -270,7 +307,7 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
                   );
                 }
                 Widget action(Map<String,dynamic> row) => row['status']=='active' && row['deviceIdentity']!=current
-                  ? TextButton(onPressed:revoking || !verified || !canRevoke ? null:()=>revoke(row),child:const Text('Revoke'))
+                  ? TextButton(onPressed:revoking || (verified ? !canRevoke : cacheScope == null) ? null:()=>revoke(row),child:Text(pendingRevoke == row['deviceIdentity'] ? (verified ? 'Confirm removal' : 'Removal queued') : 'Remove'))
                   :  Text('—',style:TextStyle(fontFamily: 'Segoe UI', color:muted));
                 return Column(children:[
                   if(!compact)  Padding(padding:EdgeInsets.symmetric(horizontal:20,vertical:12),child:Row(children:[
@@ -283,10 +320,214 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
                 ]);
               }),
             ])),
+          if (devices.any((row) => row['status'] == 'active')) ...[
+            const SizedBox(height: 16),
+            _DeviceNetworkRadar(nodes: [
+              for (final row in devices)
+                if (row['status'] == 'active')
+                  (
+                    name: row['name'] as String,
+                    type: !verified ? 'Not verified' : !recentlyActive(row)
+                        ? 'Offline' : row['connectionType'] == 'WiFi'
+                        ? 'Wi-Fi' : row['connectionType'] == 'LAN' ? 'LAN' : 'Unknown',
+                  ),
+            ]),
+          ],
           if(verified && !canRevoke)  Padding(padding:EdgeInsets.only(top:12),child:Text("Device enrollment is active. Revoke will be available after this school's device-access setup is completed.",style:TextStyle(fontFamily: 'Segoe UI', color:muted,fontSize:12))),
            Padding(padding:EdgeInsets.only(top:14),child:Text('Offline appears when a verified PC heartbeat is stale. Wi-Fi/LAN is only the most recently reported adapter on a recently active PC, not proof of internet connectivity.',style:TextStyle(fontFamily: 'Segoe UI', color:muted,fontSize:12))),
         ]),
       )),
     );
   }
+}
+
+typedef _RadarNode = ({String name, String type});
+
+class _DeviceNetworkRadar extends StatefulWidget {
+  const _DeviceNetworkRadar({required this.nodes});
+  final List<_RadarNode> nodes;
+
+  @override
+  State<_DeviceNetworkRadar> createState() => _DeviceNetworkRadarState();
+}
+
+class _DeviceNetworkRadarState extends State<_DeviceNetworkRadar>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _motion = AnimationController(
+    vsync: this, duration: const Duration(milliseconds: 2400),
+  );
+
+  void _updateMotion() {
+    final moving = widget.nodes.any((node) => node.type == 'Wi-Fi' || node.type == 'LAN');
+    if (moving && !MediaQuery.disableAnimationsOf(context)) {
+      if (!_motion.isAnimating) _motion.repeat();
+    } else {
+      _motion.stop();
+      _motion.value = 0;
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _updateMotion();
+  }
+
+  @override
+  void didUpdateWidget(covariant _DeviceNetworkRadar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _updateMotion();
+  }
+
+  @override
+  void dispose() {
+    _motion.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final textColor = WindowsAppearance.foreground(Colors.white);
+    final line = WindowsAppearance.outline(const Color(0xff567184));
+    final moving = widget.nodes.any((node) => node.type == 'Wi-Fi' || node.type == 'LAN') &&
+        !MediaQuery.disableAnimationsOf(context);
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: WindowsAppearance.background(const Color(0xff162c3e)),
+        borderRadius: BorderRadius.circular(16), border: Border.all(color: line),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('Network Radar', style: TextStyle(color: textColor, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 10),
+        Row(children: [
+          SizedBox(width: 84, child: Column(children: [
+            SizedBox.square(dimension: 60, child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Positioned.fill(child: RepaintBoundary(child: CustomPaint(
+                  painter: _SchoolRadarSweep(_motion, line, moving),
+                ))),
+                Icon(Icons.dns_outlined, size: 26, color: textColor),
+              ],
+            )),
+            const SizedBox(height: 5),
+            Text('School Server', textAlign: TextAlign.center,
+                style: TextStyle(color: textColor, fontSize: 11)),
+          ])),
+          Expanded(child: SizedBox(
+            height: widget.nodes.length * 44.0,
+            child: RepaintBoundary(child: CustomPaint(
+              painter: _DeviceRadarLines(widget.nodes, _motion, line, moving),
+            )),
+          )),
+          Flexible(flex: 2, child: Column(children: [
+            for (final node in widget.nodes)
+              SizedBox(height: 44, child: Row(children: [
+                Icon(switch (node.type) {
+                  'Wi-Fi' => Icons.wifi_rounded,
+                  'LAN' => Icons.lan_outlined,
+                  'Offline' => Icons.wifi_off_rounded,
+                  _ => Icons.help_outline_rounded,
+                }, size: 18, color: _radarColor(node.type, line)),
+                const SizedBox(width: 8),
+                Expanded(child: Text(node.name, maxLines: 1,
+                    overflow: TextOverflow.ellipsis, style: TextStyle(color: textColor))),
+                const SizedBox(width: 6),
+                Flexible(child: Text(node.type, maxLines: 1,
+                    overflow: TextOverflow.ellipsis, style: TextStyle(color: textColor, fontSize: 11))),
+              ])),
+          ])),
+        ]),
+      ]),
+    );
+  }
+}
+
+Color _radarColor(String type, Color fallback) => switch (type) {
+  'Wi-Fi' => WindowsAppearance.foreground(const Color(0xff7de2ff)),
+  'LAN' => WindowsAppearance.foreground(const Color(0xff9be9c2)),
+  _ => fallback,
+};
+
+class _DeviceRadarLines extends CustomPainter {
+  _DeviceRadarLines(this.nodes, this.motion, this.line, this.moving)
+      : super(repaint: motion);
+  final List<_RadarNode> nodes;
+  final Animation<double> motion;
+  final Color line;
+  final bool moving;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (var index = 0; index < nodes.length; index++) {
+      final type = nodes[index].type;
+      final connected = type == 'Wi-Fi' || type == 'LAN';
+      final color = _radarColor(type, line);
+      final y = 22.0 + index * 44;
+      final path = Path()
+        ..moveTo(0, size.height / 2)
+        ..cubicTo(size.width * .45, size.height / 2, size.width * .55, y, size.width, y);
+      final metrics = path.computeMetrics();
+      if (metrics.isEmpty) continue;
+      final metric = metrics.first;
+      final paint = Paint()..color = connected ? color.withAlpha(115) : line
+        ..style = PaintingStyle.stroke..strokeWidth = 1.5;
+      if (connected) {
+        canvas.drawPath(path, paint);
+      } else {
+        for (var d = 0.0; d < metric.length; d += 9) {
+          canvas.drawPath(metric.extractPath(d, math.min(d + 4, metric.length)), paint);
+        }
+      }
+      if (!connected || !moving) continue;
+      final marker = Paint()..color = color;
+      for (final offset in [0.0, .5]) {
+        final distance = metric.length * ((motion.value + offset + index * .09) % 1);
+        final point = metric.getTangentForOffset(distance)?.position;
+        if (point == null) continue;
+        if (type == 'Wi-Fi') {
+          canvas.drawCircle(point, 3, marker);
+        } else {
+          canvas.drawPath(Path()
+            ..moveTo(point.dx - 4, point.dy)
+            ..lineTo(point.dx, point.dy - 3)
+            ..lineTo(point.dx + 4, point.dy)
+            ..lineTo(point.dx, point.dy + 3)
+            ..close(), marker);
+        }
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _DeviceRadarLines oldDelegate) =>
+      oldDelegate.nodes != nodes || oldDelegate.line != line || oldDelegate.moving != moving;
+}
+
+class _SchoolRadarSweep extends CustomPainter {
+  _SchoolRadarSweep(this.motion, this.line, this.moving) : super(repaint: motion);
+  final Animation<double> motion;
+  final Color line;
+  final bool moving;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = size.center(Offset.zero);
+    final ring = Paint()..color = line..style = PaintingStyle.stroke;
+    canvas.drawCircle(center, 23, ring);
+    canvas.drawCircle(center, 29, ring);
+    if (moving) {
+      final sweep = Paint()
+        ..color = _radarColor('Wi-Fi', line)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2;
+      canvas.drawArc(Rect.fromCircle(center: center, radius: 29),
+          motion.value * 2 * math.pi, math.pi / 2, false, sweep);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _SchoolRadarSweep oldDelegate) =>
+      oldDelegate.line != line || oldDelegate.moving != moving;
 }
