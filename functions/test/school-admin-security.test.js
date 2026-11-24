@@ -136,3 +136,47 @@ test('failed audit writes cannot partially commit credentials or consume approva
   assert.equal((await admin.handle(consume,school)).authorized,true);
   assert.equal(db.audits.filter(a=>a.action==='school_admin_action_consumed').length,1);
 });
+
+test('durable delete approval preserves exact original retry but rejects changed generation, revision, payload or actor',async()=>{
+  const {admin,advance,db}=harness();
+  await admin.handle({operation:'enroll',freshIdToken:proof,newPassword:password},school);
+  const intent={scope:'person-delete',collection:'students_directory',id:'Student_1',
+    operationId:'delete-original-00001',recordRevision:'live-original',
+    generation:'p-'+'a'.repeat(64),payloadHash:'a'.repeat(64)};
+  const grant=await admin.handle({operation:'authorize',password,scope:intent.scope,
+    target:'students_directory/Student_1'},school);
+  const request={operation:'bind-mutation',approvalToken:grant.approvalToken,intent};
+  db.rejectNextAudit();
+  await assert.rejects(admin.handle(request,school),/synthetic audit failure/);
+  await assert.rejects(admin.assertMutationApproval(school,intent),/Original Admin Password/);
+  await admin.handle(request,school);
+  advance(121000);
+  assert.equal((await admin.handle(request,school)).authorized,true);
+  assert.equal((await admin.assertMutationApproval(school,intent)).authorized,true);
+  for(const changed of [{recordRevision:'new-revision'},{generation:'p-'+'b'.repeat(64)},
+    {payloadHash:'b'.repeat(64)},{operationId:'delete-original-00002'}]){
+    await assert.rejects(admin.assertMutationApproval(school,{...intent,...changed}));
+    await assert.rejects(admin.handle({...request,intent:{...intent,...changed}},school));
+  }
+  await assert.rejects(admin.assertMutationApproval({...school,uid:'different-user'},intent));
+  await assert.rejects(admin.assertMutationApproval({...school,schoolId:'vs-'+'b'.repeat(32)},intent));
+  assert.equal(db.audits.filter(a=>a.action==='school_admin_mutation_bound').length,1);
+});
+
+test('force promotion binding requires exact exam and result revisions',async()=>{
+  const {admin}=harness();
+  await admin.handle({operation:'enroll',freshIdToken:proof,newPassword:password},school);
+  const intent={scope:'force-promotion',collection:'students_directory',id:'Student_1',
+    operationId:'promotion-original-001',recordRevision:'live-student',
+    generation:'p-'+'a'.repeat(64),payloadHash:'c'.repeat(64),examId:'exam_final',
+    examRevision:'live-exam',resultRevision:'live-result'};
+  const grant=await admin.handle({operation:'authorize',password,scope:intent.scope,
+    target:'Student_1/exam_final'},school);
+  await assert.rejects(admin.handle({operation:'bind-mutation',approvalToken:grant.approvalToken,
+    intent:{...intent,resultRevision:''}},school));
+  await admin.handle({operation:'bind-mutation',approvalToken:grant.approvalToken,intent},school);
+  assert.equal((await admin.assertMutationApproval(school,intent)).authorized,true);
+  await assert.rejects(admin.assertMutationApproval(school,{...intent,resultRevision:'changed'}));
+  await assert.rejects(admin.assertMutationApproval(school,{...intent,examRevision:'changed'}));
+  await assert.rejects(admin.assertMutationApproval(school,{...intent,examId:'another-exam'}));
+});
