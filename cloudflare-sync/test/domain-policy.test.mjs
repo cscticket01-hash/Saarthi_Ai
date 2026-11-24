@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {validateDomainCandidate} from '../src/domain-policy.ts';
+import {validateDomainCandidate,validatePayrollAdvance,validatePayrollMonth,validateClosedPayrollMonth} from '../src/domain-policy.ts';
 const school='vs-'+'a'.repeat(32),foreign='vs-'+'b'.repeat(32);
 const student={schoolId:school,id:'student',mobileStableId:'generation-one'},teacher={schoolId:school,id:'teacher',teacherId:'T1',mobileStableId:'teacher-generation'};
 function run(next,{collection='fee_payments',current=null,owner=student,operation='write'}={}){
@@ -98,4 +98,33 @@ test('attendance adjustments cannot exceed or misstate deductions',()=>{
  assert.doesNotThrow(()=>run({...base,attendanceAdjustment},options));
  assert.throws(()=>run({...base,attendanceAdjustment:{...attendanceAdjustment,amountPaise:1000}},options),e=>e.code==='SALARY_ATTENDANCE_INVALID');
  assert.throws(()=>run({...base,attendanceAdjustment:{...attendanceAdjustment,unpaidDates:['2026-11-03','2026-11-03']}},options),e=>e.code==='SALARY_ATTENDANCE_INVALID');
+});
+
+test('older salary records without stored balance retain exact financial totals',()=>{
+ const legacy={schoolId:school,staffId:'staff-one',employeeId:'E1',month:'2026-11',netPaise:50000,paidPaise:50000,amount:500,status:'Paid',payments:[{id:'p',amountPaise:50000}]};
+ const options={collection:'teacher_salary',owner:{schoolId:school,id:'staff-one',employeeId:'E1',active:true}};
+ assert.doesNotThrow(()=>run(legacy,options));
+ assert.doesNotThrow(()=>run({...legacy,balancePaise:0},{...options,current:legacy}));
+ assert.throws(()=>run({...legacy,balancePaise:1},options),e=>e.code==='SALARY_BALANCE_MISMATCH');
+});
+test('advance ledger history and outstanding amount are immutable',()=>{
+ const id='payroll_advance_fixture',owner={schoolId:school,id:'staff-one',active:true};
+ const issue={id:'a',type:'advance',amountPaise:5000,reference:'recorded',recordedAt:1};
+ const base={schoolId:school,staffId:'staff-one',balancePaise:5000,events:[issue]};
+ const check=(current,next,operation='write')=>validatePayrollAdvance(id,current,next,operation,()=>owner,school);
+ assert.doesNotThrow(()=>check(null,base));
+ const repay={id:'r',type:'repayment',amountPaise:2000,reference:'recorded',recordedAt:2};
+ assert.doesNotThrow(()=>check(base,{...base,balancePaise:3000,events:[issue,repay]}));
+ assert.throws(()=>check(base,{...base,balancePaise:0,events:[]}),e=>e.code==='SALARY_HISTORY_IMMUTABLE');
+ assert.throws(()=>check(base,{...base,balancePaise:1}),e=>e.code==='SALARY_ADVANCE_BALANCE_MISMATCH');
+});
+test('month closure prevents new records and changes, but allows payments',()=>{
+ const marker={month:'2026-11',closed:true,history:[{id:'close',closed:true,at:1}]};
+ const id='payroll_month_2026-11';
+ assert.doesNotThrow(()=>validatePayrollMonth(id,null,marker,'write'));
+ assert.throws(()=>validatePayrollMonth(id,marker,{...marker,closed:false},'write'),e=>e.code==='SALARY_MONTH_HISTORY_INVALID');
+ const base={month:'2026-11',netPaise:10000,paidPaise:0,balancePaise:10000,status:'Pending'};
+ assert.throws(()=>validateClosedPayrollMonth(null,base,'write'),e=>e.code==='SALARY_MONTH_CLOSED');
+ assert.throws(()=>validateClosedPayrollMonth(base,{...base,netPaise:11000},'write'),e=>e.code==='SALARY_MONTH_CLOSED');
+ assert.doesNotThrow(()=>validateClosedPayrollMonth(base,{...base,paidPaise:1000,balancePaise:9000,status:'Part paid',payments:[{id:'p',amountPaise:1000}]},'write'));
 });
