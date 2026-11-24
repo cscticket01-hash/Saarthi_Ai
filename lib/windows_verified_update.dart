@@ -14,6 +14,7 @@ Future<File> downloadVerifiedWindowsInstaller({
   required int sizeBytes,
   required File destination,
   http.Client? client,
+  http.Client Function()? createClient,
   Duration headerTimeout = const Duration(seconds: 30),
   Duration idleTimeout = const Duration(seconds: 30),
   Duration overallTimeout = const Duration(minutes: 15),
@@ -43,12 +44,6 @@ Future<File> downloadVerifiedWindowsInstaller({
   final targetKey = destination.absolute.path;
   if (!_activeInstallerTargets.add(targetKey))
     throw StateError('This installer is already downloading.');
-  final transport = client ?? http.Client();
-  final partial = File(
-    '${destination.path}.${DateTime.now().microsecondsSinceEpoch}.part',
-  );
-  IOSink? sink;
-  StreamIterator<List<int>>? chunks;
   final watch = Stopwatch()..start();
   Duration budget(Duration limit) {
     final remaining = overallTimeout - watch.elapsed;
@@ -57,6 +52,45 @@ Future<File> downloadVerifiedWindowsInstaller({
     return remaining < limit ? remaining : limit;
   }
 
+  try {
+    for (var attempt = 1; ; attempt++) {
+      try {
+        return await _downloadAttempt(
+          uri, hash, sizeBytes, destination, client ?? createClient?.call() ?? http.Client(),
+          budget, headerTimeout, idleTimeout, onProgress,
+        );
+      } on Exception catch (error) {
+        final transient = error is TimeoutException ||
+            error is SocketException ||
+            error is http.ClientException;
+        if (!transient || attempt == 3 || client != null ||
+            watch.elapsed >= overallTimeout) {
+          rethrow;
+        }
+        onProgress?.call(0);
+      }
+    }
+  } finally {
+    _activeInstallerTargets.remove(targetKey);
+  }
+}
+
+Future<File> _downloadAttempt(
+  Uri uri,
+  String hash,
+  int sizeBytes,
+  File destination,
+  http.Client transport,
+  Duration Function(Duration) budget,
+  Duration headerTimeout,
+  Duration idleTimeout,
+  void Function(double)? onProgress,
+) async {
+  final partial = File(
+    '${destination.path}.${DateTime.now().microsecondsSinceEpoch}.part',
+  );
+  IOSink? sink;
+  StreamIterator<List<int>>? chunks;
   try {
     final response = await transport
         .send(http.Request('GET', uri))
@@ -93,7 +127,6 @@ Future<File> downloadVerifiedWindowsInstaller({
     if (await destination.exists()) await destination.delete();
     return await partial.rename(destination.path);
   } finally {
-    _activeInstallerTargets.remove(targetKey);
     transport.close();
     if (chunks != null) await chunks.cancel();
     if (sink != null) {
