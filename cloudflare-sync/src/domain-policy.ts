@@ -85,6 +85,14 @@ function validateSalaryLedger(current:Json|null,next:Json):void {
   const amounts=keys.map(k=>salaryPaise(next[k]??0));
   if(amounts[0]+amounts[1]+amounts[2]+amounts[3]-amounts[4]!==net)reject('SALARY_NET_MISMATCH');
  }
+ if(next.attendanceAdjustment!==undefined){
+  const adj=next.attendanceAdjustment as Json;
+  if(!adj||typeof adj!=='object'||Array.isArray(adj)||!Array.isArray(adj.unpaidDates)||typeof adj.reason!=='string'||!adj.reason.trim())reject('SALARY_ATTENDANCE_INVALID');
+  const dates=adj.unpaidDates;
+  if(dates.length>31||new Set(dates).size!==dates.length||dates.some(d=>typeof d!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(d)||!d.startsWith(String(next.month)+'-')))reject('SALARY_ATTENDANCE_INVALID');
+  const n=salaryPaise(adj.ratePaise)*dates.length;
+  if((dates.length>0&&n===0)||n!==adj.amountPaise||n>salaryPaise(next.deductionPaise))reject('SALARY_ATTENDANCE_INVALID');
+ }
  const prior=current&&!current._syncDeleted?current:null;
  if(prior&&prior.month!==undefined&&prior.month!==next.month)reject('SALARY_MONTH_IMMUTABLE');
  salaryAppendOnly(salaryEvents(prior?.payments),salaryEvents(next.payments));
@@ -99,7 +107,7 @@ function validateSalaryLedger(current:Json|null,next:Json):void {
  if(locked!==(next.salaryLocked===true))reject('SALARY_LOCK_HISTORY_INVALID');
  if(prior?.salaryLocked===true){
   if(['basicPaise','allowancePaise','bonusPaise','overtimePaise','deductionPaise','netPaise','amount'].some(k=>prior[k]!==next[k])||
-     salaryCanonical(prior.paymentCorrections??[])!==salaryCanonical(next.paymentCorrections??[]))reject('SALARY_LOCKED');
+     salaryCanonical(prior.paymentCorrections??[])!==salaryCanonical(next.paymentCorrections??[])||salaryCanonical(prior.attendanceAdjustment??null)!==salaryCanonical(next.attendanceAdjustment??null))reject('SALARY_LOCKED');
  }
 
  // Existing unitemized legacy balances must be retained, not manufactured.
