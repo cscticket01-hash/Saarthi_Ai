@@ -529,3 +529,4 @@ const windowsIdleServerTimeoutMessage =
 // Windows release requested for Password Management and Exam Center updates.
 // Release verification includes the corrected Windows Admin startup tests.
 // Windows release requested for Sync Health and updated Admin Password setup.
+// Windows release includes Admin Password, exam removal, and device management updates.
