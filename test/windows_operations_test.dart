@@ -352,6 +352,19 @@ void main() {
     final saved=await StaffPayroll.save(profile,person,'2026-11',basic:10000);
     expect(saved['netPaise'],10000);
   });
+  test('leave decisions are append-only and paid or cancelled leave never becomes a deduction',(){
+    final leave=StaffPayroll.effectiveLeave('2026-11',[
+      {'id':'a','date':'2026-11-03','kind':'unpaid','reason':'Approved'},
+      {'id':'b','date':'2026-11-04','kind':'paid','reason':'Approved'},
+      {'id':'c','date':'2026-11-05','kind':'unpaid','reason':'Approved'},
+      {'id':'d','date':'2026-11-05','kind':'cancelled','reason':'Cancelled'},
+      {'id':'e','date':'2026-11-30','kind':'unpaid','reason':'Approved'},
+    ]);
+    final working={'2026-11-03','2026-11-04','2026-11-05','2026-11-30'};
+    expect(StaffPayroll.approvedUnpaidDays(leave,working,{},DateTime(2026,11,24)),{'2026-11-03'});
+    expect(()=>StaffPayroll.approvedUnpaidDays(leave,working,{'2026-11-03'},DateTime(2026,11,24)),throwsStateError);
+    expect(()=>StaffPayroll.effectiveLeave('2026-11',[{'id':'a','date':'2026-11-31','kind':'paid','reason':'Approved'}]),throwsStateError);
+  });
   test('salary calendar excludes holidays and respects explicit working day overrides',(){
     final days=StaffPayroll.schoolWorkingDays('2026-11',[
       {'date':'2026-11-02','isOpen':false},{'date':'2026-11-01','isOpen':true}
