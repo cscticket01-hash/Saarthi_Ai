@@ -7085,6 +7085,35 @@ function VS_validateScanQuota(store,b,existing,school) {
 }
 // The signed Script owner applies the same exact-paise and append-only ledger
 // checks as the native live-record owner. Legacy amount-only rows are retained.
+function VS_validatePayrollMonth(b,existing){
+  const current=existing&&existing.data,next=b.data;
+  if(b.operation==='delete'||!next||next._syncDeleted===true)throw new Error('SALARY_MONTH_CONTROL_IMMUTABLE');
+  if(typeof next.month!=='string'||!/^\d{4}-(0[1-9]|1[0-2])$/.test(next.month)||b.id!=='payroll_month_'+next.month||current&&current.month!==next.month||typeof next.closed!=='boolean')throw new Error('SALARY_MONTH_CONTROL_INVALID');
+  const before=current&&current.history||[],after=next.history;
+  if(!Array.isArray(before)||!Array.isArray(after)||after.length<before.length||before.some((e,i)=>VS_layoutHash(e)!==VS_layoutHash(after[i])))throw new Error('SALARY_MONTH_HISTORY_INVALID');
+  const ids=new Set();let closed=false;
+  for(const e of after){
+    if(!e||typeof e.id!=='string'||!e.id||e.id.length>200||ids.has(e.id)||typeof e.closed!=='boolean'||e.closed===closed||!Number.isSafeInteger(e.at))throw new Error('SALARY_MONTH_HISTORY_INVALID');
+    ids.add(e.id);closed=e.closed;
+  }
+  if(closed!==next.closed)throw new Error('SALARY_MONTH_HISTORY_INVALID');
+}
+function VS_guardClosedPayrollMonth(b,existing,school){
+  const current=existing&&existing.data,next=b.data||{};
+  const months=[...new Set([current&&current.month,next.month].filter(v=>typeof v==='string'&&v))];
+  if(!months.length)return;
+  const controls=VS_managedSheet('school_settings');
+  for(const month of months){
+    const control=VS_sheetItem(controls,'payroll_month_'+month);
+    if(!control)continue;
+    if(control.schoolId!==school||control.data.month!==month)throw new Error('SALARY_MONTH_CONTROL_INVALID');
+    if(control.data.closed!==true)continue;
+    if(b.operation==='delete'||!current||current._syncDeleted===true)throw new Error('SALARY_MONTH_CLOSED');
+    const allowed=new Set(current.netPaise===undefined?['updatedAt']:['payments','paidPaise','balancePaise','status','updatedAt','salaryLocked','salaryLockHistory']);
+    const frozen=row=>Object.fromEntries(Object.entries(row).filter(([k])=>!allowed.has(k)&&!k.startsWith('_sync')));
+    if(VS_layoutHash(frozen(current))!==VS_layoutHash(frozen(next)))throw new Error('SALARY_MONTH_CLOSED');
+  }
+}
 function VS_validatePayrollAdvance(b,existing,school){
   const current=existing&&existing.data;
   if(b.operation==='delete'||!b.data||b.data._syncDeleted===true)throw new Error('SALARY_ADVANCE_HISTORY_IMMUTABLE');
@@ -7267,7 +7296,11 @@ function VS_managedRecordUnlocked(b,readContext) {
     } else if(revision) throw new Error('Versioned document requires a matching revision');
   }
   if(b.operation==='write' && existing && existing.data._syncDeleted && !VS_reusableStudentChild(b,existing) && !(b.syncProtocol===2&&b.expectedRecordRevision===existing.data._syncRevision&&b.data&&(b.data._syncRecreatesDeletedRevision===existing.data._syncRevision||b.data._syncRecreatesDeletedOperationId&&b.data._syncRecreatesDeletedOperationId===existing.data._syncOperationId)&&b.collection!=='students_directory') && !(VS_sheetLifecycleEnabled()&&b.collection==='students_directory'&&b.syncProtocol===2&&/^p-[a-f0-9]{32,64}$/.test(b.data&&b.data.mobileStableId||'')&&b.data.mobileStableId!==existing.data._syncDeletedOwner&&(b.expectedRecordRevision===existing.data._syncRevision||b.data.replacesStudentGeneration===existing.data._syncDeletedOwner)))throw new Error('Record revision conflict');
-  if(b.collection==='teacher_salary'&&(b.operation==='write'||b.operation==='delete'))VS_validateSalaryLedger(existing&&existing.data,b.data||{},b.operation);
+  if(b.collection==='teacher_salary'&&(b.operation==='write'||b.operation==='delete')){
+    VS_guardClosedPayrollMonth(b,existing,school);
+    VS_validateSalaryLedger(existing&&existing.data,b.data||{},b.operation);
+  }
+  if(b.collection==='school_settings'&&b.id.startsWith('payroll_month_'))VS_validatePayrollMonth(b,existing);
   if(b.collection==='school_settings'&&b.id.startsWith('payroll_advance_'))VS_validatePayrollAdvance(b,existing,school);
   if(b.operation==='delete'){
     if(VS_recycleEnabled()&&b.syncProtocol!==2)throw new Error('Invalid sync operation');
