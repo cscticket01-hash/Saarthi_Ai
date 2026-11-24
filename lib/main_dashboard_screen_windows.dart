@@ -21413,6 +21413,20 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
     final subjectsByClass = <String, TextEditingController>{};
     final fullByClass = <String, TextEditingController>{};
     final passByClass = <String, TextEditingController>{};
+    final customSubjects = <String>{};
+    final customFull = <String>{};
+    final customPass = <String>{};
+
+    void updateInherited(
+      Map<String, TextEditingController> fields,
+      Set<String> customized,
+      String value,
+    ) {
+      for (final entry in fields.entries) {
+        if (!customized.contains(entry.key)) entry.value.text = value;
+      }
+    }
+
     String? dialogError;
     bool isFinalExam=false;
 
@@ -21574,6 +21588,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                           const SizedBox(height: 10),
                           TextField(
                             controller: defaultSubjects,
+                            onChanged: (value) => updateInherited(subjectsByClass, customSubjects, value),
                             minLines: 1,
                             maxLines: 2,
                             style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
@@ -21588,6 +21603,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                               Expanded(
                                 child: TextField(
                                   controller: defaultFull,
+                            onChanged: (value) => updateInherited(fullByClass, customFull, value),
                                   keyboardType: TextInputType.number,
                                   style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                                   decoration: _dialogInput(
@@ -21600,6 +21616,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                               Expanded(
                                 child: TextField(
                                   controller: defaultPass,
+                            onChanged: (value) => updateInherited(passByClass, customPass, value),
                                   keyboardType: TextInputType.number,
                                   style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                                   decoration: _dialogInput(
@@ -21619,6 +21636,9 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                                   : () {
                                       for (final className in selectedClasses) {
                                         ensureClass(className);
+                                        customSubjects.remove(className);
+                                        customFull.remove(className);
+                                        customPass.remove(className);
                                         subjectsByClass[className]!.text =
                                             defaultSubjects.text;
                                         fullByClass[className]!.text =
@@ -21685,6 +21705,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                             children: [
                               TextField(
                                 controller: subjectsByClass[className],
+                                      onChanged: (_) { customSubjects.add(className); },
                                 minLines: 1,
                                 maxLines: 3,
                                 style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
@@ -21699,6 +21720,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                                   Expanded(
                                     child: TextField(
                                       controller: fullByClass[className],
+                                      onChanged: (_) { customFull.add(className); },
                                       keyboardType: TextInputType.number,
                                       style:
                                            TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
@@ -21712,6 +21734,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                                   Expanded(
                                     child: TextField(
                                       controller: passByClass[className],
+                                      onChanged: (_) { customPass.add(className); },
                                       keyboardType: TextInputType.number,
                                       style:
                                            TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
