@@ -144,6 +144,38 @@ class StaffPayroll {
     }
     return dates.toSet();
   }
+  static String monthControlId(String month){
+    rowId('month-control',month);
+    return 'payroll_month_'+month;
+  }
+  static Future<bool> monthClosed(String profile,String month) async{
+    _sameSchool(profile);
+    final value=(await FirebaseFirestore.instance.collection('school_settings').doc(monthControlId(month)).get()).data();
+    _sameSchool(profile);
+    if(value!=null&&value['month']!=month)throw StateError('Payroll month control identity mismatch.');
+    return value?['closed']==true;
+  }
+  static Future<void> _requireMonthOpen(String profile,String month) async{
+    if(await monthClosed(profile,month))throw StateError('Payroll month is closed. Reopen with Admin Password before changing salary or correcting payment.');
+  }
+  static Future<void> setMonthClosed(String profile,String month,{required bool closed,required String adminPassword})=>_serial(()async{
+    await requireAdmin(profile,adminPassword);
+    await _durable(profile);
+    final db=FirebaseFirestore.instance,ref=db.collection('school_settings').doc(monthControlId(month));
+    final old=(await ref.get()).data();
+    _sameSchool(profile);
+    if(old!=null&&old['month']!=month)throw StateError('Payroll month control identity mismatch.');
+    if((old?['closed']==true)==closed)return;
+    await WindowsLocalSecurity.initialize();
+    await requireAdmin(profile,adminPassword);
+    final history=List<dynamic>.from(old?['history'] as List? ?? []);
+    history.add({'id':SchoolPersonIdentity.newGeneration(),'closed':closed,'at':DateTime.now().millisecondsSinceEpoch,
+      if(WindowsLocalSecurity.configured)'recordedBy':WindowsLocalSecurity.adminId});
+    final batch=db.batch();
+    batch.requireUnchanged(ref,old);
+    batch.set(ref,{'month':month,'closed':closed,'history':history,'updatedAt':DateTime.now().millisecondsSinceEpoch});
+    await batch.commit();
+  });
   static String advanceId(String staffId) => 'payroll_advance_'+sha256.convert(utf8.encode(staffId)).toString();
   static int advanceBalance(Iterable<dynamic> events){
     var balance=0;
@@ -218,6 +250,7 @@ class StaffPayroll {
   static Future<Map<String,int>> generateMonth(String profile,String month,{required String adminPassword})=>_serial(()async{
     await requireAdmin(profile,adminPassword);
     await _durable(profile);
+    await _requireMonthOpen(profile,month);
     final people=await staff(profile);
     final db=FirebaseFirestore.instance;
     final existing=(await db.collection('teacher_salary').where('month',isEqualTo:month).get()).docs.map((d)=>d.data()).toList();
@@ -251,6 +284,7 @@ class StaffPayroll {
   static Future<Map<String, dynamic>> save(String profile, Map<String, dynamic> person, String month,
       {required int basic, int allowance = 0, int bonus = 0, int overtime = 0, int deduction = 0, String? adminPassword, Map<String,dynamic>? attendanceAdjustment}) => _serial(() async {
     await _durable(profile);
+    await _requireMonthOpen(profile,month);
     final people = await staff(profile);
     final current = people.where((s) => s['id'] == person['id']);
     if (current.length != 1) throw StateError('Staff record is no longer available. Reload the page.');
@@ -418,6 +452,7 @@ class StaffPayroll {
             row['schoolId'] != FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'])) {
       throw StateError('Salary record or school changed. Reopen Staff Salary.');
     }
+    if(row['month'] is String)await _requireMonthOpen(profile,row['month'] as String);
     if(row['salaryLocked']==true)throw StateError('Salary is approved and locked. Reopen it before correcting a payment.');
     final payments = List<dynamic>.from(row['payments'] as List? ?? []);
     final matched = payments.where((v) => v is Map && v['id'] == paymentId).toList();
@@ -479,7 +514,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
   late final String _profile;
   DateTime _month = DateTime(DateTime.now().year, DateTime.now().month);
   List<Map<String, dynamic>> _staff = [], _rows = [];
-  bool _loading = true, _local = true;
+  bool _loading = true, _local = true, _monthClosed=false;
   String _search = '', _role = 'All staff';
   String? _error;
   String _schoolName='';
@@ -487,10 +522,11 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
   bool _working = false;
   int _loadGeneration = 0;
   StreamSubscription<QuerySnapshot<Map<String,dynamic>>>? _salarySubscription;
+  StreamSubscription<DocumentSnapshot<Map<String,dynamic>>>? _monthSubscription;
   @override
   void initState() { super.initState(); _profile = FirebaseFirestore.instance.activeProfileId; _load(); }
   @override
-  void dispose() { _loadGeneration++; _salarySubscription?.cancel(); super.dispose(); }
+  void dispose() { _loadGeneration++; _salarySubscription?.cancel(); _monthSubscription?.cancel(); super.dispose(); }
   void _changeMonth(DateTime month) {
     setState(() { _month = DateTime(month.year,month.month); _selected.clear(); _rows=[]; });
     _load();
@@ -500,10 +536,13 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     final generation = ++_loadGeneration;
     final month = StaffPayroll.monthKey(_month);
     final previous = _salarySubscription;
+    final previousMonth = _monthSubscription;
     _salarySubscription = null;
+    _monthSubscription=null;
     setState(() { _loading = true; _error = null; });
     try {
       await previous?.cancel();
+      await previousMonth?.cancel();
       if(!mounted||generation!=_loadGeneration)return;
       StaffPayroll._sameSchool(_profile);
       final people = await StaffPayroll.staff(_profile);
@@ -511,12 +550,16 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
       final salary = await query.get();
       final branding=(await FirebaseFirestore.instance.collection('school_config').doc('school_profile_cache').get()).data();
       final local = await FirebaseFirestore.instance.localPersistenceEnabled();
+      final closed=await StaffPayroll.monthClosed(_profile,month);
       StaffPayroll._sameSchool(_profile);
       if (mounted && generation == _loadGeneration) setState(() {
         _schoolName=branding?['schoolName']?.toString()??'';
-        _staff = people; _rows = salary.docs.map((d) => {...d.data(), 'id': d.id}).toList(); _local = local;
+        _staff = people; _rows = salary.docs.map((d) => {...d.data(), 'id': d.id}).toList(); _local = local; _monthClosed=closed;
       });
       if(mounted&&generation==_loadGeneration){
+        _monthSubscription=FirebaseFirestore.instance.collection('school_settings').doc(StaffPayroll.monthControlId(month)).snapshots().listen((snapshot){
+          if(mounted&&generation==_loadGeneration&&FirebaseFirestore.instance.activeProfileId==_profile)setState(()=>_monthClosed=snapshot.data()?['closed']==true);
+        },onError:(Object error){if(mounted&&generation==_loadGeneration)setState(()=>_error='Month control refresh failed: $error');});
         _salarySubscription=query.snapshots().listen((snapshot){
           if(!mounted||generation!=_loadGeneration||FirebaseFirestore.instance.activeProfileId!=_profile)return;
           setState(()=>_rows=snapshot.docs.map((d)=>{...d.data(),'id':d.id}).toList());
@@ -861,6 +904,23 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     }catch(e){if(mounted)setState(()=>_error='$e');}
     finally{if(mounted)setState(()=>_working=false);}
   }
+  Future<void> _toggleMonth() async{
+    if(_working)return;
+    final month=StaffPayroll.monthKey(_month),closed=!_monthClosed;
+    try{
+      final password=await _adminAuthorization(closed?'Close Payroll Month':'Reopen Payroll Month');
+      if(password==null||!mounted)return;
+      final confirmed=await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(
+        title:Text((closed?'Close ':'Reopen ')+month),
+        content:Text(closed?'Block new salary rows, salary edits and corrections for this month. Ordinary payment recording remains available. Cloud acceptance is separate from local save.':'Allow salary changes again. Individual approved salary locks remain in force.'),
+        actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Confirm'))]));
+      if(confirmed!=true||!mounted)return;
+      setState(()=>_working=true);
+      await StaffPayroll.setMonthClosed(_profile,month,closed:closed,adminPassword:password);
+      if(mounted)await _load();
+    }catch(e){if(mounted)setState(()=>_error='$e');}
+    finally{if(mounted)setState(()=>_working=false);}
+  }
   Future<void> _toggleSalaryLock(Map<String,dynamic> row) async {
     try{
       final locked=row['salaryLocked']!=true;
@@ -922,8 +982,9 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
               if(day!=null&&mounted)_changeMonth(day);
             }),
             IconButton(tooltip:'Next month',onPressed:()=>_changeMonth(DateTime(_month.year,_month.month+1)),icon:Icon(Icons.chevron_right)),
-            FilledButton.icon(onPressed:_staff.isEmpty?null:_calculatePayroll,icon:Icon(Icons.calculate_outlined),label:Text('Calculate Payroll')),
-            OutlinedButton.icon(onPressed:_working||_staff.isEmpty?null:_generateMonth,icon:Icon(Icons.playlist_add),label:Text('Generate Monthly Salary')),
+            FilledButton.icon(onPressed:_staff.isEmpty||_monthClosed?null:_calculatePayroll,icon:Icon(Icons.calculate_outlined),label:Text('Calculate Payroll')),
+            OutlinedButton.icon(onPressed:_working||_staff.isEmpty||_monthClosed?null:_generateMonth,icon:Icon(Icons.playlist_add),label:Text('Generate Monthly Salary')),
+            OutlinedButton.icon(onPressed:_working?null:_toggleMonth,icon:Icon(_monthClosed?Icons.lock_open:Icons.lock),label:Text(_monthClosed?'Reopen Payroll Month':'Close Payroll Month')),
             FilledButton.icon(style:FilledButton.styleFrom(backgroundColor: WindowsAppearance.primary, foregroundColor: WindowsAppearance.onPrimary),onPressed:_selected.isEmpty?null:_paySelected,icon:Icon(Icons.done_all),label:Text('Record Selected Payments')),
             OutlinedButton.icon(key: const ValueKey('salary-history'), onPressed:()=>_history(),icon:Icon(Icons.history),label:Text('Payment History')),
             OutlinedButton.icon(onPressed:_working?null:()=>_output(csv:true),icon:Icon(Icons.download_outlined),label:Text('Export CSV')),
@@ -937,6 +998,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
             _metric('Paid','₹${StaffPayroll.format(paid)}',Colors.green,Icons.check_circle_outline,'$paidCount staff paid'),
             _metric('Pending','₹${StaffPayroll.format(net-paid)}',Colors.orange,Icons.hourglass_empty,'Remaining balance'),
           ]),SizedBox(height:18),
+          if(_monthClosed) const Text('Payroll month closed • salary changes blocked • payments still allowed'),
           if(!_local) Padding(padding:EdgeInsets.all(12),child:Text('Salary changes require durable school storage. The app will enable protected storage for this school before saving; if that fails no payment is recorded.')),
            Text('Records belong to the active school. Teacher salary appears in the teacher app after school sync.',style:TextStyle(fontFamily: 'Segoe UI', color:WindowsAppearance.foreground(Colors.white54),fontSize:12)),
           if(_error!=null) Padding(padding:const EdgeInsets.all(12),child:Text(_error!,style:TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.redAccent)))),
@@ -988,7 +1050,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
       DataCell(Text(amount('basicPaise'))),DataCell(Text(amount('allowancePaise'))),DataCell(Text(amount('deductionPaise'))),DataCell(Text(row==null?'—':'₹${StaffPayroll.format(StaffPayroll.total(row))}')),
       DataCell(Chip(label:Text(row?['salaryLocked']==true?'$status • Locked':status),backgroundColor:color.withValues(alpha:.2))),
       DataCell(Row(children:[
-        if(row==null)TextButton(onPressed:()=>_salary(person,null),child:Text('Set salary'))
+        if(row==null)TextButton(onPressed:_monthClosed?null:()=>_salary(person,null),child:Text('Set salary'))
         else FilledButton.tonal(onPressed:_working?null:()=>_output(row:row),child:Text('View Payslip')),
         PopupMenuButton<String>(tooltip:'Salary actions',onSelected:(action){
           if(action=='edit')_salary(person,row);
@@ -1000,7 +1062,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
           if(action=='reverse'&&row!=null)_correctPayment(row,reverse:true);
           if(action=='history'&&row!=null)_history(row);
         },itemBuilder:(_)=>[
-          PopupMenuItem(value:'edit',child:Text(row==null?'Set salary':'Edit salary')),
+          PopupMenuItem(value:'edit',enabled:!_monthClosed,child:Text(row==null?'Set salary':'Edit salary')),
           const PopupMenuItem(value:'structure',child:Text('Salary Structure • Admin Password')),
           const PopupMenuItem(value:'advance',child:Text('Advance / Loan Ledger • Admin Password')),
           if(row!=null)PopupMenuItem(value:'lock',child:Text(row['salaryLocked']==true?'Reopen Salary • Admin Password':'Approve & Lock Salary')),
