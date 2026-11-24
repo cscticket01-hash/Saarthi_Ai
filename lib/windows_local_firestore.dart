@@ -6,6 +6,7 @@ import 'school_profile_policy.dart';
 import 'school_timestamp.dart';
 import 'windows_sync_comparison.dart';
 import 'windows_record_change_policy.dart';
+import 'windows_salary_reconciliation.dart';
 export 'school_timestamp.dart' show Timestamp;
 import 'dart:async';
 import 'dart:convert';
@@ -2931,6 +2932,38 @@ class _LocalSchoolDatabase {
         }
         final localRecords = collections[collection];
         final local = localRecords is Map ? localRecords[id] : null;
+        final baselineEntry=(collections['_windows_sync_baselines'] as Map?)?[queueId];
+        final baselineRecord=baselineEntry is Map?baselineEntry['record']:null;
+        if(collection=='teacher_salary'&&baselineRecord is Map&&local is Map&&current['data'] is Map&&
+            sameSavedRecord(collection,_decodeMap(Map<String,dynamic>.from(local)),current['data'] as Map)){
+          final merged=mergeUnsubmittedSalaryPayments(
+            _decodeMap(Map<String,dynamic>.from(current)),
+            _decodeMap(Map<String,dynamic>.from(baselineRecord)),remote);
+          if(merged!=null){
+            final patch=buildRecordFieldPatch(collection,remote,merged);
+            if(patch!=null){
+              final archive=collections.putIfAbsent('_windows_sync_conflict_history',()=> <String,dynamic>{}) as Map;
+              archive[operationId]=_encodeMap({...current,'verifiedCloud':remote,
+                'resolution':'Unsubmitted payment-only three-way merge; new cloud ACK required'});
+              final nextId=base64Url.encode(List<int>.generate(24,(_)=>Random.secure().nextInt(256))).replaceAll('=','');
+              final audit=collections.putIfAbsent('_windows_sync_resolution_history',()=> <String,dynamic>{}) as Map;
+              audit[nextId]=_encodeMap({'schoolId':school,'originalOperationId':operationId,'queueId':queueId,
+                'local':current,'remote':remote,'choice':'merge','reason':'Distinct append-only payment events within unchanged salary balance',
+                'reviewedAt':DateTime.now().millisecondsSinceEpoch,'status':'awaitingCloudAck'});
+              queue[queueId]=_encodeMap({'operationId':nextId,'schoolId':school,'collection':collection,'documentId':id,
+                'operation':'set','updateIntent':true,'baseCloudRevision':revision,'fieldPatch':patch,'data':merged,
+                'syncState':'pending','retryCount':0,'reviewedFromOperationId':operationId,'queuedAt':DateTime.now().millisecondsSinceEpoch});
+              final baselines=collections.putIfAbsent('_windows_sync_baselines',()=> <String,dynamic>{}) as Map;
+              baselines[queueId]={'revision':revision,'deleted':false,'record':_encodeMap(remote)};
+              localRecords[id]=_encodeMap(merged);
+              _storeCollections(root,collections);await _writeRoot(root);
+              for(final name in [collection,'_windows_firebase_outbox']){
+                final signal=_signals[name];if(signal!=null&&!signal.isClosed)signal.add(null);
+              }
+              completer.complete(false);return;
+            }
+          }
+        }
         final history = collections.putIfAbsent('_windows_sync_conflicts',()=> <String,dynamic>{}) as Map;
         final conflictId = '$operationId-${sha256.convert(utf8.encode(revision))}';
         history[conflictId] = _encodeMap({'schoolId':school,'collection':collection,
@@ -3032,6 +3065,7 @@ class _LocalSchoolDatabase {
           throw StateError('Pending version changed; reopen conflict review.');
         }
         final collection=expected['collection'] as String, id=expected['documentId'] as String;
+        if(isPayrollFinancialRecord(expected))throw StateError('Payroll conflict requires financial ledger reconciliation. Both versions retained; generic local/cloud replacement is disabled.');
         final history=collections.putIfAbsent('_windows_sync_conflict_history',()=> <String,dynamic>{}) as Map;
         final oldOperation=expected['operationId'];
         if(oldOperation is! String || oldOperation.isEmpty)throw StateError('Original operation identity required.');
