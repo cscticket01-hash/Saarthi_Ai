@@ -78,7 +78,7 @@ class StaffPayroll {
     final extra = await OtherStaffDirectory.load(profile);
     _sameSchool(profile);
     return [
-      for (final d in teachers.docs) {
+      for (final d in teachers.docs.where((d)=>d.data()['active']!=false&&d.data()['inactive']!=true&&d.data()['_syncDeleted']!=true)) {
         'id': 'teacher:${d.id}',
         'teacherId': (d.data()['teacherId']?.toString().trim().isNotEmpty ?? false) ? d.data()['teacherId'] : d.id,
         'employeeId': d.data()['teacherId'] ?? d.id,
@@ -144,6 +144,51 @@ class StaffPayroll {
     }
     return dates.toSet();
   }
+  static String advanceId(String staffId) => 'payroll_advance_'+sha256.convert(utf8.encode(staffId)).toString();
+  static int advanceBalance(Iterable<dynamic> events){
+    var balance=0;
+    final ids=<String>{};
+    for(final event in events){
+      if(event is! Map||event['id'] is! String||!ids.add(event['id'] as String)||event['amountPaise'] is! int||(event['amountPaise'] as int)<=0)throw StateError('Advance history requires review.');
+      final amount=event['amountPaise'] as int;
+      if(event['type']=='advance'||event['type']=='loan')balance+=amount;
+      else if(event['type']=='repayment')balance-=amount;
+      else throw StateError('Unknown advance event.');
+      if(balance<0)throw StateError('Advance repayment exceeds the outstanding amount.');
+    }
+    return balance;
+  }
+  static Future<Map<String,dynamic>?> advanceLedger(String profile,String staffId) async{
+    _sameSchool(profile);
+    final row=(await FirebaseFirestore.instance.collection('school_settings').doc(advanceId(staffId)).get()).data();
+    _sameSchool(profile);
+    if(row!=null&&(row['staffId']!=staffId||row['balancePaise']!=advanceBalance(row['events'] as List? ?? [])))throw StateError('Advance ledger identity or balance requires review.');
+    return row;
+  }
+  static Future<void> recordAdvance(String profile,String staffId,{required String type,required int amount,required String eventId,required String reference,required String adminPassword})=>_serial(()async{
+    await requireAdmin(profile,adminPassword);
+    await _durable(profile);
+    if(amount<=0||eventId.isEmpty||reference.trim().isEmpty||reference.length>500||!['advance','loan','repayment'].contains(type))throw ArgumentError('Enter a valid amount, event and payment reference.');
+    final db=FirebaseFirestore.instance,ref=db.collection('school_settings').doc(advanceId(staffId));
+    final before=await advanceLedger(profile,staffId);
+    final people=await staff(profile);
+    if(!people.any((p)=>p['id']==staffId)&&(before==null||type!='repayment'))throw StateError('Active staff required for a new advance or loan.');
+    final events=List<dynamic>.from(before?['events'] as List? ?? []);
+    final prior=events.where((e)=>e is Map&&e['id']==eventId).toList();
+    if(prior.isNotEmpty){
+      if(prior.length!=1||prior.single['type']!=type||prior.single['amountPaise']!=amount||prior.single['reference']!=reference.trim())throw StateError('Advance event ID conflict.');
+      return;
+    }
+    await WindowsLocalSecurity.initialize();
+    await requireAdmin(profile,adminPassword);
+    events.add({'id':eventId,'type':type,'amountPaise':amount,'reference':reference.trim(),'recordedAt':DateTime.now().millisecondsSinceEpoch,
+      if(WindowsLocalSecurity.configured)'recordedBy':WindowsLocalSecurity.adminId});
+    final balance=advanceBalance(events);
+    final batch=db.batch();
+    batch.requireUnchanged(ref,before);
+    batch.set(ref,{'staffId':staffId,'events':events,'balancePaise':balance,'updatedAt':DateTime.now().millisecondsSinceEpoch});
+    await batch.commit();
+  });
   static String structureId(String staffId) => 'payroll_salary_structure_${sha256.convert(utf8.encode(staffId))}';
   static Future<Map<String,dynamic>?> structure(String profile,String staffId) async {
     _sameSchool(profile);
@@ -747,6 +792,33 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     } catch(e) { if(mounted) setState(() => _error='$e'); }
     finally { if(mounted) setState(() => _working=false); }
   }
+  Future<void> _advance(Map<String,dynamic> person) async{
+    try{
+      final staffId=(person['staffId']??person['id']).toString();
+      final ledger=await StaffPayroll.advanceLedger(_profile,staffId);
+      if(!mounted)return;
+      final events=(ledger?['events'] as List? ?? []).whereType<Map>().toList();
+      final password=await _adminAuthorization('Advance / Loan Ledger');
+      if(password==null||!mounted)return;
+      final amount=TextEditingController(),reference=TextEditingController();
+      var type='advance';
+      final id=SchoolPersonIdentity.newGeneration();
+      try{
+        await _editor('Advance / Loan • '+(person['name']?.toString()??staffId),(setD)=>[
+          Text('Outstanding: ₹'+StaffPayroll.format((ledger?['balancePaise'] as int?)??0)),
+          for(final e in events.reversed) Text('${e['type']} • ₹${StaffPayroll.format(e['amountPaise'] as int)} • ${e['reference']}'),
+          const Divider(),
+          DropdownButtonFormField<String>(initialValue:type,items:['advance','loan','repayment'].map((v)=>DropdownMenuItem(value:v,child:Text(v))).toList(),onChanged:(v)=>setD(()=>type=v!)),
+          TextField(controller:amount,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Amount',prefixText:'₹ ')),
+          TextField(controller:reference,decoration:const InputDecoration(labelText:'Actual payment reference / evidence')),
+          const Text('Record only an actual advance, loan or separate repayment. This does not transfer money or automatically deduct salary. Do not record the same repayment twice.'),
+        ],()=>StaffPayroll.recordAdvance(_profile,staffId,type:type,amount:StaffPayroll.money(amount.text),eventId:id,reference:reference.text,adminPassword:password));
+      }finally{
+        await Future<void>.delayed(const Duration(milliseconds:250));
+        amount.dispose();reference.dispose();
+      }
+    }catch(e){if(mounted)setState(()=>_error='$e');}
+  }
   Future<void> _editStructure(Map<String,dynamic> person) async {
     try{
       final password=await _adminAuthorization('Salary Structure');
@@ -921,6 +993,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
         PopupMenuButton<String>(tooltip:'Salary actions',onSelected:(action){
           if(action=='edit')_salary(person,row);
           if(action=='structure')_editStructure(person);
+          if(action=='advance')_advance(person);
           if(action=='lock'&&row!=null)_toggleSalaryLock(row);
           if(action=='pay'&&row!=null)_payment(row);
           if(action=='correct'&&row!=null)_correctPayment(row);
@@ -929,6 +1002,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
         },itemBuilder:(_)=>[
           PopupMenuItem(value:'edit',child:Text(row==null?'Set salary':'Edit salary')),
           const PopupMenuItem(value:'structure',child:Text('Salary Structure • Admin Password')),
+          const PopupMenuItem(value:'advance',child:Text('Advance / Loan Ledger • Admin Password')),
           if(row!=null)PopupMenuItem(value:'lock',child:Text(row['salaryLocked']==true?'Reopen Salary • Admin Password':'Approve & Lock Salary')),
           if(row!=null&&StaffPayroll.paid(row)<StaffPayroll.total(row))const PopupMenuItem(value:'pay',child:Text('Record payment')),
           if(row!=null&&StaffPayroll.paid(row)>0)const PopupMenuItem(value:'correct',child:Text('Modify Payment • Admin Password')),
