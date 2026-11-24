@@ -67,7 +67,7 @@ void main() {
       d['devices']=(d['devices'] as List).reversed.toList();
       return d;
     }
-    await tester.pumpWidget(MaterialApp(home:WindowsDeviceManagement(
+    await tester.pumpWidget(MaterialApp(builder: (context, child) => MediaQuery(data: MediaQuery.of(context).copyWith(disableAnimations: true), child: child!), home:WindowsDeviceManagement(requestRemovalApproval: (_) async => 'test-approval', 
       request:(action,body) async {
         expect(action,'managed/device/list');
         refreshes++;
@@ -83,7 +83,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(refreshes,2);
     expect(tester.getTopLeft(currentRow).dy,lessThan(tester.getTopLeft(otherRow).dy));
-    expect(find.text('Revoke'),findsOneWidget,
+    expect(find.text('Remove'),findsOneWidget,
       reason:'Presentation ordering must not change revoke authorization');
     await close(tester);
   });
@@ -94,7 +94,7 @@ void main() {
       (original['devices'] as List).reversed.toList());
     await WindowsDeviceDirectoryCache.write(scope,cached);
     final pending=Completer<Map<String,dynamic>>();
-    await tester.pumpWidget(MaterialApp(home:WindowsDeviceManagement(
+    await tester.pumpWidget(MaterialApp(builder: (context, child) => MediaQuery(data: MediaQuery.of(context).copyWith(disableAnimations: true), child: child!), home:WindowsDeviceManagement(requestRemovalApproval: (_) async => 'test-approval', 
       cacheScope:()async=>scope, request:(action,body)=>pending.future,
     )));
     await tester.pumpAndSettle();
@@ -109,7 +109,7 @@ void main() {
   });
   testWidgets('verified counts, current-PC protection and real revoke readback', (tester) async {
     var revoked = false, reads = 0, writes = 0;
-    await tester.pumpWidget(MaterialApp(home:WindowsDeviceManagement(request:(action,body) async {
+    await tester.pumpWidget(MaterialApp(builder: (context, child) => MediaQuery(data: MediaQuery.of(context).copyWith(disableAnimations: true), child: child!), home:WindowsDeviceManagement(requestRemovalApproval: (_) async => 'test-approval', request:(action,body) async {
       if(action=='managed/device/revoke') {
         expect(body['targetDeviceIdentity'],other);
         writes++; revoked=true;
@@ -120,13 +120,13 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Authorized PCs: 2 / 5   |   Recently active: 1'),findsOneWidget);
     expect(find.text('This PC'),findsOneWidget);
-    expect(find.text('Revoke'),findsOneWidget);
+    expect(find.text('Remove'),findsOneWidget);
     expect(find.text('Connectivity'),findsOneWidget);
-    expect(find.text('Wi-Fi'),findsOneWidget);
-    expect(find.text('LAN'),findsNothing,
+    expect(find.descendant(of: find.byKey(const ValueKey('device-directory-panel')), matching: find.text('Wi-Fi')),findsOneWidget);
+    expect(find.descendant(of: find.byKey(const ValueKey('device-directory-panel')), matching: find.text('LAN')),findsNothing,
       reason:'An offline PC must not show its stale LAN adapter');
-    expect(find.text('Offline'),findsOneWidget);
-    await tester.tap(find.text('Revoke')); await tester.pumpAndSettle();
+    expect(find.descendant(of: find.byKey(const ValueKey('device-directory-panel')), matching: find.text('Offline')),findsOneWidget);
+    await tester.tap(find.text('Remove')); await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton,'Revoke')); await tester.pumpAndSettle();
     expect(writes,1); expect(reads,2);
     expect(find.text('Authorized PCs: 1 / 5   |   Recently active: 1'),findsOneWidget);
@@ -137,33 +137,33 @@ void main() {
     for(final row in (list['devices'] as List)) {
       row['connectionType']='Unknown';
     }
-    await tester.pumpWidget(MaterialApp(home:WindowsDeviceManagement(
+    await tester.pumpWidget(MaterialApp(builder: (context, child) => MediaQuery(data: MediaQuery.of(context).copyWith(disableAnimations: true), child: child!), home:WindowsDeviceManagement(requestRemovalApproval: (_) async => 'test-approval', 
       request:(action,body) async => list,
       localConnectionDetector:() async => 'LAN',
     )));
     await tester.pumpAndSettle();
     expect(find.text('This PC'),findsOneWidget);
-    expect(find.text('LAN'),findsOneWidget);
-    expect(find.text('Offline'),findsOneWidget,
+    expect(find.descendant(of: find.byKey(const ValueKey('device-directory-panel')), matching: find.text('LAN')),findsOneWidget);
+    expect(find.descendant(of: find.byKey(const ValueKey('device-directory-panel')), matching: find.text('Offline')),findsOneWidget,
       reason:'A stale remote PC must show offline, not the former adapter');
     expect(find.byType(Tooltip),findsWidgets);
     await close(tester);
   });
   testWidgets('disabled server shows unknown counts, not fake devices', (tester) async {
-    await tester.pumpWidget(MaterialApp(home:WindowsDeviceManagement(request:(a,b) async => throw StateError('DEVICE_ROLLOUT_DISABLED'))));
+    await tester.pumpWidget(MaterialApp(builder: (context, child) => MediaQuery(data: MediaQuery.of(context).copyWith(disableAnimations: true), child: child!), home:WindowsDeviceManagement(requestRemovalApproval: (_) async => 'test-approval', request:(a,b) async => throw StateError('DEVICE_ROLLOUT_DISABLED'))));
     await tester.pumpAndSettle();
     expect(find.textContaining('Authorized PCs: — / 5'),findsOneWidget);
     expect(find.textContaining('Device management is not enabled on this server'),findsOneWidget);
-    expect(find.text('Revoke'),findsNothing);
+    expect(find.text('Remove'),findsNothing);
     await close(tester);
   });
   testWidgets('duplicate identities cannot authorize actions', (tester) async {
     final invalid=response();
     (invalid['devices'] as List)[1]['deviceIdentity']=own;
-    await tester.pumpWidget(MaterialApp(home:WindowsDeviceManagement(request:(a,b) async => invalid)));
+    await tester.pumpWidget(MaterialApp(builder: (context, child) => MediaQuery(data: MediaQuery.of(context).copyWith(disableAnimations: true), child: child!), home:WindowsDeviceManagement(requestRemovalApproval: (_) async => 'test-approval', request:(a,b) async => invalid)));
     await tester.pumpAndSettle();
     expect(find.textContaining('Invalid device response'),findsOneWidget);
-    expect(find.text('Revoke'),findsNothing);
+    expect(find.text('Remove'),findsNothing);
     await close(tester);
   });
   test('directory cache is account/server scoped and never stores proof secrets',() async {
@@ -187,7 +187,7 @@ void main() {
     var reads=0;
     final pending=Completer<Map<String,dynamic>>();
     final actions=<String>[];
-    await tester.pumpWidget(MaterialApp(home:WindowsDeviceManagement(request:(action,body) async {
+    await tester.pumpWidget(MaterialApp(builder: (context, child) => MediaQuery(data: MediaQuery.of(context).copyWith(disableAnimations: true), child: child!), home:WindowsDeviceManagement(requestRemovalApproval: (_) async => 'test-approval', request:(action,body) async {
       actions.add(action); reads++;
       return reads==1 ? response() : pending.future;
     })));
@@ -197,7 +197,7 @@ void main() {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pump();
     expect(reads,2);
-    expect(tester.widget<TextButton>(find.widgetWithText(TextButton,'Revoke')).onPressed,isNotNull);
+    expect(tester.widget<TextButton>(find.widgetWithText(TextButton,'Remove')).onPressed,isNotNull);
     expect(find.byType(LinearProgressIndicator),findsNothing);
     expect(identical(element,tester.element(row)),isTrue);
     final changed=response();
@@ -215,7 +215,7 @@ void main() {
   testWidgets('old background response cannot undo a successful revoke', (tester) async {
     var reads=0,revoked=false;
     final delayed=Completer<Map<String,dynamic>>();
-    await tester.pumpWidget(MaterialApp(home:WindowsDeviceManagement(request:(action,body) async {
+    await tester.pumpWidget(MaterialApp(builder: (context, child) => MediaQuery(data: MediaQuery.of(context).copyWith(disableAnimations: true), child: child!), home:WindowsDeviceManagement(requestRemovalApproval: (_) async => 'test-approval', request:(action,body) async {
       if(action=='managed/device/revoke') {
         revoked=true;
         return {'success':true,'device':{'deviceIdentity':other,'status':'revoked'}};
@@ -226,7 +226,7 @@ void main() {
     await tester.pumpAndSettle();
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pump();
-    await tester.tap(find.text('Revoke')); await tester.pumpAndSettle();
+    await tester.tap(find.text('Remove')); await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton,'Revoke')); await tester.pumpAndSettle();
     expect(find.text('Authorized PCs: 1 / 5   |   Recently active: 1'),findsOneWidget);
     delayed.complete(response()); await tester.pumpAndSettle();
@@ -238,20 +238,20 @@ void main() {
     const scope='school-A';
     await WindowsDeviceDirectoryCache.write(scope,WindowsDeviceDirectoryCache.validate(response()['devices']));
     final pending=Completer<Map<String,dynamic>>();
-    await tester.pumpWidget(MaterialApp(home:WindowsDeviceManagement(cacheScope:()async=>scope,request:(a,b)=>pending.future)));
+    await tester.pumpWidget(MaterialApp(builder: (context, child) => MediaQuery(data: MediaQuery.of(context).copyWith(disableAnimations: true), child: child!), home:WindowsDeviceManagement(requestRemovalApproval: (_) async => 'test-approval', cacheScope:()async=>scope,request:(a,b)=>pending.future)));
     await tester.pumpAndSettle();
-    expect(find.text('School Office PC'),findsOneWidget);
+    expect(find.descendant(of: find.byKey(const ValueKey('device-directory-panel')), matching: find.text('School Office PC')),findsOneWidget);
     expect(find.text('Recently active'),findsNothing);
     expect(find.textContaining('Saved device list'),findsOneWidget);
-    expect(find.text('Wi-Fi'),findsNothing,
+    expect(find.descendant(of: find.byKey(const ValueKey('device-directory-panel')), matching: find.text('Wi-Fi')),findsNothing,
       reason:'A cached Wi-Fi label is not live connectivity');
-    expect(find.text('Not verified'),findsNWidgets(2));
+    expect(find.descendant(of: find.byKey(const ValueKey('device-directory-panel')), matching: find.text('Not verified')),findsNWidgets(2));
     expect(find.byType(LinearProgressIndicator),findsNothing);
-    final revoke=tester.widget<TextButton>(find.widgetWithText(TextButton,'Revoke'));
+    final revoke=tester.widget<TextButton>(find.widgetWithText(TextButton,'Remove'));
     expect(revoke.onPressed,isNull);
     pending.completeError(StateError('DEVICE_ROLLOUT_DISABLED'));
     await tester.pumpAndSettle();
-    expect(find.text('School Office PC'),findsOneWidget);
+    expect(find.descendant(of: find.byKey(const ValueKey('device-directory-panel')), matching: find.text('School Office PC')),findsOneWidget);
     expect(find.textContaining('Authorized PCs: 2 / 5'),findsOneWidget);
     expect(find.textContaining('Device management is not enabled'),findsOneWidget);
     final light=tester.widget<Icon>(find.byKey(ValueKey('activity-$own')));
@@ -260,13 +260,13 @@ void main() {
   });
   testWidgets('enrollment-only list shows real devices but cannot send an unenforced revoke', (tester) async {
     final actions=<String>[];
-    await tester.pumpWidget(MaterialApp(home:WindowsDeviceManagement(request:(a,b)async {
+    await tester.pumpWidget(MaterialApp(builder: (context, child) => MediaQuery(data: MediaQuery.of(context).copyWith(disableAnimations: true), child: child!), home:WindowsDeviceManagement(requestRemovalApproval: (_) async => 'test-approval', request:(a,b)async {
       actions.add(a);return {...response(),'canRevoke':false};
     })));
     await tester.pumpAndSettle();
-    expect(find.text('School Office PC'),findsOneWidget);
+    expect(find.descendant(of: find.byKey(const ValueKey('device-directory-panel')), matching: find.text('School Office PC')),findsOneWidget);
     expect(find.text('Recently active'),findsOneWidget);
-    expect(tester.widget<TextButton>(find.widgetWithText(TextButton,'Revoke')).onPressed,isNull);
+    expect(tester.widget<TextButton>(find.widgetWithText(TextButton,'Remove')).onPressed,isNull);
     expect(find.textContaining('Device enrollment is active'),findsOneWidget);
     expect(actions,['managed/device/list']);
     await close(tester);
@@ -287,7 +287,7 @@ void main() {
     final key=GlobalKey();
     for(final size in [const Size(1100,650),const Size(430,850)]) {
       tester.view.physicalSize=size;
-      await tester.pumpWidget(MaterialApp(debugShowCheckedModeBanner:false,theme:ThemeData.dark().copyWith(textTheme:ThemeData.dark().textTheme.apply(fontFamily:'Segoe UI')),home:MediaQuery(data:MediaQueryData(size:size,textScaler:TextScaler.linear(size.width<700?1.5:1)),child:RepaintBoundary(key:key,child:WindowsDeviceManagement(request:(a,b)async=>response())))));
+      await tester.pumpWidget(MaterialApp(debugShowCheckedModeBanner:false,theme:ThemeData.dark().copyWith(textTheme:ThemeData.dark().textTheme.apply(fontFamily:'Segoe UI')),home:MediaQuery(data:MediaQueryData(disableAnimations:true,size:size,textScaler:TextScaler.linear(size.width<700?1.5:1)),child:RepaintBoundary(key:key,child:WindowsDeviceManagement(requestRemovalApproval: (_) async => 'test-approval', request:(a,b)async=>response())))));
       await tester.pumpAndSettle();
       expect(tester.takeException(),isNull);
       final boundary=key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
