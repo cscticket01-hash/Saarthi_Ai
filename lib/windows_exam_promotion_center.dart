@@ -116,6 +116,8 @@ class _PromotionPanelState extends State<WindowsExamPromotionCenter> {
 
   Future<void> _apply(String decision) async {
     if (_working || _loading || !_sameSchool || widget.exam == null || !_isFinal) return;
+    final approvedExam = Map<String, dynamic>.from(widget.exam!);
+    final approvedExamId = _examId;
     final chosen = _students.where((student) {
       final id = student['id'].toString();
       return _selected.contains(id) && _status(student) == 'Review' &&
@@ -146,7 +148,7 @@ class _PromotionPanelState extends State<WindowsExamPromotionCenter> {
           FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Confirm')),
         ],
       ));
-    if (proceed != true || !mounted || !_sameSchool) return;
+    if (proceed != true || !mounted || !_sameSchool || _examId != approvedExamId) return;
     if (!WindowsLocalSecurity.verifyPassword(adminPassword.text)) {
       _notice('Invalid Administrator password. Nothing was changed.');
       return;
@@ -155,17 +157,17 @@ class _PromotionPanelState extends State<WindowsExamPromotionCenter> {
     var done = 0;
     final failures = <String>[];
     for (final student in chosen) {
-      if (!_sameSchool) break;
+      if (!mounted || !_sameSchool || _examId != approvedExamId) break;
       try {
         await SchoolPromotionService.apply(
           studentId:student['id'].toString(),student:student,
-          exam:widget.exam!,result:decision);
+          exam:approvedExam,result:decision);
         done++;
       } catch (e) {
         failures.add((student['name']?.toString() ?? 'Student') + ': ' + e.toString());
       }
     }
-    if (mounted && _sameSchool) {
+    if (mounted && _sameSchool && _examId == approvedExamId) {
       setState(() { _working = false; _selected.clear(); });
       await _load();
       await widget.onRefresh();
@@ -173,12 +175,15 @@ class _PromotionPanelState extends State<WindowsExamPromotionCenter> {
           ' need review.' + (failures.isEmpty ? ' Cloudflare ACK pending.' : ' ' + failures.first));
     }
     } finally {
+      if (mounted && _working) setState(() => _working = false);
       adminPassword.dispose();
     }
   }
 
   Future<void> _override() async {
     if (_working || _loading || !_sameSchool || _selected.length != 1 || !_isFinal || widget.exam == null) return;
+    final approvedExam = Map<String, dynamic>.from(widget.exam!);
+    final approvedExamId = _examId;
     final matches = _students.where((row) => _selected.contains(row['id'])).toList();
     if (matches.isEmpty) return;
     final student = matches.first;
@@ -210,7 +215,7 @@ class _PromotionPanelState extends State<WindowsExamPromotionCenter> {
             FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Confirm override')),
           ],
         ));
-      if (proceed != true || !mounted || !_sameSchool) return;
+      if (proceed != true || !mounted || !_sameSchool || _examId != approvedExamId) return;
       if (reason.text.trim().isEmpty || !WindowsLocalSecurity.verifyPassword(password.text)) {
         _notice('Override blocked: enter an audit reason and valid administrator password.');
         return;
@@ -219,7 +224,7 @@ class _PromotionPanelState extends State<WindowsExamPromotionCenter> {
       try {
         await SchoolPromotionService.apply(
           studentId:student['id'].toString(),student:student,
-          exam:widget.exam!,result:'FAIL',force:true,reason:reason.text.trim());
+          exam:approvedExam,result:'FAIL',force:true,reason:reason.text.trim());
         await _load();
         await widget.onRefresh();
         _notice('Override recorded locally; Cloudflare ACK pending.');
