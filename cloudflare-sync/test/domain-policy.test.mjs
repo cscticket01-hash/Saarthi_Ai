@@ -77,3 +77,25 @@ test('exact-paise payroll ledger retains immutable payment and correction histor
  assert.throws(()=>run({_syncDeleted:true},{...options,current:reversed,operation:'delete'}),e=>e.code==='SALARY_HISTORY_IMMUTABLE');
  assert.throws(()=>run({...base,staffId:'teacher:wrong'},{...options}),e=>e.code==='DOMAIN_TEACHER_RETIRED');
 });
+
+test('locked salary permits payments but prevents amount and correction changes until reopened',()=>{
+ const base={schoolId:school,staffId:'teacher:teacher',employeeId:'T1',teacherId:'T1',month:'2026-11',basicPaise:10000,netPaise:10000,amount:100,paidPaise:0,balancePaise:10000,status:'Pending'};
+ const options={collection:'teacher_salary',owner:teacher};
+ const locks=[{id:'lock-one',locked:true,at:1}];
+ const locked={...base,salaryLocked:true,salaryLockHistory:locks};
+ assert.doesNotThrow(()=>run(locked,{...options,current:base}));
+ assert.throws(()=>run({...locked,basicPaise:11000,netPaise:11000,amount:110,balancePaise:11000},{...options,current:locked}),e=>e.code==='SALARY_LOCKED');
+ const paid={...locked,paidPaise:2000,balancePaise:8000,status:'Part paid',payments:[{id:'p',amountPaise:2000}]};
+ assert.doesNotThrow(()=>run(paid,{...options,current:locked}));
+ assert.throws(()=>run({...paid,salaryLocked:false},{...options,current:paid}),e=>e.code==='SALARY_LOCK_HISTORY_INVALID');
+ const open={...paid,salaryLocked:false,salaryLockHistory:[...locks,{id:'reopen',locked:false,at:2}]};
+ assert.doesNotThrow(()=>run(open,{...options,current:paid}));
+});
+test('attendance adjustments cannot exceed or misstate deductions',()=>{
+ const base={schoolId:school,staffId:'teacher:teacher',employeeId:'T1',teacherId:'T1',month:'2026-11',basicPaise:10000,deductionPaise:2000,netPaise:8000,amount:80,paidPaise:0,balancePaise:8000,status:'Pending'};
+ const options={collection:'teacher_salary',owner:teacher};
+ const attendanceAdjustment={unpaidDates:['2026-11-03','2026-11-04'],ratePaise:1000,amountPaise:2000,reason:'Approved unpaid leave'};
+ assert.doesNotThrow(()=>run({...base,attendanceAdjustment},options));
+ assert.throws(()=>run({...base,attendanceAdjustment:{...attendanceAdjustment,amountPaise:1000}},options),e=>e.code==='SALARY_ATTENDANCE_INVALID');
+ assert.throws(()=>run({...base,attendanceAdjustment:{...attendanceAdjustment,unpaidDates:['2026-11-03','2026-11-03']}},options),e=>e.code==='SALARY_ATTENDANCE_INVALID');
+});
