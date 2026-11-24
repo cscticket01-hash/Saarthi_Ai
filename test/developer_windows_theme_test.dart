@@ -68,7 +68,7 @@ void main() {
     'revision': 'saved-1',
   };
   testWidgets(
-    'all seven preset selections are drafts; arrows change one themed screenshot; Save publishes once',
+    'all eight preset selections are drafts; arrows change one themed screenshot; Save publishes once',
     (tester) async {
       final calls = <Map<String, dynamic>>[];
       await mount(tester, const Size(1440, 900), (action, body) async {
@@ -83,7 +83,7 @@ void main() {
         expect(File(preset.image).existsSync(), isTrue);
         for (final page in ['dashboard', 'students', 'fees', 'settings'])
           expect(
-            File('assets/theme_preview_${preset.id=='midnight-glass'?'electric-blue':preset.id}_${page=='settings'?'settings_v2':page}.webp').existsSync(),
+            File('assets/theme_preview_${(preset.id=='midnight-glass'||preset.id=='aurora-liquid-glass')?'electric-blue':preset.id}_${page=='settings'?'settings_v2':page}.webp').existsSync(),
             isTrue,
           );
         await tester.tap(find.byKey(ValueKey('theme-preset-${preset.id}')));
@@ -102,7 +102,7 @@ void main() {
           find.byKey(const ValueKey('theme-preview-image')),
         );
         expect((image.image as AssetImage).assetName,
-          'assets/theme_preview_${preset.id == 'midnight-glass' ? 'electric-blue' : preset.id}_dashboard.webp',
+          'assets/theme_preview_${(preset.id == 'midnight-glass' || preset.id == 'aurora-liquid-glass') ? 'electric-blue' : preset.id}_dashboard.webp',
           reason:'Every preset, including Glass, must preview a real Windows screen');
       }
       expect(find.text('Unsaved preset'), findsOneWidget);
