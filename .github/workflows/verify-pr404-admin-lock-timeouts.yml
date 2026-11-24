@@ -1,0 +1,48 @@
+name: Verify PR 404 Admin Lock timeout fixes
+
+on:
+  push:
+    branches: [verify/pr404-admin-lock-timeouts]
+
+permissions:
+  contents: read
+
+jobs:
+  win001-windows-login:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Prepare Windows Flutter test dependencies
+        shell: powershell
+        run: |
+          flutter create --platforms=windows --no-pub .
+          if ($LASTEXITCODE -ne 0) { throw 'Windows platform generation failed.' }
+          $pubspec = Get-Content pubspec.yaml -Raw
+          $removePackages = @(
+            'agora_rtc_engine', 'geolocator', 'mobile_scanner',
+            'firebase_core', 'firebase_auth', 'firebase_messaging',
+            'flutter_local_notifications', 'firebase_storage',
+            'firebase_analytics', 'firebase_database', 'firebase_crashlytics',
+            'firebase_app_check', 'firebase_remote_config', 'firebase_functions',
+            'firebase_performance', 'cloud_firestore'
+          )
+          foreach ($package in $removePackages) {
+            $pattern = '(?m)^\s*' + [regex]::Escape($package) + ':\s*[^\r\n]+\r?\n'
+            $pubspec = [regex]::Replace($pubspec, $pattern, '')
+          }
+          Set-Content -Path pubspec.yaml -Value $pubspec -Encoding UTF8
+          flutter pub get
+          if ($LASTEXITCODE -ne 0) { throw 'Windows dependency resolution failed.' }
+      - name: WIN-001 school login caret, backspace, IME and show-hide tests
+        shell: powershell
+        env:
+          APPDATA: ${{ runner.temp }}/win001-school-login
+          LOCALAPPDATA: ${{ runner.temp }}/win001-school-login
+        run: |
+          flutter test --concurrency=1 test/windows_managed_school_gate_test.dart test/windows_startup_test.dart --name 'legacy Admin lock cannot open|Admin entry requires independent setup'
+          if ($LASTEXITCODE -ne 0) { throw 'WIN-001 login regression failed.' }
