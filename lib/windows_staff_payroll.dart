@@ -18,6 +18,8 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart' hide Text, InputDecoration;
 import 'windows_ui_localization.dart';
 import 'windows_local_firestore.dart';
+import 'windows_sheet_recovery.dart' show sheetRecoveryCacheKey;
+import 'live_sync_protocol.dart' show isDriveRecoveryRevision;
 
 /// Integer paise throughout calculations; rupee fields remain compatible with
 /// the school-owned mobile backend's existing teacher_salary response.
@@ -478,10 +480,12 @@ class StaffPayroll {
     final db=FirebaseFirestore.instance,batch=db.batch();
     final rowIds=<String>{},paymentIds=<String>{};
     final timestamp=DateTime.now().millisecondsSinceEpoch;
+    final journalEntries=<Map<String,dynamic>>[];
     int changed=0;
     for(final intent in intents){
       final id=intent['id'],paymentId=intent['paymentId'],amount=intent['amountPaise'];
       if(id is! String||id.isEmpty||!rowIds.add(id)||paymentId is! String||paymentId.isEmpty||!paymentIds.add(paymentId)||amount is! int||amount<=0)throw ArgumentError('Invalid or repeated bulk payment entry.');
+      journalEntries.add({'id':id,'paymentId':paymentId,'amountPaise':amount});
       final ref=db.collection('teacher_salary').doc(id);
       final row=(await ref.get()).data();
       _sameSchool(profile);
@@ -503,8 +507,57 @@ class StaffPayroll {
       changed++;
     }
     _sameSchool(profile);
-    if(changed>0)await batch.commit();
+    final batchId='salary-bulk-'+sha256.convert(utf8.encode(jsonEncode(journalEntries.map((e)=>e['paymentId']).toList()..sort((a,b)=>a.toString().compareTo(b.toString()))))).toString();
+    final journalRef=db.collection('_local_salary_bulk_journal').doc(batchId);
+    final old=(await journalRef.get()).data();
+    _sameSchool(profile);
+    final identity={'entries':journalEntries,'date':date.toIso8601String(),'mode':mode,'reference':reference.trim(),
+      'schoolId':db.activeProfileIdentity['schoolSyncId']??''};
+    if(old!=null){
+      if(jsonEncode(old['identity'])!=jsonEncode(identity))throw StateError('Bulk payment journal identity conflict.');
+    }else{
+      batch.requireUnchanged(journalRef,null);
+      batch.set(journalRef,{'id':batchId,'identity':identity,'recordedAt':timestamp});
+    }
+    if(changed>0||old==null)await batch.commit();
   });
+  static bool containsBulkPayment(Map? row,Map entry,Map identity,String school){
+    if(row==null||school.isEmpty||row['schoolId']!=school||row['_syncDeleted']==true||
+        row['id']!=null&&row['id']!=entry['id']||row['payments'] is! List)return false;
+    final found=(row['payments'] as List).where((p)=>p is Map&&p['id']==entry['paymentId']).toList();
+    return found.length==1&&found.single['amountPaise']==entry['amountPaise']&&
+      found.single['date']==identity['date']&&found.single['mode']==identity['mode']&&found.single['reference']==identity['reference'];
+  }
+  static Future<List<Map<String,dynamic>>> bulkVerification(String profile)async{
+    _sameSchool(profile);
+    final db=FirebaseFirestore.instance,school=db.activeProfileIdentity['schoolSyncId']?.toString()??'';
+    final journals=(await db.collection('_local_salary_bulk_journal').get()).docs;
+    final result=<Map<String,dynamic>>[];
+    for(final journal in journals){
+      final data=journal.data(),identity=data['identity'];
+      if(identity is! Map||identity['schoolId']!=school||identity['entries'] is! List)continue;
+      final entries=<Map<String,dynamic>>[];
+      for(final raw in identity['entries'] as List){
+        if(raw is! Map||raw['id'] is! String||raw['paymentId'] is! String)continue;
+        _sameSchool(profile);
+        final id=raw['id'] as String;
+        final baselineKey=base64Url.encode(utf8.encode('teacher_salary\\\\n$id')).replaceAll('=', '');
+        final baseline=(await db.collection('_windows_sync_baselines').doc(baselineKey).get()).data();
+        final drive=(await db.collection('_windows_verified_cloud_records').doc(sheetRecoveryCacheKey('teacher_salary',id)).get()).data();
+        _sameSchool(profile);
+        final canonical=baseline?['record'],driveRecord=drive?['record'];
+        final rev=canonical is Map?canonical['_syncRevision']:null;
+        final edge=rev is String&&rev.startsWith('live-')&&baseline?['revision']==rev&&containsBulkPayment(canonical as Map,raw,identity,school);
+        final driveFromBaseline=canonical is Map&&isDriveRecoveryRevision(rev)&&baseline?['revision']==rev&&containsBulkPayment(canonical,raw,identity,school);
+        final driveVerified=driveFromBaseline||drive?['schoolId']==school&&drive?['collection']=='teacher_salary'&&drive?['documentId']==id&&
+          driveRecord is Map&&isDriveRecoveryRevision(driveRecord['_syncRevision'])&&containsBulkPayment(driveRecord,raw,identity,school);
+        entries.add({...Map<String,dynamic>.from(raw),'cloudflareRecordVerified':edge,'driveRecordVerified':driveVerified});
+      }
+      result.add({'id':journal.id,'recordedAt':data['recordedAt'],'entries':entries});
+    }
+    result.sort((a,b)=>((b['recordedAt'] as num?)??0).compareTo((a['recordedAt'] as num?)??0));
+    return result;
+  }
   /// Approval is attached to each salary row, not a separate unsynchronised UI flag.
   static Future<void> setSalaryLocked(String profile,String id,{required bool locked,required String adminPassword})=>_serial(()async{
     await requireAdmin(profile,adminPassword);
@@ -1060,6 +1113,27 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     final person = await showDialog<Map<String,dynamic>>(context:context,builder:(ctx){ WindowsAppearance.watch(ctx); return SimpleDialog(title:Text('Select staff to calculate salary'),children:[for(final person in _staff) SimpleDialogOption(onPressed:()=>Navigator.pop(ctx,person),child:Text('${person['name']} • ${person['employeeId']??person['teacherId']??person['id']} • ${person['role']}'))]); });
     if(person != null && mounted) await _salary(person,_monthRows.where((r)=>r['staffId']==person['id']).firstOrNull);
   }
+  Future<void> _bulkVerification() async{
+    try{
+      final batches=await StaffPayroll.bulkVerification(_profile);
+      if(!mounted)return;
+      await showDialog<void>(context:context,builder:(ctx)=>AlertDialog(
+        title:const Text('Bulk Payment Verification'),
+        content:SizedBox(width:650,child:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,crossAxisAlignment:CrossAxisAlignment.start,children:[
+          const Text('This PC’s durable batches. Verified counts require matching original payment details in a verified record. Missing evidence is not a failed payment. Refresh after school sync.'),
+          if(batches.isEmpty)const Text('No bulk payment batches recorded on this PC.'),
+          for(final batch in batches.take(50))...[
+            const Divider(),
+            Text('Batch: '+batch['id'].toString()),
+            Text('Local entries: '+(batch['entries'] as List).length.toString()),
+            Text('Cloudflare record proof: '+(batch['entries'] as List).where((e)=>e['cloudflareRecordVerified']==true).length.toString()),
+            Text('Drive record proof: '+(batch['entries'] as List).where((e)=>e['driveRecordVerified']==true).length.toString()),
+            for(final e in (batch['entries'] as List).where((e)=>e['driveRecordVerified']!=true))Text('${e['paymentId']} • Drive not verified'),
+          ],
+        ]))),
+        actions:[TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Close'))]));
+    }catch(e){if(mounted)setState(()=>_error='$e');}
+  }
   Future<void> _paySelected() async {
     final rows = _monthRows.where((r) => _selected.contains(r['staffId']) && StaffPayroll.paid(r)<StaffPayroll.total(r)).toList();
     if(rows.isEmpty) { setState(() => _error='Select staff with an unpaid salary record first.'); return; }
@@ -1113,6 +1187,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
             OutlinedButton.icon(onPressed:_working?null:_toggleMonth,icon:Icon(_monthClosed?Icons.lock_open:Icons.lock),label:Text(_monthClosed?'Reopen Payroll Month':'Close Payroll Month')),
             FilledButton.icon(style:FilledButton.styleFrom(backgroundColor: WindowsAppearance.primary, foregroundColor: WindowsAppearance.onPrimary),onPressed:_selected.isEmpty?null:_paySelected,icon:Icon(Icons.done_all),label:Text('Record Selected Payments')),
             OutlinedButton.icon(onPressed:_working?null:_legacyReview,icon:Icon(Icons.fact_check_outlined),label:Text('Legacy Salary Review')),
+            OutlinedButton.icon(onPressed:_working?null:_bulkVerification,icon:Icon(Icons.fact_check),label:Text('Bulk Verification')),
             OutlinedButton.icon(key: const ValueKey('salary-history'), onPressed:()=>_history(),icon:Icon(Icons.history),label:Text('Payment History')),
             OutlinedButton.icon(onPressed:_working?null:()=>_output(csv:true),icon:Icon(Icons.download_outlined),label:Text('Export CSV')),
 
