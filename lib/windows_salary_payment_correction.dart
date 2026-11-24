@@ -34,7 +34,7 @@ class SalaryPaymentCorrectionPolicy {
       final previous = entry['previousPaise'];
       final revised = entry['correctedPaise'];
       if (previous is! num || revised is! num ||
-          previous.toInt() != current || revised.toInt() <= 0) {
+          previous.toInt() != current || revised.toInt() < 0) {
         throw StateError('Payment correction history is inconsistent. Original retained.');
       }
       current = revised.toInt();
