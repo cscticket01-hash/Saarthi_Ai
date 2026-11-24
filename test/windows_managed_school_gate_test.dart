@@ -147,7 +147,10 @@ void main(){
     await WindowsLocalSecurity.initialize();expect(WindowsLocalSecurity.configured,false);
     await WindowsLocalSecurity.create(adminId:'School app',password:'app-only-pass');
     expect(await WindowsSectionLocks.enabled('admin_section'),false);
-    await WindowsSectionLocks.addPassword(sectionKey:'admin_section',password:'admin-only-pass');
+    await tester.runAsync(() => WindowsSectionLocks.addPassword(
+      sectionKey: 'admin_section',
+      password: 'admin-only-pass',
+    ));
     expect(WindowsLocalSecurity.verifyPassword('admin-only-pass'),false);
     expect(await WindowsSectionLocks.verify(sectionKey:'admin_section',password:'app-only-pass'),false);
     expect(await WindowsSectionLocks.verify(sectionKey:'admin_section',password:'admin-only-pass'),true);
