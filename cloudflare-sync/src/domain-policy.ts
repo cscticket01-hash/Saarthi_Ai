@@ -96,7 +96,7 @@ export function validateDomainCandidate(input:DomainCandidate):void {
   if(!rawItems||typeof rawItems!=='object'||Array.isArray(rawItems)||
      !rawFrequencies||typeof rawFrequencies!=='object'||Array.isArray(rawFrequencies)||
      !nonempty(next.studentId)||!nonempty(next.personId)||
-     typeof next.month!=='string'||!/^\\d{4}-(0[1-9]|1[0-2])$/.test(next.month))
+     typeof next.month!=='string'||!/^\d{4}-(0[1-9]|1[0-2])$/.test(next.month))
    reject('DOMAIN_FEE_BILLING_SNAPSHOT_INVALID',400);
   const items=rawItems as Record<string,unknown>;
   const frequencies=rawFrequencies as Record<string,unknown>;
