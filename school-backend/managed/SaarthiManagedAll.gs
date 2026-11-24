@@ -7119,7 +7119,7 @@ function VS_validatePayrollLeave(b,existing,school){
   if(b.operation==='delete'||!next||next._syncDeleted===true)throw new Error('SALARY_LEAVE_HISTORY_IMMUTABLE');
   const staffId=next.staffId,month=next.month;
   if(typeof staffId!=='string'||!staffId||typeof month!=='string'||!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)||
-    b.id!=='payroll_leave_'+VS_hash(JSON.stringify([staffId,month]))||current&&(current.staffId!==staffId||current.month!==month))throw new Error('SALARY_LEAVE_IDENTITY');
+    b.id!=='payroll_leave_'+VS_payrollIdentityHash(JSON.stringify([staffId,month]))||current&&(current.staffId!==staffId||current.month!==month))throw new Error('SALARY_LEAVE_IDENTITY');
   const settings=VS_managedSheet('school_settings'),control=VS_sheetItem(settings,'payroll_month_'+month);
   if(control&&(control.schoolId!==school||control.data.month!==month||control.data.closed===true))throw new Error('SALARY_MONTH_CLOSED');
   let owner;
@@ -7143,11 +7143,12 @@ function VS_validatePayrollLeave(b,existing,school){
     ids.add(e.id);days.set(e.date,e.kind);
   }
 }
+function VS_payrollIdentityHash(value){return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,String(value),Utilities.Charset.UTF_8).map(v=>('0'+((v+256)%256).toString(16)).slice(-2)).join('');}
 function VS_validatePayrollAdvance(b,existing,school){
   const current=existing&&existing.data;
   if(b.operation==='delete'||!b.data||b.data._syncDeleted===true)throw new Error('SALARY_ADVANCE_HISTORY_IMMUTABLE');
   const next=b.data,staffId=next.staffId;
-  if(typeof staffId!=='string'||!staffId||b.id!=='payroll_advance_'+VS_hash(staffId)||current&&current.staffId!==staffId)throw new Error('SALARY_ADVANCE_OWNER_IMMUTABLE');
+  if(typeof staffId!=='string'||!staffId||b.id!=='payroll_advance_'+VS_payrollIdentityHash(staffId)||current&&current.staffId!==staffId)throw new Error('SALARY_ADVANCE_OWNER_IMMUTABLE');
   const events=v=>{if(v===undefined||v===null)return [];if(!Array.isArray(v)||v.some(e=>!e||typeof e!=='object'||Array.isArray(e)))throw new Error('SALARY_ADVANCE_EVENT_INVALID');return v;};
   const before=events(current&&current.events),after=events(next.events);
   if(after.length<before.length||before.some((e,i)=>VS_layoutHash(e)!==VS_layoutHash(after[i])))throw new Error('SALARY_ADVANCE_HISTORY_IMMUTABLE');
@@ -7190,7 +7191,7 @@ function VS_validatePayrollRecoveryBackup(b,existing,school){
     for(const link of after){
       if(typeof link.id!=='string'||!link.id||ids.has(link.id)||!positive(link.amountPaise)||
          link.salaryId!==b.id||link.month!==next.month||typeof next.staffId!=='string'||
-         link.advanceId!=='payroll_advance_'+VS_hash(next.staffId)||typeof link.reference!=='string'||!link.reference.trim()||
+         link.advanceId!=='payroll_advance_'+VS_payrollIdentityHash(next.staffId)||typeof link.reference!=='string'||!link.reference.trim()||
          !Number.isSafeInteger(link.at))throw new Error('PAYROLL_RECOVERY_LINK_INVALID');
       ids.add(link.id);recovered+=link.amountPaise;
     }
