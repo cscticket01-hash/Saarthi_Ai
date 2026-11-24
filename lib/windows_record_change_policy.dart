@@ -53,6 +53,12 @@ bool recordFieldIntentSatisfied(Map queued,Map remote) {
     (patch['remove'] as List).every((key)=>!remote.containsKey(key));
 }
 
+bool isPayrollFinancialRecord(Map queued) =>
+  queued['collection']=='teacher_salary' ||
+  queued['collection']=='school_settings' &&
+    ['payroll_advance_','payroll_month_','payroll_salary_structure_'].any((prefix)=>
+      (queued['documentId']?.toString()??'').startsWith(prefix));
+
 bool firstCommittedCreateWins(Map queued, Map remote) =>
   queued['createIntent']==true && queued['operation']=='set' &&
   (queued['baseCloudRevision']??'')=='' && queued['priorDeletion']==null &&
@@ -61,6 +67,7 @@ bool firstCommittedCreateWins(Map queued, Map remote) =>
   (remote['_syncRevision'] as String).isNotEmpty &&
   queued['collection']!='documents' && queued['collection']!='backups' &&
   !{'fee_payments','fee_ledger'}.contains(queued['collection']) &&
+  !isPayrollFinancialRecord(queued) &&
   queued['data'] is Map && queued['data']['replacesStudentGeneration']==null &&
   !(queued['data'] as Map).keys.any((key)=>key.toString().startsWith('_syncRecreates'));
 
