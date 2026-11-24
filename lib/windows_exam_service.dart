@@ -287,6 +287,47 @@ class WindowsExamService {
   }
 
 
+  static Future<void> completeExam(String examId) async {
+    if (!RegExp(r'^[A-Za-z0-9_-]{3,128}$').hasMatch(examId)) {
+      throw StateError('Invalid exam identifier.');
+    }
+    final db = FirebaseFirestore.instance;
+    final profile = db.activeProfileId;
+    final ref = db.collection('exams').doc(examId);
+    final exam = (await ref.get()).data();
+    if (exam == null || exam['deleted'] == true || exam['_syncDeleted'] == true) {
+      throw StateError('Exam no longer exists.');
+    }
+    if (exam['completedAt'] != null) return;
+    final className = exam['studentClass']?.toString() ?? '';
+    if (className.isEmpty) throw StateError('Exam class is missing.');
+    final students = await db.collection('students_directory')
+        .where('class', isEqualTo: className).get();
+    final snapshot = await WindowsBackendBridge.localExamAction({
+      'action': 'list_exam_center',
+    });
+    _requireProfile(profile);
+    if (snapshot['success'] != true) throw StateError('Exam results unavailable.');
+    final results = (snapshot['results'] as List? ?? []).whereType<Map>()
+        .where((row) => row['examId'] == examId && row['deleted'] != true &&
+            row['_syncDeleted'] != true &&
+            (row['result'] == 'PASS' || row['result'] == 'FAIL'))
+        .map((row) => row['studentId']?.toString()).whereType<String>().toSet();
+    final active = students.docs
+        .where((doc) => WindowsExamPolicy.activeStudent(doc.data()))
+        .map((doc) => doc.id);
+    final expected = int.tryParse(exam['expectedStudentCount']?.toString() ?? '') ?? 0;
+    if (results.isEmpty || results.length < expected ||
+        active.any((id) => !results.contains(id))) {
+      throw StateError('Save all pending marks before completing this exam.');
+    }
+    final batch = db.batch();
+    batch.requireUnchanged(ref, exam);
+    batch.set(ref, {'completedAt': DateTime.now().millisecondsSinceEpoch},
+        SetOptions(merge: true));
+    await batch.commit();
+  }
+
   /// Only unused class exams may be removed. Failed verification keeps data.
   static Future<void> deleteUnusedExam(String examId) async {
     if (!RegExp(r'^[A-Za-z0-9_-]{3,128}$').hasMatch(examId)) {
