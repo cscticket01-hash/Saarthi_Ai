@@ -23,6 +23,7 @@ import 'id_card_engine.dart';
 import 'id_card_manifest.dart';
 import 'id_card_native_preview.dart';
 import 'windows_browser_print.dart';
+import 'windows_report_card_preview.dart';
 import 'windows_save_pdf.dart';
 import 'windows_id_card_designer_entry.dart';
 import 'fitted_document_preview.dart';
@@ -1064,12 +1065,13 @@ class WindowsDocumentTemplates {
   static Future<bool> previewReport(
     BuildContext context,
     Map<String, dynamic> data,
-  ) async {
-    final bytes = await selected('reportCard', data);
-    if (bytes == null) return false;
-    if (context.mounted) await preview(context, bytes, title: 'Report card');
-    return true;
-  }
+  ) =>
+      WindowsReportCardPreview.open(
+        context,
+        data,
+        // PDF rendering is user-initiated from Download Report Card only.
+        createPdf: () => selected('reportCard', data),
+      );
 }
 
 class SchoolDocumentTemplatesScreen extends StatefulWidget {

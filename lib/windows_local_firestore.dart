@@ -6,6 +6,7 @@ import 'school_profile_policy.dart';
 import 'school_timestamp.dart';
 import 'windows_sync_comparison.dart';
 import 'windows_record_change_policy.dart';
+import 'windows_salary_reconciliation.dart';
 export 'school_timestamp.dart' show Timestamp;
 import 'dart:async';
 import 'dart:convert';
@@ -1334,11 +1335,11 @@ class WriteBatch {
 
   Future<void> commit() async {
     if(firestore.activeProfileId!=originProfile)throw StateError('School profile changed during batch.');
-    for (final collection in _expected.entries) {
-      for (final id in collection.value.keys) {
-        if (!_operations.any((o) => o.collection == collection.key && o.documentId == id))
-          throw StateError('A guarded record must be included in the batch.');
-      }
+    // The storage owner's serialized CAS checks every expected record,
+    // including read-only dependencies of a journal write. Do not require
+    // rewriting the financial originals just to assert their revisions.
+    if (_expected.isNotEmpty && _operations.isEmpty) {
+      throw StateError('A guarded batch must contain a write.');
     }
     await firestore._database.applyOperations(
       _operations,
@@ -1904,14 +1905,25 @@ class _LocalSchoolDatabase {
           ownerCollections = {...ownerScope.keys,'_windows_firebase_outbox',
             '_windows_local_deletions','_windows_recycle_requests'};
         }
-        final root = await _readRoot(collections:ownerCollections ?? {
+        final readCollections=ownerCollections ?? {
           ...operations.map((operation)=>operation.collection),
           '_windows_firebase_outbox','_windows_sync_baselines','_windows_sync_receipts',
           '_windows_sync_conflict_history','_windows_sync_resolution_history',
           '_windows_local_deletions','_windows_recycle_requests',
           if (retiringOwner) ...{'_windows_document_outbox','_local_student_documents','documents',
           'students_directory','teachers_directory',...studentOwnedCollections},
-        },recordScope:ownerScope ?? {for(final name in operations.map((o)=>o.collection).where((n)=>!n.startsWith('_windows_') && !retiringOwner).toSet())name:operations.where((o)=>o.collection==name).map((o)=>o.documentId).toSet().toList()});
+        };
+        final readScope=ownerScope ?? {for(final name in operations.map((o)=>o.collection).where((n)=>!n.startsWith('_windows_') && !retiringOwner).toSet())name:operations.where((o)=>o.collection==name).map((o)=>o.documentId).toSet().toList()};
+        // A read-only CAS dependency must be loaded even when the batch
+        // writes only a journal. Do not narrow existing full collection scans.
+        for(final dependency in expected.entries){
+          if(readCollections.add(dependency.key)){
+            readScope[dependency.key]=dependency.value.keys.toList();
+          }else if(readScope.containsKey(dependency.key)){
+            readScope[dependency.key]={...readScope[dependency.key]!,...dependency.value.keys}.toList();
+          }
+        }
+        final root = await _readRoot(collections:readCollections,recordScope:readScope);
         if(_activeProfileId!=profileAtEnqueue)throw StateError('School profile changed during queued write.');
         final collections = _collections(root);
         for (final collection in expected.entries) {
@@ -2752,7 +2764,7 @@ class _LocalSchoolDatabase {
         final childCollections = <String>{...studentOwnedCollections,
           '_local_student_documents', '_windows_document_outbox'};
         final root = await _readRoot(collections:{collection,'_windows_firebase_outbox',
-          '_windows_sync_conflicts','_windows_sync_conflict_history','_windows_sync_baselines','_windows_recycle_requests','_windows_local_deletions',if(parentId is String)'students_directory',
+          '_windows_sync_conflicts','_windows_sync_conflict_history','_windows_sync_resolution_history','_windows_sync_baselines','_windows_recycle_requests','_windows_local_deletions',if(parentId is String)'students_directory',
           if(freshStudent)...childCollections},recordScope:{collection:[id],if(parentId is String&&collection!='students_directory')'students_directory':[parentId]});
         if (_activeProfileId != origin) throw StateError('School changed during conflict capture.');
         final collections = _collections(root), queue = collections['_windows_firebase_outbox'];
@@ -2848,7 +2860,7 @@ class _LocalSchoolDatabase {
         final replacedGeneration = remote['_syncDeleted'] != true && remoteGeneration is String &&
             remoteGeneration.isNotEmpty && localGeneration != remoteGeneration && current['priorDeletion'] == null;
         if ((remote['_syncDeleted'] == true && current['operation'] != 'delete' || replacedGeneration) &&
-            collection != 'students_directory') {
+            collection != 'students_directory' && !isPayrollFinancialRecord(current)) {
           final restores = collections['_windows_recycle_requests'];
           final localRow = (collections[collection] as Map?)?[id];
           final localTime = localRow is Map ? localRow['_syncUpdatedAt'] : null;
@@ -2931,6 +2943,38 @@ class _LocalSchoolDatabase {
         }
         final localRecords = collections[collection];
         final local = localRecords is Map ? localRecords[id] : null;
+        final baselineEntry=(collections['_windows_sync_baselines'] as Map?)?[queueId];
+        final baselineRecord=baselineEntry is Map?baselineEntry['record']:null;
+        if(collection=='teacher_salary'&&baselineRecord is Map&&local is Map&&current['data'] is Map&&
+            sameSavedRecord(collection,_decodeMap(Map<String,dynamic>.from(local)),current['data'] as Map)){
+          final merged=mergeUnsubmittedSalaryPayments(
+            _decodeMap(Map<String,dynamic>.from(current)),
+            _decodeMap(Map<String,dynamic>.from(baselineRecord)),remote);
+          if(merged!=null){
+            final patch=buildRecordFieldPatch(collection,remote,merged);
+            if(patch!=null){
+              final archive=collections.putIfAbsent('_windows_sync_conflict_history',()=> <String,dynamic>{}) as Map;
+              archive[operationId]=_encodeMap({...current,'verifiedCloud':remote,
+                'resolution':'Unsubmitted payment-only three-way merge; new cloud ACK required'});
+              final nextId=base64Url.encode(List<int>.generate(24,(_)=>Random.secure().nextInt(256))).replaceAll('=','');
+              final audit=collections.putIfAbsent('_windows_sync_resolution_history',()=> <String,dynamic>{}) as Map;
+              audit[nextId]=_encodeMap({'schoolId':school,'originalOperationId':operationId,'queueId':queueId,
+                'local':current,'remote':remote,'choice':'merge','reason':'Distinct append-only payment events within unchanged salary balance',
+                'reviewedAt':DateTime.now().millisecondsSinceEpoch,'status':'awaitingCloudAck'});
+              queue[queueId]=_encodeMap({'operationId':nextId,'schoolId':school,'collection':collection,'documentId':id,
+                'operation':'set','updateIntent':true,'baseCloudRevision':revision,'fieldPatch':patch,'data':merged,
+                'syncState':'pending','retryCount':0,'reviewedFromOperationId':operationId,'queuedAt':DateTime.now().millisecondsSinceEpoch});
+              final baselines=collections.putIfAbsent('_windows_sync_baselines',()=> <String,dynamic>{}) as Map;
+              baselines[queueId]={'revision':revision,'deleted':false,'record':_encodeMap(remote)};
+              localRecords[id]=_encodeMap(merged);
+              _storeCollections(root,collections);await _writeRoot(root);
+              for(final name in [collection,'_windows_firebase_outbox']){
+                final signal=_signals[name];if(signal!=null&&!signal.isClosed)signal.add(null);
+              }
+              completer.complete(false);return;
+            }
+          }
+        }
         final history = collections.putIfAbsent('_windows_sync_conflicts',()=> <String,dynamic>{}) as Map;
         final conflictId = '$operationId-${sha256.convert(utf8.encode(revision))}';
         history[conflictId] = _encodeMap({'schoolId':school,'collection':collection,
@@ -3032,6 +3076,7 @@ class _LocalSchoolDatabase {
           throw StateError('Pending version changed; reopen conflict review.');
         }
         final collection=expected['collection'] as String, id=expected['documentId'] as String;
+        if(isPayrollFinancialRecord(expected))throw StateError('Payroll conflict requires financial ledger reconciliation. Both versions retained; generic local/cloud replacement is disabled.');
         final history=collections.putIfAbsent('_windows_sync_conflict_history',()=> <String,dynamic>{}) as Map;
         final oldOperation=expected['operationId'];
         if(oldOperation is! String || oldOperation.isEmpty)throw StateError('Original operation identity required.');
@@ -3187,6 +3232,15 @@ class _LocalSchoolDatabase {
 
     final previous = queue[key];
     if (previous is Map) _requireRecordSchool(previous);
+    // Financial entries cannot replace an original operation that may have
+    // reached a provider. Only a wholly unsubmitted local snapshot may be
+    // superseded; a proof-safe conflict/receipt owner settles everything else.
+    if(previous is Map && isPayrollFinancialRecord(previous) &&
+        (previous['syncState']!='pending'||previous['retryCount']!=0||
+         ['wireData','wireMode','cloudTicketId','priorCloudWrite','priorDeletion',
+          'atomicBundleId','atomicState','reviewedFromOperationId'].any((field)=>previous[field]!=null))){
+      throw StateError('Original payroll operation requires verified settlement before another edit. No financial change was saved.');
+    }
     if(operation.collection=='students_directory' && !isDelete && finalDocs[operation.documentId] is Map) {
       final data=finalDocs[operation.documentId] as Map;
       final deletions=collections['_windows_local_deletions'];

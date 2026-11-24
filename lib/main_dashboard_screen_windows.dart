@@ -9,6 +9,7 @@ import 'windows_appearance.dart';
 import 'liquid_glass_theme.dart';
 import 'windows_fee_settings_design.dart';
 import 'windows_admin_settings_design.dart';
+import 'windows_admin_security.dart';
 import 'windows_settings_design.dart';
 import 'school_profile_policy.dart';
 import 'student_inventory_policy.dart';
@@ -41,6 +42,8 @@ import 'windows_expense_history.dart';
 import 'windows_expense_receipt_preview.dart';
 import 'windows_school_expense_sync.dart';
 import 'windows_exam_service.dart';
+import 'windows_exam_promotion_center.dart';
+import 'windows_exam_policy.dart';
 import 'windows_exam_history_screen.dart';
 import 'windows_ui_localization.dart';
 import 'windows_preferences_reset.dart';
@@ -61,6 +64,7 @@ import 'windows_backend_bridge.dart';
 import 'windows_sync_engine.dart';
 import 'windows_app_restart.dart';
 import 'dart:convert';
+import 'package:crypto/crypto.dart' as security_crypto;
 import 'windows_html_shim.dart' as html;
 import 'package:pdf/widgets.dart' as pw;
 import 'package:pdf/pdf.dart';
@@ -71,7 +75,7 @@ import 'package:flutter/material.dart' hide Text, InputDecoration;
 import 'windows_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
-import 'package:flutter/foundation.dart' show compute;
+import 'package:flutter/foundation.dart' show compute, kIsWeb;
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'dart:typed_data';
 import 'package:flutter/services.dart';
@@ -270,6 +274,7 @@ const String _windowsStudentRecordsLock = 'student_records';
 const String _windowsFeesCollectionLock = 'fees_collection';
 const String _windowsSchoolExpensesLock = 'school_expenses';
 const String _windowsAttendanceLock = 'attendance';
+const String _windowsExamCenterLock = 'exam_center';
 
 class _WindowsSectionLockDefinition {
   const _WindowsSectionLockDefinition({
@@ -316,6 +321,13 @@ List<_WindowsSectionLockDefinition> get _windowsSectionLockDefinitions => [
     icon: Icons.fact_check_rounded,
     color: WindowsAppearance.foreground(Color(0xFF69C2FF)),
   ),
+  _WindowsSectionLockDefinition(
+    key: _windowsExamCenterLock,
+    title: 'Exam Center',
+    subtitle: 'Exams, marks, results aur report cards ko protect karein.',
+    icon: Icons.assignment_turned_in_rounded,
+    color: WindowsAppearance.foreground(Colors.orangeAccent),
+  ),
 ];
 
 /// Central school authentication and the separate App Lock guard the app.
@@ -323,13 +335,29 @@ List<_WindowsSectionLockDefinition> get _windowsSectionLockDefinitions => [
 class WindowsAdminAccessGate extends StatelessWidget {
   const WindowsAdminAccessGate({super.key,required this.child});
   final Widget child;
-  @override Widget build(BuildContext context){ WindowsAppearance.watch(context); return child; }
+  @override Widget build(BuildContext context){ WindowsAppearance.watch(context); return WindowsAdminSecurityGate(child:child); }
+}
+
+// PBKDF2-HMAC-SHA256 runs off the UI isolate. Existing section passwords
+// migrate after successful verification without changing the user's secret.
+String _deriveSectionLockPassword(Map<String,String> input) {
+  final key=utf8.encode(input['password']!);
+  final salt=base64Url.decode(base64Url.normalize(input['salt']!));
+  final mac=security_crypto.Hmac(security_crypto.sha256,key);
+  var previous=mac.convert([...salt,0,0,0,1]).bytes;
+  final derived=List<int>.from(previous);
+  for(var iteration=1;iteration<120000;iteration++){
+    previous=mac.convert(previous).bytes;
+    for(var i=0;i<derived.length;i++)derived[i]^=previous[i];
+  }
+  return base64Url.encode(derived).replaceAll('=','');
 }
 
 class WindowsSectionLocks {
   WindowsSectionLocks._();
 
   static const WindowsSecureStorage _secure = WindowsSecureStorage();
+  static const String _hashPrefix='pbkdf2-sha256-v1';
 
   static Future<String> _passwordKey(String sectionKey) async {
     final saved=await CentralSchoolCloud.saved();
@@ -343,16 +371,30 @@ class WindowsSectionLocks {
     return 'vidya_saarthi_windows_section_password_enabled_v1_$sectionKey$suffix';
   }
 
+  static Future<String> _hashPassword(String password) async {
+    final secureRandom=Random.secure();
+    final salt=base64Url.encode(List<int>.generate(16,
+      (_)=>secureRandom.nextInt(256))).replaceAll('=','');
+    final value=await compute(_deriveSectionLockPassword,
+      {'password':password,'salt':salt});
+    return '$_hashPrefix:$salt:$value';
+  }
+
+  static bool _constantTimeEquals(String a,String b) {
+    if(a.length!=b.length)return false;
+    var bits=0;
+    for(var i=0;i<a.length;i++)bits |= a.codeUnitAt(i)^b.codeUnitAt(i);
+    return bits==0;
+  }
+
   static Future<bool> configured(String sectionKey) async {
-    final value = await _secure.read(key: await _passwordKey(sectionKey));
-    return value?.trim().isNotEmpty ?? false;
+    final value=await _secure.read(key:await _passwordKey(sectionKey));
+    return value?.isNotEmpty ?? false;
   }
 
   static Future<bool> enabled(String sectionKey) async {
-    if (!await configured(sectionKey)) return false;
-
-    final value = await _secure.read(key: await _enabledKey(sectionKey));
-    // A configured lock without an old enabled flag remains protected.
+    if (!await configured(sectionKey))return false;
+    final value=await _secure.read(key:await _enabledKey(sectionKey));
     return value == null || value == 'true';
   }
 
@@ -360,8 +402,26 @@ class WindowsSectionLocks {
     required String sectionKey,
     required String password,
   }) async {
-    final stored = await _secure.read(key: await _passwordKey(sectionKey));
-    return stored != null && stored.isNotEmpty && stored == password;
+    if(password.isEmpty||password.length>128)return false;
+    final storageKey=await _passwordKey(sectionKey);
+    final stored=await _secure.read(key:storageKey);
+    if(stored==null||stored.isEmpty)return false;
+    if(stored.startsWith('$_hashPrefix:')) {
+      final segments=stored.split(':');
+      if(segments.length!=3||
+          !RegExp(r'^[A-Za-z0-9_-]{22}$').hasMatch(segments[1])||
+          !RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(segments[2]))return false;
+      final candidate=await compute(_deriveSectionLockPassword,
+        {'password':password,'salt':segments[1]});
+      return _constantTimeEquals(candidate,segments[2]);
+    }
+    if(!_constantTimeEquals(stored,password))return false;
+    // A previously saved six-character lock still unlocks; only new
+    // passwords must meet the current minimum length.
+    try {
+      await _secure.write(key:storageKey,value:await _hashPassword(password));
+    } catch (_) {/* Do not lock out a valid legacy credential on migration. */}
+    return true;
   }
 
   static Future<void> addPassword({
@@ -369,16 +429,9 @@ class WindowsSectionLocks {
     required String password,
   }) async {
     _validatePassword(password);
-
-    await _secure.write(
-      key: await _passwordKey(sectionKey),
-      value: password,
-    );
-    // Adding a password turns that section lock ON by default.
-    await _secure.write(
-      key: await _enabledKey(sectionKey),
-      value: 'true',
-    );
+    final secret=await _hashPassword(password);
+    await _secure.write(key:await _passwordKey(sectionKey),value:secret);
+    await _secure.write(key:await _enabledKey(sectionKey),value:'true');
   }
 
   static Future<void> changePassword({
@@ -386,49 +439,30 @@ class WindowsSectionLocks {
     required String currentPassword,
     required String newPassword,
   }) async {
-    final storedPassword = await _secure.read(
-      key: await _passwordKey(sectionKey),
-    );
-
-    if (storedPassword == null || storedPassword.isEmpty) {
+    if(!await configured(sectionKey))
       throw StateError('Pehle section password add karein.');
-    }
-
-    if (storedPassword != currentPassword) {
+    if(!await verify(sectionKey:sectionKey,password:currentPassword))
       throw StateError('Current section password galat hai.');
-    }
-
     _validatePassword(newPassword);
-    await _secure.write(
-      key: await _passwordKey(sectionKey),
-      value: newPassword,
-    );
-    await _secure.write(
-      key: await _enabledKey(sectionKey),
-      value: 'true',
-    );
+    final secret=await _hashPassword(newPassword);
+    await _secure.write(key:await _passwordKey(sectionKey),value:secret);
+    await _secure.write(key:await _enabledKey(sectionKey),value:'true');
   }
 
   static Future<void> setEnabled({
     required String sectionKey,
     required bool value,
   }) async {
-    if (value && !(await configured(sectionKey))) {
+    if(value && !await configured(sectionKey))
       throw StateError('Pehle section password add karein.');
-    }
-
-    await _secure.write(
-      key: await _enabledKey(sectionKey),
-      value: value ? 'true' : 'false',
-    );
+    await _secure.write(key:await _enabledKey(sectionKey),
+      value:value?'true':'false');
   }
 
   static void _validatePassword(String password) {
-    if (password.trim().length < 6) {
+    if(password.length<8||password.length>128||password.trim()!=password)
       throw const FormatException(
-        'Section password kam se kam 6 characters ka hona chahiye.',
-      );
-    }
+        'New section password must contain 8–128 characters without surrounding spaces.');
   }
 }
 
@@ -859,7 +893,24 @@ Future<bool> _requireWindowsSectionPassword(
   String sectionKey,
   String sectionTitle,
 ) async {
-  if (sectionKey == _windowsAdminSectionLock) return true;
+  if (sectionKey == _windowsAdminSectionLock) {
+    // Legacy web portal already signs in through Firebase; Windows App
+    // admin section requires its independent password after the App Lock.
+    // Never call Windows-only secure storage from the web portal.
+    if(kIsWeb)return true;
+    if(await WindowsAdminSecurity.hasPanelSession()) return true;
+    if(!context.mounted)return false;
+    final approval=await requestWindowsAdminApproval(context,
+      scope:'protected-settings',target:'admin_section_access');
+    if(approval==null)return false;
+    try {
+      await WindowsAdminSecurity.consumeApproval(
+        token:approval,scope:'protected-settings',
+        target:'admin_section_access');
+      await WindowsAdminSecurity.grantPanelSession();
+      return true;
+    } catch (_) { return false; }
+  }
   if (!await WindowsSectionLocks.enabled(sectionKey)) return true;
   if (!context.mounted) return false;
 
@@ -1047,6 +1098,7 @@ void _touchPortalSession({Duration? remaining}) {
 }
 
 void _clearPortalSession() {
+  WindowsAdminSecurity.clearPanelSession();
   try {
     final storage = html.window.localStorage;
     storage.remove(_portalSessionRoleKey);
@@ -1540,6 +1592,7 @@ String? _windowsAdminModuleLock(WindowsAdminPage page) => switch (page) {
   WindowsAdminPage.fees => _windowsFeesCollectionLock,
   WindowsAdminPage.expenses => _windowsSchoolExpensesLock,
   WindowsAdminPage.attendance => _windowsAttendanceLock,
+  WindowsAdminPage.exams => _windowsExamCenterLock,
   _ => null,
 };
 String _windowsAdminModuleTitle(WindowsAdminPage page) => WindowsAdminSidebar.entries.firstWhere((e) => e.$1 == page).$2;
@@ -1590,10 +1643,32 @@ class _ExamCenterDataCache {
   static _ExamCenterSnapshot? snapshot;
   static Future<_ExamCenterSnapshot>? _inFlight;
   static String _profile = '';
+  static String _school = '';
+
+  static String get _currentSchool =>
+      FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']
+          ?.toString() ?? '';
+
+  static void _invalidateOnSchoolChange() {
+    final profile = FirebaseFirestore.instance.activeProfileId;
+    final school = _currentSchool;
+    if (_profile != profile || _school != school) {
+      snapshot = null;
+      _inFlight = null;
+      _profile = profile;
+      _school = school;
+    }
+  }
+
+  static _ExamCenterSnapshot? get snapshotForCurrentSchool {
+    _invalidateOnSchoolChange();
+    return snapshot;
+  }
 
   static Future<_ExamCenterSnapshot> refresh({bool force = false}) async {
+    _invalidateOnSchoolChange();
     final profile = FirebaseFirestore.instance.activeProfileId;
-    if (_profile != profile) { snapshot = null; _inFlight = null; _profile = profile; }
+    final school = _currentSchool;
     final cached = snapshot;
     if (!force && cached != null) {
       final age = DateTime.now().difference(cached.loadedAt);
@@ -1609,11 +1684,13 @@ class _ExamCenterDataCache {
 
     try {
       final value = await future;
-      if (_profile != profile) throw StateError('School changed. Refresh the exam screen.');
+      if (_profile != profile || _school != school) {
+        throw StateError('School changed. Refresh the exam screen.');
+      }
       snapshot = value;
       return value;
     } finally {
-      if (_profile == profile) _inFlight = null;
+      if (_profile == profile && _school == school) _inFlight = null;
     }
   }
 
@@ -1646,7 +1723,7 @@ class _ExamCenterDataCache {
               .collection('students_directory')
               .where('class', isEqualTo: className)
               .get();
-          return MapEntry(className, snapshot.docs.length);
+          return MapEntry(className, snapshot.docs.where((doc) => WindowsExamPolicy.activeStudent(doc.data())).length);
         } catch (_) {
           return MapEntry(className, 0);
         }
@@ -6064,14 +6141,11 @@ Widget _buildOverviewCards() {
             title: windowsTr('exam'),
             subtitle: 'Marks, results & report cards',
             accent: Colors.orangeAccent,
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) { WindowsAppearance.watch(context); return  const ExamCenterScreen(); },
-                ),
-              );
-            },
+            onTap: () => _openAdminModule(
+              const ExamCenterScreen(),
+              sectionKey: _windowsExamCenterLock,
+              sectionTitle: 'Exam Center',
+            ),
           ),
 
           _overviewCard(
@@ -14406,6 +14480,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
     String docId,
     Map<String, dynamic> data,
   ) async {
+    String? adminApprovalToken;
     final passwordController =
         TextEditingController();
 
@@ -14463,7 +14538,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                   ),
                   const SizedBox(height: 16),
                    Text(
-                    'App Lock Password daalein:',
+                    'Admin Password daalein:',
                     style: TextStyle(fontFamily: 'Segoe UI', 
                       color: WindowsAppearance.foreground(Colors.white),
                       fontSize: 12,
@@ -14481,7 +14556,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                     decoration:
                         InputDecoration(
                       hintText:
-                          'App Lock Password',
+                          'Admin Password',
                       hintStyle:
                            TextStyle(fontFamily: 'Segoe UI', 
                         color:
@@ -14580,7 +14655,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                             setDialogState(
                               () {
                                 errorText =
-                                    'App Lock Password daalein.';
+                                    'Admin Password daalein.';
                               },
                             );
                             return;
@@ -14596,31 +14671,9 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                           );
 
                           try {
-                            final user =
-                                FirebaseAuth
-                                    .instance
-                                    .currentUser;
-
-                            if (user ==
-                                    null ||
-                                user.email ==
-                                    null) {
-                              throw Exception();
-                            }
-
-                            final credential =
-                                EmailAuthProvider
-                                    .credential(
-                              email:
-                                  user.email!,
-                              password:
-                                  password,
-                            );
-
-                            await user
-                                .reauthenticateWithCredential(
-                              credential,
-                            );
+                            adminApprovalToken=await WindowsAdminSecurity.approve(
+                              password:password,scope:'person-delete',
+                              target:'teachers_directory/$docId');
 
                             if (!mounted) {
                               return;
@@ -14636,7 +14689,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                                 deleting =
                                     false;
                                 errorText =
-                                    'Galat App Lock Password!';
+                                    'Galat Admin Password!';
                               },
                             );
                           }
@@ -14677,6 +14730,9 @@ errorBuilder: (_, __, ___) => _teacherFallback(
     if (confirmed != true) return;
 
     try {
+      await WindowsAdminSecurity.consumeApproval(
+        token:adminApprovalToken ?? '',scope:'person-delete',
+        target:'teachers_directory/$docId');
       final result =
           await _callTeacherApi({
         'action': 'delete_teacher',
@@ -17106,7 +17162,6 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
 
   List<Map<String, dynamic>> _studentExamResults = <Map<String, dynamic>>[];
   bool _studentExamResultsLoading = true;
-  final Set<String> _movingStudentIds = <String>{};
 
   @override
   void initState() {
@@ -17116,7 +17171,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
 
   Future<void> _warmStudentExamResults() async {
     try {
-      final cached = _ExamCenterDataCache.snapshot;
+      final cached = _ExamCenterDataCache.snapshotForCurrentSchool;
       final snapshot = cached ?? await _ExamCenterDataCache.refresh();
       if (!mounted) return;
       setState(() {
@@ -17264,86 +17319,12 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
     return null;
   }
 
-  Future<String> _studentBackendScriptUrl() async {
-    return _windowsDirectoryMutationUrl();
-  }
-
-  Future<Map<String, dynamic>> _postStudentClassChange({
-    required String oldClass,
-    required String newClass,
-    required String rollNo,
-    required String oldStudentId,
-    required String newStudentId,
-    required String movement,
-    Map<String, dynamic>? latestResult,
-  }) async {
-    final response = await WindowsBackendBridge.post(
-      Uri.parse(await _studentBackendScriptUrl()),
-      headers: const {'Content-Type': 'text/plain;charset=utf-8'},
-      body: jsonEncode({
-        'action': 'change_student_class',
-        'oldClass': oldClass,
-        'newClass': newClass,
-        'rollNo': rollNo,
-        'oldStudentId': oldStudentId,
-        'newStudentId': newStudentId,
-        'movement': movement,
-        'examName': latestResult?['examName']?.toString() ?? '',
-        'result': latestResult?['result']?.toString() ?? '',
-        'percentage': latestResult?['percentage'] ?? 0,
-        'updatedBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
-      }),
-    );
-
-    if (response.statusCode != 200) {
-      throw Exception('Google class update failed: ${response.statusCode}');
-    }
-
-    final decoded = jsonDecode(response.body);
-    if (decoded is! Map) {
-      throw Exception('Google class update response invalid hai.');
-    }
-
-    final result = Map<String, dynamic>.from(decoded);
-    if (result['success'] != true) {
-      throw Exception(result['message'] ?? 'Google class update failed');
-    }
-
-    return result;
-  }
-
-  Future<void> _changeStudentClass(String docId, Map<String,dynamic> student, int direction) async {
-    if (_movingStudentIds.contains(docId)) return;
-    final result = _latestExamResultForStudent(docId, student);
-    if (result == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Enter the final exam result before promotion or retention.')));
-      return;
-    }
-    if(result['isFinal']!=true)return;
-    final status = result['result']?.toString().toUpperCase() ?? '';
-    final force = direction > 0 && status == 'FAIL';
-    final decision = direction < 0 ? 'FAIL' : status;
-    var overrideReason='';
-    final yes = await showDialog<bool>(context:context,builder:(ctx){ WindowsAppearance.watch(ctx); return StatefulBuilder(builder:(ctx,setDialog){ WindowsAppearance.watch(ctx); return AlertDialog(
-      title:Text(direction < 0 ? 'Retain in the same class?' : force ? 'Force promote this student?' : 'Apply final exam decision?'),
-      content:Column(mainAxisSize:MainAxisSize.min,children:[Text('${student['name']} • ${student['class']}\nFinal result: $status'),
-        if(force)TextField(maxLength:500,onChanged:(v)=>setDialog(()=>overrideReason=v.trim()),decoration:const InputDecoration(labelText:'Required reason for administrator override'))]),
-      actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),FilledButton(onPressed:force&&overrideReason.isEmpty?null:()=>Navigator.pop(ctx,true),child:const Text('Confirm'))]); }); });
-    if(yes!=true||!mounted)return;
-    setState(()=>_movingStudentIds.add(docId));
-    try {
-      if(direction < 0 && status != 'FAIL')throw StateError('Retention is only for a final-exam FAIL result.');
-      final message=await SchoolPromotionService.apply(studentId:docId,student:student,exam:result,result:decision,force:force,reason:overrideReason);
-      if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text(message)));
-    }catch(e){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('$e')));}
-    finally{if(mounted)setState(()=>_movingStudentIds.remove(docId));}
-  }
-
   Future<void> _deleteStudent(String docId) async {
     final passwordController = TextEditingController();
     bool obscureText = true;
     bool isLoading = false;
     String? errorMessage;
+    String? adminApprovalToken;
 
     final confirm = await showDialog<bool>(
       context: context,
@@ -17370,14 +17351,14 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                     style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white70), fontSize: 13),
                   ),
                   const SizedBox(height: 18),
-                   Text('App Lock Password daalein:', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 12)),
+                   Text('Admin Password daalein:', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 12)),
                   const SizedBox(height: 8),
                   TextField(
                     controller: passwordController,
                     obscureText: obscureText,
                     style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                     decoration: InputDecoration(
-                      hintText: 'Enter App Lock Password',
+                      hintText: 'Enter Admin Password',
                       hintStyle:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.grey), fontSize: 13),
                       filled: true,
                       fillColor: WindowsAppearance.background(const Color(0xFF121B22)),
@@ -17415,16 +17396,12 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                           });
 
                           try {
-                            final user = FirebaseAuth.instance.currentUser;
-                            if (user != null && user.email != null) {
-                              final credential = EmailAuthProvider.credential(email: user.email!, password: pass);
-                              await user.reauthenticateWithCredential(credential);
-                              Navigator.pop(ctx, true);
-                            } else {
-                              setDialogState(() { isLoading = false; errorMessage = 'Admin user nahi mila.'; });
-                            }
+                            adminApprovalToken=await WindowsAdminSecurity.approve(
+                              password:pass, scope:'person-delete',
+                              target:'students_directory/$docId');
+                            if(ctx.mounted) Navigator.pop(ctx,true);
                           } catch (e) {
-                            setDialogState(() { isLoading = false; errorMessage = 'Galat Password!'; });
+                            setDialogState(() { isLoading = false; errorMessage = 'Galat Admin Password!'; });
                           }
                         },
                   child: isLoading
@@ -17441,6 +17418,9 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
     if (confirm != true) return;
 
     try {
+      await WindowsAdminSecurity.consumeApproval(
+        token:adminApprovalToken ?? '',scope:'person-delete',
+        target:'students_directory/$docId');
       final studentsRef =
           FirebaseFirestore.instance.collection('students_directory');
       final studentDoc = await studentsRef.doc(docId).get();
@@ -18139,7 +18119,6 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                         latestResult?['examName']?.toString().trim() ?? '';
                     final classNumber =
                         _studentClassNumber(student['class']);
-                    final isMoving = _movingStudentIds.contains(doc.id);
 
                     return Container(
                       margin: const EdgeInsets.only(bottom: 10),
@@ -18292,80 +18271,19 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                                     ),
                                     OutlinedButton.icon(
                                       style: OutlinedButton.styleFrom(
-                                        foregroundColor:
-                                            WindowsAppearance.primary,
-                                        side: BorderSide(
-                                          color: WindowsAppearance.outline(const Color(0xFF00A884))
-                                              .withOpacity(0.38),
-                                        ),
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 10,
-                                          vertical: 8,
-                                        ),
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(9),
-                                        ),
-                                      ),
-                                      onPressed: isMoving || classNumber >= 12 || latestResult?['isFinal']!=true || resultStatus.toUpperCase()!='FAIL' || student['classMovement']!='RETAINED'
-                                          ? null
-                                          : () => _changeStudentClass(
-                                                doc.id,
-                                                Map<String, dynamic>.from(student),
-                                                1,
-                                              ),
-                                      icon: isMoving
-                                          ? const SizedBox(
-                                              width: 14,
-                                              height: 14,
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                              ),
-                                            )
-                                          : const Icon(
-                                              Icons.trending_up_rounded,
-                                              size: 16,
-                                            ),
-                                      label: const Text(
-                                        'Promote',
-                                        style: TextStyle(fontFamily: 'Segoe UI', 
-                                          fontSize: 10.5,
-                                          fontWeight: FontWeight.w800,
-                                        ),
-                                      ),
-                                    ),
-                                    OutlinedButton.icon(
-                                      style: OutlinedButton.styleFrom(
                                         foregroundColor: WindowsAppearance.primary,
-                                        side: BorderSide(
-                                          color: WindowsAppearance.outline(Colors.orangeAccent)
-                                              .withOpacity(0.34),
-                                        ),
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 10,
-                                          vertical: 8,
-                                        ),
+                                        side: BorderSide(color: WindowsAppearance.outline(
+                                          const Color(0xFF86D6E4).withOpacity(.38))),
+                                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                                         shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(9),
-                                        ),
+                                          borderRadius: BorderRadius.circular(9)),
                                       ),
-                                      onPressed: isMoving || latestResult?['isFinal']!=true || resultStatus.toUpperCase()!='FAIL'
-                                          ? null
-                                          : () => _changeStudentClass(
-                                                doc.id,
-                                                Map<String, dynamic>.from(student),
-                                                -1,
-                                              ),
-                                      icon: const Icon(
-                                        Icons.trending_down_rounded,
-                                        size: 16,
-                                      ),
-                                      label: const Text(
-                                        'Retain',
-                                        style: TextStyle(fontFamily: 'Segoe UI', 
-                                          fontSize: 10.5,
-                                          fontWeight: FontWeight.w800,
-                                        ),
-                                      ),
+                                      onPressed: () => Navigator.push(context,
+                                        MaterialPageRoute<void>(builder: (_) => const ExamCenterScreen())),
+                                      icon: const Icon(Icons.school_outlined, size: 16),
+                                      label: const Text('Promotion in Exam Center',
+                                        style: TextStyle(fontFamily: 'Segoe UI',
+                                          fontSize: 10.5, fontWeight: FontWeight.w800)),
                                     ),
                                   ],
                                 ),
@@ -18503,6 +18421,8 @@ class PasswordManagementScreen extends StatelessWidget {
             constraints: const BoxConstraints(maxWidth: 900),
             child: Column(
               children: const [
+                WindowsAdminPasswordCard(),
+                SizedBox(height:14),
                 _WindowsSectionPasswordLocksPanel(),
               ],
             ),
@@ -18631,18 +18551,26 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       return;
     }
 
+    final adminApprovalToken=await requestWindowsAdminApproval(context,
+      scope:'drive-connection',target:url);
+    if(adminApprovalToken==null || !mounted)return;
     setState(() => _saving = true);
     final origin=FirebaseFirestore.instance.activeProfileId;
     var connectedEmail=email;
     try {
       final managed=await CentralSchoolCloud.saved();
       if(managed['managed']==true){
-        final result=await ManagedSchoolSession.call('managed/storage/connect',{'scriptUrl':url,if(_editingDrive)'replace':true,if(_editingDrive)'expectedScriptUrl':_linkedScript});
+        final result=await ManagedSchoolSession.call('managed/storage/connect',{'scriptUrl':url,if(adminApprovalToken!=null)'adminApprovalToken':adminApprovalToken,if(_editingDrive)'replace':true,if(_editingDrive)'expectedScriptUrl':_linkedScript});
         if(result['googleEmail'] is String) await CentralSchoolCloud.updateSession(managed['schoolId'],{'googleEmail':result['googleEmail']},expectedUid:managed['uid']);
         connectedEmail=result['googleEmail']?.toString()??'';
         await CentralSchoolCloud.updateSession(managed['schoolId'],{'scriptUrl':url},expectedUid:managed['uid']);
         await WindowsSyncEngine.instance.activateCurrentConnections(allowPairing:false);
-      }else{await WindowsSyncEngine.instance.changeGoogleConnection(email:email,scriptUrl:url);}
+      }else{
+        await WindowsAdminSecurity.consumeApproval(
+          token:adminApprovalToken,scope:'drive-connection',target:url);
+        await WindowsSyncEngine.instance.changeGoogleConnection(
+          email:email,scriptUrl:url);
+      }
       if (!mounted || FirebaseFirestore.instance.activeProfileId!=origin) return;
       setState(() {
         _linkedGmail = connectedEmail;
@@ -18686,6 +18614,24 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
 
   Future<void> _unlink() async {
     final origin=FirebaseFirestore.instance.activeProfileId;
+    if(await WindowsAdminSecurity.isManaged) {
+      if(!mounted)return;
+      final approved=await requestWindowsAdminApproval(context,
+        scope:'protected-settings',target:'school_drive_edit');
+      if(approved==null || !mounted ||
+          FirebaseFirestore.instance.activeProfileId!=origin)return;
+      try {
+        await WindowsAdminSecurity.consumeApproval(
+          token:approved,scope:'protected-settings',
+          target:'school_drive_edit');
+        if(mounted && FirebaseFirestore.instance.activeProfileId==origin)
+          setState(() => _editingDrive=true);
+      } catch (error) {
+        if(mounted)ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content:Text('Admin permission failed: $error')));
+      }
+      return;
+    }
     if(!WindowsLocalSecurity.configured){ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Set App Lock in Password Management before changing Drive.')));return;}
     final sure = await showDialog<bool>(
       context: context,
@@ -18724,9 +18670,19 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  const _DriveUnlinkSecurityDialog(); },
     );
     if (verified != true || !mounted || FirebaseFirestore.instance.activeProfileId!=origin) return;
-
-    // Editing does not disconnect or erase the existing school storage.
-    setState(() => _editingDrive=true);
+    final approved=await requestWindowsAdminApproval(context,
+      scope:'protected-settings',target:'school_drive_edit');
+    if(approved==null || !mounted || FirebaseFirestore.instance.activeProfileId!=origin)return;
+    try {
+      await WindowsAdminSecurity.consumeApproval(
+        token:approved,scope:'protected-settings',target:'school_drive_edit');
+      if(!mounted||FirebaseFirestore.instance.activeProfileId!=origin)return;
+      // Editing does not disconnect or erase the existing school storage.
+      setState(() => _editingDrive=true);
+    } catch(error) {
+      if(mounted)ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content:Text('Administrator approval failed: $error')));
+    }
   }
 
   InputDecoration _input(String text, IconData icon) => InputDecoration(
@@ -18999,9 +18955,10 @@ class _WindowsSectionPasswordLocksPanelState
                 setDialogState(() => error = 'Current password required hai.');
                 return;
               }
-              if (next.text.trim().length < 6) {
+              if (next.text.length < 8 || next.text.length > 128 ||
+                  next.text.trim() != next.text) {
                 setDialogState(
-                  () => error = 'Password kam se kam 6 characters ka ho.',
+                  () => error = 'Naya password 8–128 characters ka ho, bina extra spaces.',
                 );
                 return;
               }
@@ -19016,6 +18973,19 @@ class _WindowsSectionPasswordLocksPanelState
               });
 
               try {
+                {
+                  final approved=await requestWindowsAdminApproval(
+                    dialogContext,
+                    scope:'protected-settings',
+                    target:'section-lock/${definition.key}');
+                  if(approved==null) {
+                    if(dialogContext.mounted)setDialogState(() => saving=false);
+                    return;
+                  }
+                  await WindowsAdminSecurity.consumeApproval(
+                    token:approved,scope:'protected-settings',
+                    target:'section-lock/${definition.key}');
+                }
                 if (isChange) {
                   await WindowsSectionLocks.changePassword(
                     sectionKey: definition.key,
@@ -19200,6 +19170,17 @@ class _WindowsSectionPasswordLocksPanelState
 
     setState(() => _busyKey = definition.key);
     try {
+      {
+        final approved=await requestWindowsAdminApproval(context,
+          scope:'protected-settings',target:'section-lock/${definition.key}');
+        if(approved==null) {
+          if(mounted)setState(() => _busyKey=null);
+          return;
+        }
+        await WindowsAdminSecurity.consumeApproval(
+          token:approved,scope:'protected-settings',
+          target:'section-lock/${definition.key}');
+      }
       await WindowsSectionLocks.setEnabled(
         sectionKey: definition.key,
         value: value,
@@ -21188,10 +21169,22 @@ class ExamCenterScreen extends StatefulWidget {
 }
 
 class _ExamCenterScreenState extends State<ExamCenterScreen> {
+  final String _originProfile = FirebaseFirestore.instance.activeProfileId;
+  final String _originSchool = FirebaseFirestore.instance
+      .activeProfileIdentity['schoolSyncId']?.toString() ?? '';
+
+  bool get _sameSchool =>
+      FirebaseFirestore.instance.activeProfileId == _originProfile &&
+      (FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']
+          ?.toString() ?? '') == _originSchool;
+
   bool _loading = false;
   bool _saving = false;
   String? _error;
   int _academicYearRolloverMonth = 1;
+  String _sessionFilter = '';
+  String _classFilter = '';
+  String _selectedPromotionExamId = '';
 
   List<Map<String, dynamic>> _exams = [];
   List<Map<String, dynamic>> _results = [];
@@ -21204,7 +21197,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
   void initState() {
     super.initState();
 
-    final cached = _ExamCenterDataCache.snapshot;
+    final cached = _ExamCenterDataCache.snapshotForCurrentSchool;
     if (cached != null) {
       _exams = List<Map<String, dynamic>>.from(cached.exams);
       _results = List<Map<String, dynamic>>.from(cached.results);
@@ -21251,13 +21244,16 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
             .collection('students_directory')
             .where('class', isEqualTo: className)
             .get();
-        return MapEntry(className, snapshot.docs.length);
+        return MapEntry(className, snapshot.docs.where((doc) => WindowsExamPolicy.activeStudent(doc.data())).length);
       }),
     );
     return Map<String, int>.fromEntries(entries);
   }
 
   Future<void> _load({bool silent = false}) async {
+    final profile = FirebaseFirestore.instance.activeProfileId;
+    final school = FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']
+        ?.toString() ?? '';
     if (!silent && mounted) {
       setState(() {
         _loading = _exams.isEmpty && _results.isEmpty;
@@ -21271,6 +21267,11 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
       final snapshot = await _ExamCenterDataCache.refresh(force: true);
 
       if (!mounted) return;
+      if (FirebaseFirestore.instance.activeProfileId != profile ||
+          (FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']
+              ?.toString() ?? '') != school) {
+        throw StateError('School changed. Reopen Exam Center.');
+      }
       setState(() {
         _exams = List<Map<String, dynamic>>.from(snapshot.exams);
         _results = List<Map<String, dynamic>>.from(snapshot.results);
@@ -21289,23 +21290,40 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
   int _classNumber(String value) =>
       int.tryParse(value.replaceAll(RegExp(r'[^0-9]'), '')) ?? 999999;
 
-  double _number(dynamic value) => value is num
-      ? value.toDouble()
-      : double.tryParse(value?.toString() ?? '') ?? 0;
+  double _number(dynamic value) =>
+      WindowsExamPolicy.finiteNumber(value) ?? 0;
 
   int _timestamp(dynamic value) => value is num
       ? value.toInt()
       : int.tryParse(value?.toString() ?? '') ?? 0;
 
   List<Map<String, dynamic>> _forExam(String examId) => _results
-      .where((e) => e['examId']?.toString() == examId)
+      .where((e) =>
+          e['examId']?.toString() == examId &&
+          e['deleted'] != true &&
+          e['_syncDeleted'] != true)
       .toList();
+
+  List<Map<String, dynamic>> get _visibleExams =>
+      _exams.where((exam) =>
+          exam['deleted'] != true &&
+          exam['_syncDeleted'] != true &&
+          (_sessionFilter.isEmpty ||
+              exam['academicSession']?.toString() == _sessionFilter)).toList();
+
+  List<Map<String, dynamic>> get _visibleResults {
+    final examIds = _visibleExams.map((exam) => exam['examId']?.toString()).toSet();
+    return _results.where((result) =>
+        result['deleted'] != true &&
+        result['_syncDeleted'] != true &&
+        (_sessionFilter.isEmpty ||
+            examIds.contains(result['examId']?.toString()))).toList();
+  }
 
   List<List<Map<String, dynamic>>> _examGroups() {
     final grouped = <String, List<Map<String, dynamic>>>{};
-    for (final exam in _exams) {
-      final displayName = exam['examName']?.toString().trim() ?? 'Exam';
-      final key = displayName.toLowerCase();
+    for (final exam in _visibleExams) {
+      final key = WindowsExamPolicy.groupKey(exam);
       grouped.putIfAbsent(key, () => <Map<String, dynamic>>[]);
       grouped[key]!.add(exam);
     }
@@ -21332,8 +21350,11 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
     return groups;
   }
 
-  int _expectedForExam(Map<String, dynamic> exam) =>
-      _studentCounts[exam['studentClass']?.toString() ?? ''] ?? 0;
+  int _expectedForExam(Map<String, dynamic> exam) {
+    final original = exam['expectedStudentCount'];
+    if (original is int && original >= 0) return original;
+    return _studentCounts[exam['studentClass']?.toString() ?? ''] ?? 0;
+  }
 
   int _pendingForExam(Map<String, dynamic> exam) {
     final expected = _expectedForExam(exam);
@@ -21753,16 +21774,19 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
 
                   final configs = <Map<String, dynamic>>[];
                   for (final className in selectedSorted) {
-                    final subjectList = subjectsByClass[className]!
-                        .text
-                        .split(',')
-                        .map((e) => e.trim())
-                        .where((e) => e.isNotEmpty)
-                        .toList();
-                    final fullMarks = double.tryParse(
+                    List<String> subjectList;
+                    try {
+                      subjectList = WindowsExamPolicy.subjects(
+                        subjectsByClass[className]!.text.split(','),
+                      );
+                    } catch (error) {
+                      setDialogState(() => dialogError = '$className: $error');
+                      return;
+                    }
+                    final fullMarks = WindowsExamPolicy.finiteNumber(
                       fullByClass[className]!.text.trim(),
                     );
-                    final passMarks = double.tryParse(
+                    final passMarks = WindowsExamPolicy.finiteNumber(
                       passByClass[className]!.text.trim(),
                     );
 
@@ -21810,18 +21834,59 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
 
     setState(() => _saving = true);
     var created = 0;
+    final session = _academicYear();
+    final groupId = 'EXGRP-${DateTime.now().microsecondsSinceEpoch}-'
+        '${Random.secure().nextInt(1 << 30)}';
 
     try {
+      // A second exam/class with the same title in this academic session
+      // would make the report history and final-promotion decision ambiguous.
       for (final payload in payloads) {
-        final savedExam = await _post({
-          'action': 'save_exam',
-          ...payload,
-          'createdBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
-        });
-        final savedId=savedExam['examId']?.toString() ?? '';
-        if(savedId.isNotEmpty)await FirebaseFirestore.instance.collection('school_settings').doc('exam_$savedId').set({...payload,'examId':savedId});
-        created++;
+        final duplicate = _exams.any((exam) =>
+            (exam['examName']?.toString().trim().toLowerCase() ?? '') ==
+                (payload['examName']?.toString().trim().toLowerCase() ?? '') &&
+            exam['studentClass'] == payload['studentClass'] &&
+            exam['academicSession'] == session &&
+            exam['deleted'] != true && exam['_syncDeleted'] != true);
+        if (duplicate) {
+          throw StateError('Exam already exists for ${payload['studentClass']} '
+              'in academic session $session.');
+        }
       }
+      // Snapshot the active cohort before Save; new classes have no cache yet.
+      final db = FirebaseFirestore.instance;
+      final profile = db.activeProfileId;
+      final school = db.activeProfileIdentity['schoolSyncId']?.toString() ?? '';
+      final cohortEntries = await Future.wait(
+        payloads.map((payload) async {
+          final className = payload['studentClass']?.toString() ?? '';
+          final students = await db.collection('students_directory')
+              .where('class', isEqualTo: className).get();
+          return MapEntry(className, students.docs
+              .where((doc) => WindowsExamPolicy.activeStudent(doc.data()))
+              .length);
+        }),
+      );
+      if (db.activeProfileId != profile ||
+          (db.activeProfileIdentity['schoolSyncId']?.toString() ?? '') != school) {
+        throw StateError('School changed before exam creation.');
+      }
+      final cohortCounts = Map<String,int>.fromEntries(cohortEntries);
+      final configs = <Map<String,dynamic>>[
+        for (final payload in payloads)
+          {
+            ...payload,
+            'examId': '$groupId-${(payload['studentClass']?.toString() ?? '').replaceAll(' ', '-')}',
+            'examGroupId': groupId,
+            'academicSession': session,
+            'expectedStudentCount':
+                cohortCounts[payload['studentClass']?.toString() ?? ''] ?? 0,
+            'createdBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
+          },
+      ];
+      // A managed school commits all selected classes atomically locally.
+      // No extra school_settings exam copy and no PDF is produced.
+      created = (await WindowsExamService.createClassExamGroup(configs)).length;
       await _load();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -22419,7 +22484,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
 
   Widget _performanceOverview() {
     final byClass = <String, List<double>>{};
-    for (final result in _results) {
+    for (final result in _visibleResults) {
       final className = result['studentClass']?.toString().trim() ?? '';
       if (className.isEmpty) continue;
       byClass.putIfAbsent(className, () => <double>[]);
@@ -22526,7 +22591,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
   }
 
   Widget _recentResults() {
-    final recent = List<Map<String, dynamic>>.from(_results)
+    final recent = List<Map<String, dynamic>>.from(_visibleResults)
       ..sort((a, b) =>
           _timestamp(b['timestamp']).compareTo(_timestamp(a['timestamp'])));
     final items = recent.take(6).toList();
@@ -22560,9 +22625,6 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
           else
             ...items.map((result) {
               final passed = result['result'] == 'PASS';
-              final reportUrl =
-                  result['reportCardUrl']?.toString().trim() ?? '';
-
               return Container(
                 margin: const EdgeInsets.only(bottom: 8),
                 padding: const EdgeInsets.all(11),
@@ -22617,9 +22679,11 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                     if (result.isNotEmpty)
                       IconButton(
                         tooltip: WindowsUiLanguage.translate('Open Report Card'),
-                        onPressed: () async {if(!await WindowsDocumentTemplates.previewReport(context,result))html.window.open(reportUrl, '_blank');},
+                        onPressed: () async {
+                          await WindowsDocumentTemplates.previewReport(context,result);
+                        },
                         icon: Icon(
-                          Icons.picture_as_pdf_rounded,
+                          Icons.visibility_rounded,
                           color: WindowsAppearance.foreground(Colors.orangeAccent),
                           size: 18,
                         ),
@@ -22677,269 +22741,291 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
         ),
       );
 
-  @override
-  Widget build(BuildContext context) {WindowsAppearance.watch(context);
-    final groups = _examGroups();
-    final passTotal = _results.where((e) => e['result'] == 'PASS').length;
-    final failTotal = _results.where((e) => e['result'] == 'FAIL').length;
-    final totalResults = passTotal + failTotal;
-    final passRate = totalResults == 0 ? 0.0 : passTotal / totalResults * 100;
-    final pendingMarks =
-        _exams.fold<int>(0, (sum, exam) => sum + _pendingForExam(exam));
-
-    return Scaffold(
-      backgroundColor: WindowsAppearance.background(const Color(0xFF0B141A)),
-      appBar: AppBar(
-        backgroundColor: WindowsAppearance.background(const Color(0xFF111B22)),
-        elevation: 0,
-        title: const Text(
-          'Exam Center',
-          style: TextStyle(fontFamily: 'Segoe UI', fontWeight: FontWeight.w800),
-        ),
-        actions: [
-          TextButton.icon(
-            onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
-              builder: (_) => const WindowsExamHistoryScreen(),
-            )),
-            icon: const Icon(Icons.history_rounded),
-            label: const Text('History'),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 9),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-              decoration: BoxDecoration(
-                color: WindowsAppearance.background(const Color(0xFF172229)),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.calendar_month_rounded,
-                    color: WindowsAppearance.foreground(Color(0xFF00D9A5)),
-                    size: 15,
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    _academicYear(),
-                    style:  TextStyle(fontFamily: 'Segoe UI', 
-                      color: WindowsAppearance.foreground(Colors.white70),
-                      fontSize: 10,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
+  Widget _examListPanel(List<Map<String, dynamic>> exams, String selectedId,
+      List<List<Map<String, dynamic>>> groups) {
+    final white = WindowsAppearance.foreground(Colors.white);
+    final selected = exams.where((exam) => exam['examId']?.toString() == selectedId).toList();
+    final current = selected.isEmpty ? null : selected.first;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: WindowsAppearance.background(const Color(0xFF213B50)),
+        borderRadius: BorderRadius.circular(17),
+        border: Border.all(color: WindowsAppearance.outline(Colors.white30)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Row(children: [
+          Icon(Icons.layers_rounded, size: 23,
+              color: WindowsAppearance.foreground(const Color(0xFF93DCE7))),
+          const SizedBox(width: 8),
+          Expanded(child: Text('Exam List', style: TextStyle(
+              fontSize: 18, fontWeight: FontWeight.w800, color: white))),
           IconButton(
-            tooltip: WindowsUiLanguage.translate('Refresh'),
-            onPressed: _loading ? null : _load,
-            icon: const Icon(Icons.refresh_rounded),
+            tooltip: 'Create Exam', onPressed: _saving ? null : _createExam,
+            icon: Icon(Icons.add_circle_outline_rounded,
+                color: WindowsAppearance.foreground(const Color(0xFF9EDBE8)))),
+        ]),
+        const SizedBox(height: 4),
+        Text('Select a class exam to manage marks and promotion.',
+            style: TextStyle(fontSize: 10.5,
+                color: WindowsAppearance.foreground(Colors.white60))),
+        const SizedBox(height: 12),
+        Expanded(child: exams.isEmpty
+          ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Icon(Icons.event_note_rounded, size: 42,
+                  color: WindowsAppearance.foreground(const Color(0xFF9FDDE6))),
+              const SizedBox(height: 10),
+              Text('No exams yet', style: TextStyle(
+                  color: white, fontSize: 15, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              FilledButton.icon(onPressed: _saving ? null : _createExam,
+                  icon: const Icon(Icons.add_rounded),
+                  label: const Text('Create First Exam')),
+            ]))
+          : ListView.separated(
+              itemCount: exams.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 8),
+              itemBuilder: (context, index) {
+                final exam = exams[index], id = exam['examId']?.toString() ?? '';
+                final count = _forExam(id).length;
+                final active = id == selectedId;
+                final label = count == 0 ? 'No marks' :
+                    _pendingForExam(exam) == 0 ? 'Marks Ready' : 'In Progress';
+                return InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () => setState(() => _selectedPromotionExamId = id),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: WindowsAppearance.background(active
+                        ? const Color(0xFF2B5768) : const Color(0xFF274258)),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: WindowsAppearance.outline(active
+                        ? const Color(0xFF8CD9E6) : Colors.white24),
+                          width: active ? 1.5 : 1),
+                    ),
+                    child: Row(children: [
+                      Icon(Icons.description_outlined, size: 20,
+                          color: WindowsAppearance.foreground(
+                              active ? const Color(0xFF9FE7EB) : Colors.white70)),
+                      const SizedBox(width: 9),
+                      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(exam['examName']?.toString() ?? 'Exam',
+                              maxLines: 1, overflow: TextOverflow.ellipsis,
+                              style: TextStyle(fontSize: 12.3, fontWeight: FontWeight.w700,
+                                  color: white)),
+                          const SizedBox(height: 4),
+                          Text((exam['studentClass']?.toString() ?? 'Class') +
+                              (exam['isFinal'] == true ? ' • Final Exam' : ''),
+                              style: TextStyle(fontSize: 10.5,
+                                  color: WindowsAppearance.foreground(Colors.white60))),
+                        ])),
+                      const SizedBox(width: 4),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: WindowsAppearance.background(const Color(0xFF1C3A4D)),
+                          borderRadius: BorderRadius.circular(10)),
+                        child: Text(label, style: TextStyle(fontSize: 9.5,
+                            color: WindowsAppearance.foreground(const Color(0xFFACDEE6)))),
+                      ),
+                    ]),
+                  ),
+                );
+              },
+            )),
+        if (current != null) ...[
+          const SizedBox(height: 11),
+          OutlinedButton.icon(
+            onPressed: _saving ? null : () {
+              final group = groups.where((g) =>
+                  g.any((e) => e['examId'] == current['examId'])).toList();
+              _openExamGroup(group.isNotEmpty ? group.first : [current]);
+            },
+            icon: const Icon(Icons.settings_outlined, size: 17),
+            label: const Text('Manage Exam Classes'),
           ),
         ],
+      ]),
+    );
+  }
+
+  Future<void> _showInsights() async {
+    await showDialog<void>(context: context, builder: (ctx) =>
+      AlertDialog(
+        backgroundColor: WindowsAppearance.background(const Color(0xFF1D3449)),
+        title: const Text('Exam Performance & Recent Results'),
+        content: SizedBox(width: 850, child: SingleChildScrollView(
+          child: Column(children: [
+            _performanceOverview(),
+            const SizedBox(height: 12),
+            _recentResults(),
+          ]),
+        )),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx),
+          child: const Text('Close'))],
+      ));
+  }
+
+  @override
+  Widget build(BuildContext context) { WindowsAppearance.watch(context);
+    if (!_sameSchool) return const Scaffold(
+      body: Center(child: Text('School changed. Reopen Exam Center.')));
+    final groups = _examGroups();
+    final exams = _visibleExams;
+    final results = _visibleResults;
+    final sessions = _exams.map((e) => e['academicSession']?.toString() ?? '')
+      .where((s) => s.isNotEmpty).toSet().toList()..sort((a,b) => b.compareTo(a));
+    final classes = exams.map((e) => e['studentClass']?.toString() ?? '')
+      .where((s) => s.isNotEmpty).toSet().toList()
+      ..sort((a,b) => _classNumber(a).compareTo(_classNumber(b)));
+    final candidates = exams.where((e) =>
+        _classFilter.isEmpty || e['studentClass']?.toString() == _classFilter).toList();
+    final selectedItems = candidates.where((e) => e['examId']?.toString() == _selectedPromotionExamId).toList();
+    final selectedExam = selectedItems.isNotEmpty ? selectedItems.first :
+        candidates.where((e) => e['isFinal'] == true).isNotEmpty
+        ? candidates.firstWhere((e) => e['isFinal'] == true)
+        : candidates.isEmpty ? null : candidates.first;
+    final selectedId = selectedExam?['examId']?.toString() ?? '';
+    final finals = exams.where((e) => e['isFinal'] == true).toList();
+    final finalIds = finals.map((e) => e['examId']?.toString()).toSet();
+    final finalResults = results.where((r) => finalIds.contains(r['examId']?.toString()) &&
+        {'PASS','FAIL'}.contains(r['result'])).length;
+    final pending = exams.fold<int>(0, (sum,e) => sum + _pendingForExam(e));
+    final panelResults = results.where((r) => r['examId']?.toString() == selectedId).toList();
+    return Scaffold(
+      backgroundColor: WindowsAppearance.background(const Color(0xFF1C3449)),
+      appBar: AppBar(
+        backgroundColor: WindowsAppearance.background(const Color(0xFF203B50)),
+        title: const Text('Exam Center',
+            style: TextStyle(fontFamily:'Segoe UI',fontWeight:FontWeight.w800)),
+        elevation: 0,
+        actions: [
+          DropdownButton<String>(
+            value: sessions.contains(_sessionFilter) ? _sessionFilter : '',
+            underline: const SizedBox.shrink(),
+            items: [
+              const DropdownMenuItem(value:'',child:Text('All Sessions')),
+              for (final session in sessions)
+                DropdownMenuItem(value:session,child:Text(session)),
+            ],
+            onChanged:(value)=>setState(() {
+              _sessionFilter=value??''; _classFilter=''; _selectedPromotionExamId='';
+            }),
+          ),
+          const SizedBox(width:10),
+          TextButton.icon(
+            onPressed: _showInsights,
+            icon: const Icon(Icons.insights_rounded,size:17),
+            label: const Text('Insights'),
+          ),
+          TextButton.icon(
+            onPressed: ()=>Navigator.of(context).push(MaterialPageRoute<void>(
+              builder:(_)=>const WindowsExamHistoryScreen())),
+            icon:const Icon(Icons.history_rounded,size:17),
+            label:const Text('History'),
+          ),
+          IconButton(tooltip:'Refresh',onPressed:_loading?null:_load,
+              icon:const Icon(Icons.refresh_rounded)),
+          const SizedBox(width:8),
+          Padding(padding:const EdgeInsets.symmetric(vertical:8,horizontal:12),
+            child:FilledButton.icon(
+              onPressed:_saving?null:_createExam,
+              icon:const Icon(Icons.add_rounded),
+              label:const Text('Create Exam'),
+              style:FilledButton.styleFrom(
+                  backgroundColor:WindowsAppearance.primary,
+                  foregroundColor:WindowsAppearance.onPrimary))),
+        ],
       ),
-      body: _loading
-          ? Center(
-              child: CircularProgressIndicator(color: WindowsAppearance.foreground(Color(0xFF00A884))),
-            )
-          : RefreshIndicator(
-                  onRefresh: _load,
-                  color: WindowsAppearance.foreground(const Color(0xFF00A884)),
-                  child: ListView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    padding: const EdgeInsets.fromLTRB(18, 18, 18, 100),
-                    children: [
-                      if (_error != null) ListTile(leading: Icon(Icons.cloud_off, color: WindowsAppearance.foreground(Colors.orange)), title: Text(_error!), trailing: TextButton(onPressed: _load, child: const Text('Retry'))),
-                       Text('Exam records save durably on this PC. Cloud changes sync automatically; offline changes stay pending until acknowledged.', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white60))),
-                      const SizedBox(height: 12),
-                      Container(
-                        padding: const EdgeInsets.all(20),
-                        decoration: BoxDecoration(
-                          gradient:  LinearGradient(
-                            colors: [
-                              WindowsAppearance.resolve(Color(0xFF11343A)),
-                              WindowsAppearance.resolve(Color(0xFF172229)),
-                              WindowsAppearance.resolve(Color(0xFF2A2417)),
-                            ],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: WindowsAppearance.outline(Colors.orangeAccent.withOpacity(0.18)),
-                          ),
-                        ),
-                        child: LayoutBuilder(
-                          builder: (context, constraints) {WindowsAppearance.watch(context);
-                            final compact = constraints.maxWidth < 680;
-                            final intro = Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                 Text(
-                                  'Examination Dashboard',
-                                  style: TextStyle(fontFamily: 'Segoe UI', 
-                                    color: WindowsAppearance.foreground(Colors.white),
-                                    fontSize: 21,
-                                    fontWeight: FontWeight.w900,
-                                  ),
-                                ),
-                                const SizedBox(height: 3),
-                                 Text(
-                                  'Plan • Conduct • Evaluate • Generate Report Cards',
-                                  style: TextStyle(fontFamily: 'Segoe UI', 
-                                    color: WindowsAppearance.foreground(Colors.white54),
-                                    fontSize: 10.5,
-                                  ),
-                                ),
-                                const SizedBox(height: 11),
-                                 Text(
-                                  'Ek Final Exam create karke Class 1–10 ko ek hi exam card ke andar class-wise subjects, full marks aur pass marks ke saath customize karein.',
-                                  style: TextStyle(fontFamily: 'Segoe UI', 
-                                    color: WindowsAppearance.foreground(Colors.white60),
-                                    fontSize: 11,
-                                    height: 1.45,
-                                  ),
-                                ),
-                              ],
-                            );
-                            return intro;
-                          },
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      Wrap(
-                        spacing: 10,
-                        runSpacing: 10,
-                        children: [
-                          _metricCard(
-                            title: 'Total Exams',
-                            value: '${groups.length}',
-                            subtitle: '${_exams.length} class configurations',
-                            icon: Icons.assignment_rounded,
-                            color: WindowsAppearance.foreground(Colors.orangeAccent),
-                          ),
-                          _metricCard(
-                            title: 'Results Entered',
-                            value: '${_results.length}',
-                            subtitle: 'Student result records',
-                            icon: Icons.edit_note_rounded,
-                            color: WindowsAppearance.foreground(const Color(0xFF38A8FF)),
-                          ),
-                          _metricCard(
-                            title: 'Pass Rate',
-                            value: '${passRate.toStringAsFixed(1)}%',
-                            subtitle: '$passTotal pass • $failTotal fail',
-                            icon: Icons.trending_up_rounded,
-                            color: WindowsAppearance.foreground(const Color(0xFF00D9A5)),
-                          ),
-                          _metricCard(
-                            title: 'Pending Marks',
-                            value: '$pendingMarks',
-                            subtitle: 'Student results remaining',
-                            icon: Icons.pending_actions_rounded,
-                            color: WindowsAppearance.foreground(Colors.purpleAccent),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 18),
-                      LayoutBuilder(
-                        builder: (context, constraints) {WindowsAppearance.watch(context);
-                          final wide = constraints.maxWidth >= 980;
-
-                          final main = Container(
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: WindowsAppearance.background(const Color(0xFF111B22)),
-                              borderRadius: BorderRadius.circular(18),
-                              border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: _sectionHeader(
-                                        'Exam Groups',
-                                        'Final Exam / Half Yearly / Unit Test — class-wise settings inside',
-                                        Icons.view_agenda_rounded,
-                                      ),
-                                    ),
-                                    if (groups.isNotEmpty) ...[
-                                      const SizedBox(width: 12),
-                                      ElevatedButton.icon(
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor:
-                                              WindowsAppearance.primary,
-                                          foregroundColor: WindowsAppearance.onPrimary,
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 14,
-                                            vertical: 11,
-                                          ),
-                                        ),
-                                        onPressed:
-                                            _saving ? null : _createExam,
-                                        icon: const Icon(
-                                          Icons.add_rounded,
-                                          size: 17,
-                                        ),
-                                        label: const Text(
-                                          'Create Exam',
-                                          style: TextStyle(fontFamily: 'Segoe UI', 
-                                            fontWeight: FontWeight.w800,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                                const SizedBox(height: 14),
-                                if (groups.isEmpty)
-                                  _emptyState()
-                                else
-                                  ...groups.map(
-                                    (group) => Padding(
-                                      padding: const EdgeInsets.only(bottom: 10),
-                                      child: _examGroupCard(group),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          );
-
-                          final side = Column(
-                            children: [
-                              _performanceOverview(),
-                              const SizedBox(height: 12),
-                              _recentResults(),
-                            ],
-                          );
-
-                          if (!wide) {
-                            return Column(
-                              children: [
-                                main,
-                                const SizedBox(height: 12),
-                                side,
-                              ],
-                            );
-                          }
-
-                          return Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(flex: 7, child: main),
-                              const SizedBox(width: 12),
-                              Expanded(flex: 4, child: side),
-                            ],
-                          );
-                        },
-                      ),
+      body: _loading ? Center(child: CircularProgressIndicator(
+        color:WindowsAppearance.foreground(const Color(0xFF8CDBE7))))
+      : LayoutBuilder(builder:(context,outer) {
+          final narrow=outer.maxWidth<930;
+          return Padding(padding:const EdgeInsets.fromLTRB(16,12,16,12),
+            child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+              if (_error != null) Padding(
+                padding:const EdgeInsets.only(bottom:8),
+                child:Text(_error!,style:const TextStyle(color:Colors.orangeAccent))),
+              Row(children:[
+                Expanded(child:Text(
+                  'Exam records save on this PC. Cloudflare sync runs automatically; PDF is created only on Download.',
+                  maxLines:1,overflow:TextOverflow.ellipsis,
+                  style:TextStyle(fontSize:11.5,
+                      color:WindowsAppearance.foreground(Colors.white70)))),
+                if(classes.isNotEmpty) ...[
+                  const SizedBox(width:8),
+                  DropdownButton<String>(
+                    value:classes.contains(_classFilter)?_classFilter:'',
+                    underline:const SizedBox.shrink(),
+                    items:[
+                      const DropdownMenuItem(value:'',child:Text('All Classes')),
+                      for(final className in classes)
+                        DropdownMenuItem(value:className,child:Text(className)),
                     ],
+                    onChanged:(v)=>setState((){
+                      _classFilter=v??''; _selectedPromotionExamId='';
+                    }),
                   ),
-                ),
+                ],
+              ]),
+              const SizedBox(height:12),
+              LayoutBuilder(builder:(context,width) {
+                final cardWidth=(width.maxWidth-30)/4;
+                if(cardWidth<175)return Wrap(spacing:9,runSpacing:9,children:[
+                  _metricCard(title:'Total Exams',value:groups.length.toString(),
+                    subtitle:'Exam groups',icon:Icons.calendar_month_rounded,
+                    color:WindowsAppearance.foreground(const Color(0xFF8FD7E8))),
+                  _metricCard(title:'Pending Marks',value:pending.toString(),
+                    subtitle:'Results remaining',icon:Icons.pending_actions_rounded,
+                    color:WindowsAppearance.foreground(const Color(0xFFBDA9E4))),
+                  _metricCard(title:'Final Exams',value:finals.length.toString(),
+                    subtitle:'Class configurations',icon:Icons.emoji_events_outlined,
+                    color:WindowsAppearance.foreground(const Color(0xFFF0D189))),
+                  _metricCard(title:'Final Results',value:finalResults.toString(),
+                    subtitle:'Saved for review',icon:Icons.verified_outlined,
+                    color:WindowsAppearance.foreground(const Color(0xFF85DBBB))),
+                ]);
+                return Row(children:[
+                  Expanded(child:_metricCard(title:'Total Exams',value:groups.length.toString(),
+                    subtitle:'Exam groups',icon:Icons.calendar_month_rounded,
+                    color:WindowsAppearance.foreground(const Color(0xFF8FD7E8)))),
+                  const SizedBox(width:10),
+                  Expanded(child:_metricCard(title:'Pending Marks',value:pending.toString(),
+                    subtitle:'Results remaining',icon:Icons.pending_actions_rounded,
+                    color:WindowsAppearance.foreground(const Color(0xFFBDA9E4)))),
+                  const SizedBox(width:10),
+                  Expanded(child:_metricCard(title:'Final Exams',value:finals.length.toString(),
+                    subtitle:'Class configurations',icon:Icons.emoji_events_outlined,
+                    color:WindowsAppearance.foreground(const Color(0xFFF0D189)))),
+                  const SizedBox(width:10),
+                  Expanded(child:_metricCard(title:'Final Results',value:finalResults.toString(),
+                    subtitle:'Saved for review',icon:Icons.verified_outlined,
+                    color:WindowsAppearance.foreground(const Color(0xFF85DBBB)))),
+                ]);
+              }),
+              const SizedBox(height:14),
+              Expanded(child:narrow
+                ? SingleChildScrollView(child:Column(children:[
+                    SizedBox(height:300,child:_examListPanel(candidates,selectedId,groups)),
+                    const SizedBox(height:10),
+                    SizedBox(height:560,child:WindowsExamPromotionCenter(
+                      key:ValueKey(selectedId),exam:selectedExam,results:panelResults,
+                      onOpenMarks: () { if (selectedExam != null) _openMarks(selectedExam); },
+                      onRefresh:_load)),
+                  ]))
+                : Row(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+                    SizedBox(width:(outer.maxWidth*.27).clamp(275.0,345.0).toDouble(),
+                      child:_examListPanel(candidates,selectedId,groups)),
+                    const SizedBox(width:12),
+                    Expanded(child:WindowsExamPromotionCenter(
+                      key:ValueKey(selectedId),exam:selectedExam,results:panelResults,
+                      onOpenMarks: () { if (selectedExam != null) _openMarks(selectedExam); },
+                      onRefresh:_load)),
+                  ])),
+            ]));
+        }),
     );
   }
 }
@@ -22959,6 +23045,15 @@ class ExamMarksEntryScreen extends StatefulWidget {
 
 class _ExamMarksEntryScreenState
     extends State<ExamMarksEntryScreen> {
+  final String _originProfile = FirebaseFirestore.instance.activeProfileId;
+  final String _originSchool = FirebaseFirestore.instance
+      .activeProfileIdentity['schoolSyncId']?.toString() ?? '';
+
+  bool get _sameSchool =>
+      FirebaseFirestore.instance.activeProfileId == _originProfile &&
+      (FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']
+          ?.toString() ?? '') == _originSchool;
+
   bool _loading = true;
   String? _error;
   List<Map<String, dynamic>> _results = [];
@@ -23159,7 +23254,7 @@ class _ExamMarksEntryScreenState
                   : () async {
                       final marks = <String, double>{};
                       for (final subject in _subjects) {
-                        final value = double.tryParse(
+                        final value = WindowsExamPolicy.finiteNumber(
                             controllers[subject]!.text.trim());
                         if (value == null ||
                             value < 0 ||
@@ -23178,10 +23273,32 @@ class _ExamMarksEntryScreenState
 
                       try {
                         doc.reference.requireOriginProfile();
-                        final resultStatus=marks.values.every((m)=>m>=_passMarks)?'PASS':'FAIL';
+                        final validated = WindowsExamPolicy.validateMarks(
+                           marks,
+                           subjects: _subjects,
+                           fullMarks: _fullMarks,
+                           passMarks: _passMarks,
+                         );
+                         final resultStatus =
+                             WindowsExamPolicy.decision(validated, _passMarks);
                         final isFinal=await SchoolPromotionService.isFinal(widget.exam);
                         final total=marks.values.fold<double>(0,(a,b)=>a+b);
-                        final resultData={'examId':_examId,'examName':_examName,'studentId':doc.id,'personId':student['mobileStableId'] ?? doc.id,'studentName':student['name'] ?? '', 'studentClass':_studentClass,'rollNo':student['rollNo'] ?? '', 'marks':marks,'fullMarks':_fullMarks,'passMarks':_passMarks,'totalMarks':total,'percentage':_subjects.isEmpty?0:total/(_subjects.length*_fullMarks)*100,'result':resultStatus,'isFinal':isFinal,'timestamp':DateTime.now().millisecondsSinceEpoch};
+                        final maximum = _subjects.length * _fullMarks;
+                         final resultData={
+                           'examId':_examId,'examName':_examName,
+                           'studentId':doc.id,
+                           'personId':student['mobileStableId'] ?? doc.id,
+                           'studentName':student['name'] ?? '',
+                           'studentClass':_studentClass,
+                           'academicSession':widget.exam['academicSession'],
+                           'rollNo':student['rollNo'] ?? '',
+                           'marks':validated,'fullMarks':_fullMarks,
+                           'passMarks':_passMarks,'totalMarks':total,
+                           'maximum':maximum,
+                           'percentage':maximum<=0 ? 0 : total/maximum*100,
+                           'result':resultStatus,'isFinal':isFinal,
+                           'timestamp':DateTime.now().millisecondsSinceEpoch
+                         };
                         // Record-only Save: PDF is an explicit Download action.
                         doc.reference.requireOriginProfile();
                         final savedResult = await _post({
@@ -23199,13 +23316,10 @@ class _ExamMarksEntryScreenState
                                   'Admin',
                         });
                         doc.reference.requireOriginProfile();
-                        if (savedResult['reportCardUrl'] != null) resultData['reportCardUrl'] = savedResult['reportCardUrl'];
-                        await FirebaseFirestore.instance.collection('exam_results').doc('${_examId}_${doc.id}').set(resultData);
+                        // The Exam Center record already resides in
+                        // exam_center_results. Do not create a second
+                        // independent sync in legacy exam_results.
                         savedOffline = savedResult['windowsLocalFallback'] == true;
-                        if(isFinal){
-                          try{await SchoolPromotionService.apply(studentId:doc.id,student:student,exam:{...widget.exam,'isFinal':true},result:resultStatus);}
-                          catch(e){doc.reference.requireOriginProfile();if((await doc.reference.get()).exists) await doc.reference.set({'promotionPending':true,'promotionError':'$e'},SetOptions(merge:true));}
-                        }
                         if (!ctx.mounted) return;
                         Navigator.pop(ctx, true);
                       } catch (e) {
@@ -23225,7 +23339,7 @@ class _ExamMarksEntryScreenState
                   :  Icon(Icons.save_rounded,
                       color: null, size: 17),
               label: Text(
-                saving ? 'Saving...' : 'Save & Generate Report Card',
+                saving ? 'Saving...' : 'Save Marks',
                 style:  TextStyle(fontFamily: 'Segoe UI', color: null),
               ),
             ),
@@ -23245,7 +23359,8 @@ class _ExamMarksEntryScreenState
         SnackBar(
           backgroundColor: WindowsAppearance.background(const Color(0xFF00A884)),
           content: Text(
-              savedOffline ? 'Marks saved offline. Google report card generation is pending school connection.' : 'Marks saved aur report card Google Drive me generate ho gaya.'),
+              savedOffline ?  'Marks saved locally. Cloudflare sync pending. No PDF generated.'
+                    : 'Marks saved. Cloudflare sync pending. No PDF generated.'),
         ),
       );
     }
@@ -23267,6 +23382,11 @@ class _ExamMarksEntryScreenState
 
   @override
   Widget build(BuildContext context) {WindowsAppearance.watch(context);
+    if (!_sameSchool) {
+      return const Scaffold(
+        body: Center(child: Text('School changed. Reopen marks entry.')),
+      );
+    }
     final pass =
         _results.where((e) => e['result'] == 'PASS').length;
     final fail =
@@ -23342,7 +23462,9 @@ class _ExamMarksEntryScreenState
                     );
                   }
 
-                  final students = snapshot.data?.docs.toList() ?? [];
+                  final students = (snapshot.data?.docs.toList() ?? [])
+                      .where((doc) => WindowsExamPolicy.activeStudent(doc.data()))
+                      .toList();
                   students.sort((a, b) {
                     final ar = int.tryParse(
                             a.data()['rollNo']?.toString() ?? '') ??
@@ -23369,9 +23491,6 @@ class _ExamMarksEntryScreenState
                       final doc = students[index];
                       final student = doc.data();
                       final result = _resultFor(doc.id);
-                      final reportUrl =
-                          result?['reportCardUrl']?.toString().trim() ??
-                              '';
                       final passed = result?['result'] == 'PASS';
 
                       return Container(
@@ -23414,7 +23533,7 @@ class _ExamMarksEntryScreenState
                                   ),
                                   Text(
                                     'Roll ${student['rollNo'] ?? ''}'
-                                    '${result == null ? ' • Marks pending' : ' • ${result['total'] ?? 0}/${result['maximum'] ?? 0} • ${result['percentage'] ?? 0}% • Grade ${result['grade'] ?? ''}'}',
+                                    '${result == null ? ' • Marks pending' : ' • ${result['totalMarks'] ?? result['total'] ?? 0}/${result['maximum'] ?? (_subjects.length * _fullMarks)} • ${result['percentage'] ?? 0}%'}',
                                     style:  TextStyle(fontFamily: 'Segoe UI', 
                                         color: WindowsAppearance.foreground(Colors.white38),
                                         fontSize: 10),
@@ -23445,10 +23564,12 @@ class _ExamMarksEntryScreenState
                               ),
                             if (result != null)
                               IconButton(
-                                tooltip: WindowsUiLanguage.translate('Report Card PDF'),
-                                onPressed: () async {if(!await WindowsDocumentTemplates.previewReport(context,result!))html.window.open(reportUrl, '_blank');},
+                                tooltip: WindowsUiLanguage.translate('Preview Report Card'),
+                                onPressed: () async {
+                                  await WindowsDocumentTemplates.previewReport(context,result!);
+                                },
                                 icon: Icon(
-                                    Icons.picture_as_pdf_rounded,
+                                    Icons.visibility_rounded,
                                     color: WindowsAppearance.foreground(Colors.orangeAccent)),
                               ),
                             ElevatedButton.icon(

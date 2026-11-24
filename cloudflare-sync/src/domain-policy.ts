@@ -41,6 +41,158 @@ function owned(school:string,owner:Json|null):Json {
  if(owner.schoolId!==school)reject('DOMAIN_FOREIGN_OWNER',403);
  return owner;
 }
+// Validate the modern exact-paise ledger at the authoritative CAS boundary.
+// Legacy amount-only rows remain readable and compatible; a modern row must
+// never fall back to the legacy schema to discard its financial history.
+function salaryPaise(value:unknown):number {
+ if(typeof value!=='number'||!Number.isSafeInteger(value)||value<0)reject('SALARY_INVALID_AMOUNT',400);
+ return value;
+}
+function salaryEvents(value:unknown):Json[] {
+ if(value===undefined||value===null)return [];
+ if(!Array.isArray(value)||value.some(v=>!v||typeof v!=='object'||Array.isArray(v)))reject('SALARY_INVALID_HISTORY',400);
+ return value as Json[];
+}
+function salaryCanonical(value:unknown):string {
+ if(Array.isArray(value))return '['+value.map(salaryCanonical).join(',')+']';
+ if(value&&typeof value==='object')return '{'+Object.keys(value).sort().map(k=>JSON.stringify(k)+':'+salaryCanonical((value as Json)[k])).join(',')+'}';
+ return JSON.stringify(value)??'null';
+}
+function salaryAppendOnly(before:Json[],after:Json[]):void {
+ if(after.length<before.length||before.some((event,i)=>salaryCanonical(event)!==salaryCanonical(after[i])))reject('SALARY_HISTORY_IMMUTABLE');
+}
+function salaryEventTotal(row:Json):number {
+ const payments=salaryEvents(row.payments),corrections=salaryEvents(row.paymentCorrections);
+ const effective=new Map<string,number>(),originals=new Map<string,number>(),ids=new Set<string>();
+ for(const p of payments){
+  if(!nonempty(p.id)||ids.has(p.id))reject('SALARY_DUPLICATE_EVENT');
+  const amount=salaryPaise(p.amountPaise);
+  if(!amount)reject('SALARY_INVALID_AMOUNT',400);
+  ids.add(p.id);effective.set(p.id,amount);originals.set(p.id,amount);
+ }
+ for(const c of corrections){
+  if(!nonempty(c.id)||ids.has(c.id)||!nonempty(c.paymentId)||!effective.has(c.paymentId))reject('SALARY_INVALID_CORRECTION');
+  const before=salaryPaise(c.previousPaise),after=salaryPaise(c.correctedPaise);
+  if(before!==effective.get(c.paymentId)||before===after||c.originalPaise!==originals.get(c.paymentId)||c.differencePaise!==after-before)reject('SALARY_INVALID_CORRECTION');
+  ids.add(c.id);effective.set(c.paymentId,after);
+ }
+ return salaryPaise([...effective.values()].reduce((a,b)=>a+b,0));
+}
+function validateSalaryLedger(current:Json|null,next:Json):void {
+ if(next.netPaise===undefined){
+  if(current?.netPaise!==undefined)reject('SALARY_SCHEMA_DOWNGRADE');
+  return;
+ }
+ const net=salaryPaise(next.netPaise),paid=salaryPaise(next.paidPaise),balance=salaryPaise(next.balancePaise===undefined&&(!current||current.balancePaise===undefined)?net-paid:next.balancePaise);
+ if(paid>net||balance!==net-paid)reject('SALARY_BALANCE_MISMATCH');
+ const expectedStatus=paid===net?'Paid':paid===0?'Pending':'Part paid';
+ if(next.status!==expectedStatus)reject('SALARY_STATUS_MISMATCH');
+ if(next.amount!==undefined&&(typeof next.amount!=='number'||Math.round(next.amount*100)!==net))reject('SALARY_NET_MISMATCH');
+ const keys=['basicPaise','allowancePaise','bonusPaise','overtimePaise','deductionPaise'];
+ if(keys.some(k=>next[k]!==undefined)){
+  const amounts=keys.map(k=>salaryPaise(next[k]??0));
+  if(amounts[0]+amounts[1]+amounts[2]+amounts[3]-amounts[4]!==net)reject('SALARY_NET_MISMATCH');
+ }
+ if(next.attendanceAdjustment!==undefined){
+  const adj=next.attendanceAdjustment as Json;
+  if(!adj||typeof adj!=='object'||Array.isArray(adj)||!Array.isArray(adj.unpaidDates)||typeof adj.reason!=='string'||!adj.reason.trim())reject('SALARY_ATTENDANCE_INVALID');
+  const dates=adj.unpaidDates;
+  if(dates.length>31||new Set(dates).size!==dates.length||dates.some(d=>typeof d!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(d)||!d.startsWith(String(next.month)+'-')))reject('SALARY_ATTENDANCE_INVALID');
+  const n=salaryPaise(adj.ratePaise)*dates.length;
+  if((dates.length>0&&n===0)||n!==adj.amountPaise||n>salaryPaise(next.deductionPaise))reject('SALARY_ATTENDANCE_INVALID');
+ }
+ const prior=current&&!current._syncDeleted?current:null;
+ if(prior&&prior.month!==undefined&&prior.month!==next.month)reject('SALARY_MONTH_IMMUTABLE');
+ salaryAppendOnly(salaryEvents(prior?.payments),salaryEvents(next.payments));
+ salaryAppendOnly(salaryEvents(prior?.paymentCorrections),salaryEvents(next.paymentCorrections));
+ const oldLocks=salaryEvents(prior?.salaryLockHistory),newLocks=salaryEvents(next.salaryLockHistory);
+ salaryAppendOnly(oldLocks,newLocks);
+ let locked=prior?.salaryLocked===true;
+ for(const entry of newLocks.slice(oldLocks.length)){
+  if(!nonempty(entry.id)||typeof entry.locked!=='boolean'||entry.locked===locked||!Number.isSafeInteger(entry.at))reject('SALARY_LOCK_HISTORY_INVALID');
+  locked=entry.locked;
+ }
+ if(locked!==(next.salaryLocked===true))reject('SALARY_LOCK_HISTORY_INVALID');
+ if(prior?.salaryLocked===true){
+  if(['basicPaise','allowancePaise','bonusPaise','overtimePaise','deductionPaise','netPaise','amount'].some(k=>prior[k]!==next[k])||
+     salaryCanonical(prior.paymentCorrections??[])!==salaryCanonical(next.paymentCorrections??[])||salaryCanonical(prior.attendanceAdjustment??null)!==salaryCanonical(next.attendanceAdjustment??null))reject('SALARY_LOCKED');
+ }
+
+ // Existing unitemized legacy balances must be retained, not manufactured.
+ let opening=0;
+ if(prior){
+  const priorPaid=prior.paidPaise!==undefined?salaryPaise(prior.paidPaise):
+   String(prior.status).toLowerCase()==='paid'?salaryPaise(prior.netPaise??Math.round(Number(prior.amount??0)*100)):0;
+  opening=priorPaid-salaryEventTotal(prior);
+ }
+ if(opening<0||paid!==opening+salaryEventTotal(next))reject('SALARY_PAYMENT_TOTAL_MISMATCH');
+}
+export function validatePayrollMonth(id:string,current:Json|null,next:Json,operation:string):void {
+ if(operation==='delete'||next._syncDeleted===true)reject('SALARY_MONTH_CONTROL_IMMUTABLE');
+ if(typeof next.month!=='string'||!/^\d{4}-(0[1-9]|1[0-2])$/.test(next.month)||id!=='payroll_month_'+next.month||current&&current.month!==next.month||typeof next.closed!=='boolean')reject('SALARY_MONTH_CONTROL_INVALID');
+ const before=salaryEvents(current?.history),after=salaryEvents(next.history);
+ salaryAppendOnly(before,after);
+ const ids=new Set<string>();
+ let closed=false;
+ for(const e of after){
+  if(!nonempty(e.id)||ids.has(e.id)||typeof e.closed!=='boolean'||e.closed===closed||!Number.isSafeInteger(e.at))reject('SALARY_MONTH_HISTORY_INVALID');
+  ids.add(e.id);closed=e.closed;
+ }
+ if(closed!==next.closed)reject('SALARY_MONTH_HISTORY_INVALID');
+}
+export function validateClosedPayrollMonth(current:Json|null,next:Json,operation:string):void {
+ if(operation==='delete'||!current||current._syncDeleted===true)reject('SALARY_MONTH_CLOSED');
+ const allowed=new Set(current.netPaise===undefined?['updatedAt']:['payments','paidPaise','balancePaise','status','updatedAt','salaryLocked','salaryLockHistory']);
+ const immutable=(row:Json)=>Object.fromEntries(Object.entries(row).filter(([k])=>!allowed.has(k)&&!k.startsWith('_sync')));
+ if(salaryCanonical(immutable(current))!==salaryCanonical(immutable(next)))reject('SALARY_MONTH_CLOSED');
+}
+export function validatePayrollLeave(current:Json|null,next:Json,operation:string,readOwner:(collection:string,id:string)=>Json|null,school:string):void {
+ if(operation==='delete'||next._syncDeleted===true)reject('SALARY_LEAVE_HISTORY_IMMUTABLE');
+ if(!nonempty(next.staffId)||typeof next.month!=='string'||!/^\d{4}-(0[1-9]|1[0-2])$/.test(next.month)||current&&(current.staffId!==next.staffId||current.month!==next.month))reject('SALARY_LEAVE_IDENTITY');
+ if(readOwner('school_settings','payroll_month_'+next.month)?.closed===true)reject('SALARY_MONTH_CLOSED');
+ const staffId=next.staffId,teacher=staffId.startsWith('teacher:');
+ const parentId=teacher?staffId.slice(8):staffId;
+ const owner=owned(school,readOwner(teacher?'teachers_directory':'staff_payroll_directory',parentId));
+ if(owner.id!==parentId||owner.active===false||owner.inactive===true||owner.deleted===true||owner._syncDeleted===true)reject('SALARY_LEAVE_OWNER_RETIRED');
+ boundedJson(next);
+ const before=salaryEvents(current?.events),after=salaryEvents(next.events);
+ salaryAppendOnly(before,after);
+ const ids=new Set<string>(),days=new Map<string,string>();
+ for(const e of after){
+  if(!nonempty(e.id)||ids.has(e.id)||typeof e.date!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(e.date)||!e.date.startsWith(next.month+'-')||
+   !Number.isFinite(Date.parse(e.date))||new Date(e.date).toISOString().slice(0,10)!==e.date||
+   typeof e.kind!=='string'||!['paid','unpaid','cancelled'].includes(e.kind)||days.get(e.date)===e.kind||e.kind==='cancelled'&&!days.has(e.date)||
+   typeof e.reason!=='string'||!e.reason.trim()||e.reason.length>500||!Number.isSafeInteger(e.at))reject('SALARY_LEAVE_EVENT_INVALID');
+  ids.add(e.id);days.set(e.date,e.kind);
+ }
+}
+export function validatePayrollAdvance(id:string,current:Json|null,next:Json,operation:string,readOwner:(collection:string,id:string)=>Json|null,school:string):void {
+ if(!id.startsWith('payroll_advance_'))return;
+ if(operation==='delete'||next._syncDeleted===true)reject('SALARY_ADVANCE_HISTORY_IMMUTABLE');
+ if(!nonempty(next.staffId)||current&&current.staffId!==next.staffId)reject('SALARY_ADVANCE_OWNER_IMMUTABLE');
+ boundedJson(next);
+ const before=salaryEvents(current?.events),after=salaryEvents(next.events);
+ salaryAppendOnly(before,after);
+ let balance=0;
+ const ids=new Set<string>();
+ for(const e of after){
+  if(!nonempty(e.id)||ids.has(e.id)||typeof e.reference!=='string'||!e.reference.trim()||e.reference.length>500||!Number.isSafeInteger(e.recordedAt))reject('SALARY_ADVANCE_EVENT_INVALID');
+  ids.add(e.id);
+  const amount=salaryPaise(e.amountPaise);
+  if(!amount)reject('SALARY_ADVANCE_EVENT_INVALID');
+  if(e.type==='advance'||e.type==='loan')balance+=amount;
+  else if(e.type==='repayment')balance-=amount;
+  else reject('SALARY_ADVANCE_EVENT_INVALID');
+  salaryPaise(balance);
+ }
+ if(balance!==salaryPaise(next.balancePaise))reject('SALARY_ADVANCE_BALANCE_MISMATCH');
+ const staffId=next.staffId;
+ if(!current||after.slice(before.length).some(e=>e.type!=='repayment')){
+  const teacher=staffId.startsWith('teacher:');
+  const owner=owned(school,readOwner(teacher?'teachers_directory':'staff_payroll_directory',teacher?staffId.slice(8):staffId));
+  if(owner.id!==(teacher?staffId.slice(8):staffId)||owner.active===false||owner.inactive===true||owner.deleted===true||owner._syncDeleted===true)reject('SALARY_ADVANCE_OWNER_RETIRED');
+ }
+}
 export function validateDomainCandidate(input:DomainCandidate):void {
  const {schoolId,collection,id,operation,current,next,readOwner}=input;
  if(!domainCollections.has(collection))reject('DOMAIN_COLLECTION_NOT_ADMITTED',412);
@@ -49,9 +201,12 @@ export function validateDomainCandidate(input:DomainCandidate):void {
  boundedJson(next);
  if(operation==='delete'){
   if(next._syncDeleted!==true)reject('DOMAIN_DELETE_UNVERIFIED',400);
+  if(collection==='teacher_salary'&&current&&!current._syncDeleted&&current.netPaise!==undefined&&
+     (Number(current.paidPaise??0)>0||current.salaryLocked===true||salaryEvents(current.salaryLockHistory).length||salaryEvents(current.payments).length||salaryEvents(current.paymentCorrections).length))reject('SALARY_HISTORY_IMMUTABLE');
   return;
  }
  if(next._syncDeleted===true)reject('DOMAIN_INVALID_WRITE',400);
+ if(collection==='teacher_salary')validateSalaryLedger(current,next);
  // A correction edits the original event. It cannot reassign a prior person's
  // payment/payroll history to another generation under the same event key.
  if(current&&!current._syncDeleted&&['fee_payments','fee_ledger','teacher_salary'].includes(collection)){
@@ -151,9 +306,15 @@ export function validateDomainCandidate(input:DomainCandidate):void {
  if(collection==='teacher_salary'&&nonempty(next.staffId)){
   const history=current&&!current._syncDeleted&&['staffId','employeeId','personId','teacherId'].every(key=>current[key]===next[key]);
   if(!history){
-   const staff=owned(schoolId,readOwner('staff_payroll_directory',next.staffId));
-   if(staff.active===false||staff.deleted===true||staff._syncDeleted===true)reject('DOMAIN_STAFF_RETIRED');
-   if(nonempty(staff.employeeId)&&staff.employeeId!==next.employeeId)reject('DOMAIN_STAFF_IDENTITY_MISMATCH');
+   if(next.staffId.startsWith('teacher:')){
+    const teacher=owned(schoolId,readOwner('teachers_directory',next.staffId.slice('teacher:'.length)));
+    if(teacher.id!==next.staffId.slice('teacher:'.length)||teacher.active===false||teacher.inactive===true||teacher.deleted===true||teacher._syncDeleted===true)reject('DOMAIN_TEACHER_RETIRED');
+    if(!nonempty(next.teacherId)||String(teacher.teacherId||teacher.id)!==next.teacherId||next.employeeId!==next.teacherId)reject('DOMAIN_TEACHER_IDENTITY_MISMATCH');
+   }else{
+    const staff=owned(schoolId,readOwner('staff_payroll_directory',next.staffId));
+    if(staff.active===false||staff.deleted===true||staff._syncDeleted===true)reject('DOMAIN_STAFF_RETIRED');
+    if(nonempty(staff.employeeId)&&staff.employeeId!==next.employeeId)reject('DOMAIN_STAFF_IDENTITY_MISMATCH');
+   }
   }
  }
  // An explicit person ID without a parent binding cannot borrow a different
@@ -264,6 +425,54 @@ export function validatePersonCandidate(input:PersonCandidate):void {
   const retired=current?._syncRetiredStudentGenerations||current?.retiredGenerations;
   if(Array.isArray(retired)&&retired.includes(next.mobileStableId))reject('PERSON_GENERATION_RETIRED');
   if(current&&(current._syncDeleted===true||current.deleted===true)&&oldGeneration===next.mobileStableId)reject('PERSON_GENERATION_RETIRED');
+
+  // Promotion never retires a pupil generation. A changed approval must be
+  // a same-person, same-roll, one-class transition. The authoritative Script
+  // path additionally checks the saved Final Exam and individual marks;
+  // native live admission must not silently accept a replacement owner.
+  const tagged=next.promotionExamId!==undefined ||
+      next.promotionTransactionId!==undefined || next.classMovement!==undefined;
+  if(!current&&tagged)reject('PERSON_PROMOTION_REQUIRES_EXISTING_OWNER');
+  if(current){
+   const changed=next.promotionExamId!==current.promotionExamId ||
+     next.promotionTransactionId!==current.promotionTransactionId ||
+     next.classMovement!==current.classMovement ||
+     (current.promotionExamId && (current.class!==next.class ||
+       current.studentClass!==next.studentClass));
+   if(changed){
+    const oldClass=String(current.class??current.studentClass??''),
+      newClass=String(next.class??next.studentClass??'');
+    const cls=(value:string):number=>{
+     const match=/^Class ([1-9]|1[0-2])$/.exec(value);
+     return match?Number(match[1]):0;
+    };
+    const previous=cls(oldClass),following=cls(newClass);
+    const examId=next.promotionExamId;
+    const decision=next.lastExamResult;
+    const movement=next.classMovement;
+    if(!previous||!following||typeof examId!=='string'||!examId||
+       typeof next.promotionTransactionId!=='string'||
+       next.promotionTransactionId!=='promotion:'+examId+':'+id ||
+       next.mobileStableId!==current.mobileStableId ||
+       next.rollNo!==current.rollNo ||
+       String(next.section??'')!==String(current.section??'') ||
+       next.studentClass!==undefined&&next.studentClass!==newClass ||
+       next.previousClass!==undefined&&next.previousClass!==oldClass ||
+       next.promotionPending!==true||next.promotionSyncState!=='Pending')
+      reject('PERSON_PROMOTION_IDENTITY_MISMATCH');
+    const passed=decision==='PASS',failed=decision==='FAIL';
+    if(!(movement==='RETAINED'&&failed&&following===previous ||
+      movement==='GRADUATED'&&passed&&previous===12&&following===12 ||
+      movement==='PROMOTED'&&passed&&previous<12&&following===previous+1 ||
+      movement==='FORCE_PROMOTED'&&failed&&previous<12&&
+        following===previous+1&&current.classMovement==='RETAINED'&&
+        current.promotionExamId===examId&&
+        typeof next.promotionOverrideReason==='string'&&
+        next.promotionOverrideReason.trim().length>0&&
+        next.promotionOverrideReason.length<=500))
+      reject('PERSON_PROMOTION_RULE_MISMATCH');
+   }
+  }
   const nextSlot=slot(next),oldSlot=slot(current);
   for(const peer of readPeers('students_directory')){
    if(peer.schoolId!==schoolId)reject('PERSON_FOREIGN_OWNER',403);

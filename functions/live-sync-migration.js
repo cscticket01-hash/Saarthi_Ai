@@ -78,18 +78,19 @@ function createLiveMigration({db,now=Date.now,drainGraceMs=120000}){
  async function assertActive(school,collection){
   if((await ref(school).get()).data()?.collections?.[collection]?.state!=='active')refuse('LIVE_MIGRATION_NOT_ACTIVE');
  }
- async function live(school,collection,run,request){
-  if(!COLLECTIONS.has(collection))refuse('LIVE_COLLECTION_NOT_ADMITTED');
+ async function live(school,collection,run,request,additionalCollections=[]){
+  const admitted=[collection,...additionalCollections];
+  if(new Set(admitted).size!==admitted.length||admitted.some(name=>!COLLECTIONS.has(name)))refuse('LIVE_COLLECTION_NOT_ADMITTED');
   const r=ref(school);let token=randomUUID();
   await db.runTransaction(async tx=>{
    const state=(await tx.get(r)).data()||{};
-   if(state.nativeCohort?.state==='preparing'&&state.nativeCohort.collections.includes(collection))refuse('LIVE_DEPENDENCY_PREPARING');
-   if(state.collections?.[collection]?.state!=='active')refuse('LIVE_MIGRATION_NOT_ACTIVE');
+   if(state.nativeCohort?.state==='preparing'&&admitted.some(name=>state.nativeCohort.collections.includes(name)))refuse('LIVE_DEPENDENCY_PREPARING');
+   if(admitted.some(name=>state.collections?.[name]?.state!=='active'))refuse('LIVE_MIGRATION_NOT_ACTIVE');
    const liveInflight={...state.liveInflight};
    const operationBinding=request?bindOperation(school,'live',request):null;
-   if(operationBinding){const prior=Object.entries(liveInflight).find(([,marker])=>marker.operationBinding&&canonical(marker.operationBinding)===canonical(operationBinding));if(prior){token=prior[0];liveInflight[token]={...prior[1],activeAttempts:(Number.isSafeInteger(prior[1].activeAttempts)?prior[1].activeAttempts:0)+1};tx.set(r,{...state,liveInflight});return;}}
+   if(operationBinding){const prior=Object.entries(liveInflight).find(([,marker])=>marker.operationBinding&&canonical(marker.operationBinding)===canonical(operationBinding)&&canonical(marker.collections||[marker.collection])===canonical(admitted));if(prior){token=prior[0];liveInflight[token]={...prior[1],activeAttempts:(Number.isSafeInteger(prior[1].activeAttempts)?prior[1].activeAttempts:0)+1};tx.set(r,{...state,liveInflight});return;}}
    if(Object.keys(liveInflight).length>=100)refuse('LIVE_MIGRATION_ADMISSION_BUSY');
-   liveInflight[token]={collection,startedAt:now(),activeAttempts:1,...(operationBinding?{operationBinding}:{})};tx.set(r,{...state,liveInflight});
+   liveInflight[token]={collection,...(additionalCollections.length?{collections:admitted}:{}),startedAt:now(),activeAttempts:1,...(operationBinding?{operationBinding}:{})};tx.set(r,{...state,liveInflight});
   });
   // An uncertain outcome retains its marker. Clearing it on a timeout could
   // allow rollback while a committed Cloudflare write is still being handled.
@@ -114,7 +115,7 @@ function createLiveMigration({db,now=Date.now,drainGraceMs=120000}){
   });
   if(migration.state==='legacy')return {liveProtocol:1,schoolId:school,collection,state:'legacy',...migration.rollbackProof};
   const state=(await r.get()).data()||{};
-  if(Object.values(state.liveInflight||{}).some(item=>item.collection===collection))refuse('LIVE_WRITES_IN_FLIGHT');
+  if(Object.values(state.liveInflight||{}).some(item=>item.collection===collection||item.collections?.includes(collection)))refuse('LIVE_WRITES_IN_FLIGHT');
   if(Object.values(state.inflight||{}).some(item=>item.collection==='*'||item.collection===collection))refuse('LIVE_LEGACY_WRITES_IN_FLIGHT');
   // Only a trusted server-side verifier may supply this proof. It must compare
   // every current record/deletion against school Drive and seal the Worker
@@ -126,7 +127,7 @@ function createLiveMigration({db,now=Date.now,drainGraceMs=120000}){
   await db.runTransaction(async tx=>{
    const state=(await tx.get(r)).data()||{},current=state.collections?.[collection];
    if(current?.state!=='rolling_back'||current.rollbackToken!==migration.rollbackToken)refuse('LIVE_MIGRATION_STATE_CHANGED');
-   if(Object.values(state.liveInflight||{}).some(item=>item.collection===collection))refuse('LIVE_WRITES_IN_FLIGHT');
+   if(Object.values(state.liveInflight||{}).some(item=>item.collection===collection||item.collections?.includes(collection)))refuse('LIVE_WRITES_IN_FLIGHT');
    tx.set(r,{...state,collections:{...state.collections,[collection]:{state:'legacy',rolledBackAt:now(),rollbackProof}}});
   });
   return {liveProtocol:1,schoolId:school,collection,state:'legacy',...rollbackProof};
@@ -149,7 +150,7 @@ function createLiveMigration({db,now=Date.now,drainGraceMs=120000}){
   if(active)return {liveProtocol:1,schoolId:school,state:'active',collections:ordered};
   const current=(await r.get()).data();
   if(now()-current.nativeCohort.startedAt<drainGraceMs)refuse('LIVE_LEGACY_DRAIN_GRACE');
-  const relevant=item=>item.collection==='*'||ordered.includes(item.collection);
+  const relevant=item=>item.collection==='*'||ordered.includes(item.collection)||item.collections?.some(name=>ordered.includes(name));
   if(Object.values(current.inflight||{}).some(relevant))refuse('LIVE_LEGACY_WRITES_IN_FLIGHT');
   if(Object.values(current.liveInflight||{}).some(relevant))refuse('LIVE_WRITES_IN_FLIGHT');
   if(!await drained())refuse('LIVE_LEGACY_DELIVERY_PENDING');
@@ -181,7 +182,7 @@ function createLiveMigration({db,now=Date.now,drainGraceMs=120000}){
   });
   const response={liveProtocol:1,schoolId:school,state:'legacy',collections:ordered};
   if(migration.state==='legacy')return response;
-  const relevant=item=>item.collection==='*'||ordered.includes(item.collection);
+  const relevant=item=>item.collection==='*'||ordered.includes(item.collection)||item.collections?.some(name=>ordered.includes(name));
   const requireIdle=state=>{
    if(Object.values(state.inflight||{}).some(relevant))refuse('LIVE_LEGACY_WRITES_IN_FLIGHT');
    if(Object.values(state.liveInflight||{}).some(relevant))refuse('LIVE_WRITES_IN_FLIGHT');

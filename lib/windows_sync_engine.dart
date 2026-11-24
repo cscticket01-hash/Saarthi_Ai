@@ -12,6 +12,7 @@ import 'windows_person_card_sync.dart';
 import 'windows_connect/atomic_bundle_pilot.dart';
 import 'windows_atomic_person_card_coordinator.dart';
 import 'windows_atomic_financial_coordinator.dart';
+import 'windows_payroll_recovery_pilot.dart';
 import 'windows_id_card_reviews.dart';
 import 'windows_sync_inbox.dart';
 import 'sync_latency_statistics.dart';
@@ -236,6 +237,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           _activeProfileId != profile || _activeSchoolSyncId != school ||
           FirebaseFirestore.instance.activeProfileId != profile) return;
       if (_hasAutomaticWork) scheduleSoon();
+      else if(await WindowsPayrollRecoveryPilot.hasDue(school))scheduleSoon(localMutation:true);
     } catch (_) {
       // A local storage transition is retried on the next existing tick.
     } finally {
@@ -2495,6 +2497,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
                 _activeSchoolSyncId,canAdmit:()=>!isPaused));
             // Actual Windows Exam Center Save uses exam_center_results.
             // Pair that original row with its existing immutable PDF outbox.
+            _admitBatch();
+            await _measure('atomicPayrollRecoveryStage',()=>WindowsPayrollRecoveryPilot.run(_activeSchoolSyncId,canAdmit:()=>!isPaused));
             _admitBatch();
             await _measure('atomicExamMarksheetStage',()=>
               WindowsAtomicFinancialCoordinator.runExam(

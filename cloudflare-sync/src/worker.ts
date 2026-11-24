@@ -87,6 +87,8 @@ export class SyncLane extends DurableObject<Env>{
    demand(liveSchoolEnabled(this.env as Env&{LIVE_SYNC_SCHOOLS?:string;LIVE_SYNC_TEST_SCHOOL_ID?:string},school),'Live authority is not enabled for this school',412);
    initLive(this.ctx.storage);
    if(b.command==='uidSeedTest')demand((this.env as Env&{LIVE_SYNC_TEST_SCHOOL_ID?:string}).LIVE_SYNC_TEST_SCHOOL_ID===school,'UID initialization is restricted to the isolated TEST school',412);
+   if(b.command==='payrollRecoveryPreview'||(['bundleCommit','bundleReceipt'].includes(String(b.command))&&Array.isArray(b.operations)&&b.operations.some(op=>op&&typeof op==='object'&&(op as Json).collection==='teacher_salary')))
+    demand((this.env as Env&{LIVE_SYNC_TEST_SCHOOL_ID?:string}).LIVE_SYNC_TEST_SCHOOL_ID===school,'Payroll recovery bundle is restricted to isolated TEST',412);
    const staged=r2StagingForSchool(this.env,school);
    const budget=()=>this.env.LANES.getByName('saarthi-account-r2-staging-budget-v1');
    if(staged&&b.command==='commit'){
