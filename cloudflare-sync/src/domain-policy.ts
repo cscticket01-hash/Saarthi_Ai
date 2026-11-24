@@ -119,6 +119,25 @@ function validateSalaryLedger(current:Json|null,next:Json):void {
  }
  if(opening<0||paid!==opening+salaryEventTotal(next))reject('SALARY_PAYMENT_TOTAL_MISMATCH');
 }
+export function validatePayrollMonth(id:string,current:Json|null,next:Json,operation:string):void {
+ if(operation==='delete'||next._syncDeleted===true)reject('SALARY_MONTH_CONTROL_IMMUTABLE');
+ if(typeof next.month!=='string'||!/^\d{4}-(0[1-9]|1[0-2])$/.test(next.month)||id!=='payroll_month_'+next.month||current&&current.month!==next.month||typeof next.closed!=='boolean')reject('SALARY_MONTH_CONTROL_INVALID');
+ const before=salaryEvents(current?.history),after=salaryEvents(next.history);
+ salaryAppendOnly(before,after);
+ const ids=new Set<string>();
+ let closed=false;
+ for(const e of after){
+  if(!nonempty(e.id)||ids.has(e.id)||typeof e.closed!=='boolean'||e.closed===closed||!Number.isSafeInteger(e.at))reject('SALARY_MONTH_HISTORY_INVALID');
+  ids.add(e.id);closed=e.closed;
+ }
+ if(closed!==next.closed)reject('SALARY_MONTH_HISTORY_INVALID');
+}
+export function validateClosedPayrollMonth(current:Json|null,next:Json,operation:string):void {
+ if(operation==='delete'||!current||current._syncDeleted===true)reject('SALARY_MONTH_CLOSED');
+ const allowed=new Set(['payments','paidPaise','balancePaise','status','updatedAt','salaryLocked','salaryLockHistory']);
+ const immutable=(row:Json)=>Object.fromEntries(Object.entries(row).filter(([k])=>!allowed.has(k)&&!k.startsWith('_sync')));
+ if(salaryCanonical(immutable(current))!==salaryCanonical(immutable(next)))reject('SALARY_MONTH_CLOSED');
+}
 export function validatePayrollAdvance(id:string,current:Json|null,next:Json,operation:string,readOwner:(collection:string,id:string)=>Json|null,school:string):void {
  if(!id.startsWith('payroll_advance_'))return;
  if(operation==='delete'||next._syncDeleted===true)reject('SALARY_ADVANCE_HISTORY_IMMUTABLE');
