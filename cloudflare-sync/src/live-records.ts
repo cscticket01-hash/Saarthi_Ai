@@ -1,5 +1,6 @@
 import {domainCollections,personCollections,validateDomainCandidate,validatePersonCandidate,validatePayrollAdvance,validatePayrollMonth,validateClosedPayrollMonth,validatePayrollLeave} from './domain-policy';
 import {createHash,randomUUID} from 'node:crypto';
+import {proposePayrollRecovery} from './payroll-recovery';
 import {canonical} from './spool';
 import {demand,schoolPattern} from './protocol';
 import {UniversalUidRegistry,uidNameCode,type PersonCategory} from './universal-uid';
@@ -129,7 +130,7 @@ function retireChildren(storage:DurableObjectStorage,school:string,col:string,id
  }
  return predecessors;
 }
-export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,now=Date.now(),withinBundle=false,verifiedMedia?:Json,bundleId?:string,bundleSize=0,bundleIndex=-1):Json{
+export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,now=Date.now(),withinBundle=false,verifiedMedia?:Json,bundleId?:string,bundleSize=0,bundleIndex=-1,payrollRecoveryPair=false):Json{
  demand(schoolPattern.test(school),'Invalid school');
  const sql=storage.sql,command=b.command,col=String(b.collection||'');
  const collection=()=>demand(liveCollections.has(col),'Collection not admitted to live authority',412);
@@ -460,8 +461,11 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
   }else demand(b.media===undefined&&b.mediaManifestHash===undefined,
     'Media bundle staging not yet verified',412);
   demand(byteLength(JSON.stringify(b))<=256000,'Atomic bundle too large',413);
+  const operations=b.operations as Json[];
+  const payrollPair=!verifiedMedia&&operations.length===2&&operations[0]?.collection==='teacher_salary'&&
+   operations[1]?.collection==='school_settings'&&String(operations[1]?.id||'').startsWith('payroll_advance_');
   const allowed=verifiedMedia?new Set(['students_directory','teachers_directory','fee_payments','fee_ledger','exam_results','exam_center_results','documents']):
-   new Set(['school_notices','school_calendar','school_settings','school_expenses']);
+   new Set(['school_notices','school_calendar','school_settings','school_expenses',...(payrollPair?['teacher_salary']:[])]);
   let archiveFiles:Json[]=[],bundleOwner:Json|undefined;
   if(verifiedMedia){
    const ops=b.operations as Json[];
@@ -584,6 +588,27 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
   return storage.transactionSync(()=>{
    const prior=sql.exec<{fingerprint:string;receipt:string}>('SELECT fingerprint,receipt FROM live_bundles WHERE bundle_id=?',String(b.bundleId)).toArray()[0];
    if(prior){demand(prior.fingerprint===fingerprint,'Atomic bundle replay changed',409);return JSON.parse(prior.receipt) as Json;}
+   if(payrollPair){
+    const [salaryOp,advanceOp]=operations;
+    demand(salaryOp.operation==='write'&&advanceOp.operation==='write','Payroll recovery requires two exact snapshots',409);
+    const original=(operation:Json):Json=>{
+     const stored=sql.exec<Row>('SELECT * FROM live_records WHERE collection=? AND id=?',String(operation.collection),String(operation.id)).toArray()[0];
+     demand(stored&&stored.body&&stored.revision===operation.expectedRevision,'Verified retained payroll baseline required',428);
+     return JSON.parse(stored.body) as Json;
+    };
+    const salary=original(salaryOp),advance=original(advanceOp);
+    demand(typeof salary.staffId==='string'&&advanceOp.id==='payroll_advance_'+createHash('sha256').update(salary.staffId).digest('hex'),'Payroll recovery owner mismatch',409);
+    const proposedSalary=salaryOp.data as Json;
+    const links=proposedSalary?.advanceRecoveries;
+    demand(Array.isArray(links)&&links.length>0,'Payroll recovery link missing',409);
+    const last=links[links.length-1] as Json;
+    demand(last&&typeof last.id==='string'&&typeof last.amountPaise==='number'&&typeof last.reference==='string'&&typeof last.at==='number','Invalid payroll recovery link',409);
+    const pair=proposePayrollRecovery({schoolId:school,salaryId:String(salaryOp.id),advanceId:String(advanceOp.id),
+     salary,advance,amountPaise:last.amountPaise,eventId:last.id,reference:last.reference,at:last.at,
+     monthClosed:findOwner(storage,'school_settings','payroll_month_'+String(salary.month))?.closed===true});
+    demand(canonical(pair.salary)===canonical(proposedSalary)&&canonical(pair.advance)===canonical(advanceOp.data),
+     'Payroll recovery snapshots differ from verified paired proposal',409);
+   }
    // A previously committed single-record operation must never be relabeled
    // as a new atomic bundle: peers could already have seen it independently.
    for(const id of operationIds)demand(
@@ -602,7 +627,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
      ...(verifiedMedia&&index===(b.operations as Json[]).length-1?{data:{...(item.data as Json),bundleMedia:archiveFiles,
        bundleManifestHash:b.mediaManifestHash,bundleId:b.bundleId,
        ...(archiveFiles[0].fileId?{fileId:archiveFiles[0].fileId}:{})}}:{})},
-       now,true,undefined,String(b.bundleId),(b.operations as Json[]).length,index));
+       now,true,undefined,String(b.bundleId),(b.operations as Json[]).length,index,payrollPair));
    // A no-op or offline duplicate can produce no event. It must never
    // count towards the number of visible records promised by a bundle.
    demand(acknowledgements.every(r=>r.unchanged!==true&&r.duplicate!==true),
@@ -658,6 +683,18 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    }
    const readOwner=(collection:string,id:string)=>findOwner(storage,collection,id);
    const readPeers=(collection:string)=>storage.sql.exec<{body:string}>('SELECT body FROM live_record_owners WHERE collection=?',collection).toArray().map(row=>JSON.parse(row.body) as Json);
+   // Linked recovery events can only be introduced by the checked pair.
+   if(col==='teacher_salary'&&!payrollRecoveryPair){
+    demand(canonical(old.advanceRecoveries??[])===canonical(data.advanceRecoveries??[]),'Payroll recovery requires paired transaction',409);
+    if(Array.isArray(old.advanceRecoveries)&&old.advanceRecoveries.length){
+     const recovered=(old.advanceRecoveries as Json[]).reduce((sum,event)=>sum+Number(event.amountPaise),0);
+     demand(b.operation!=='delete'&&typeof data.deductionPaise==='number'&&data.deductionPaise>=recovered,'Payroll recovery deduction must be preserved',409);
+    }
+   }
+   if(col==='school_settings'&&String(b.id).startsWith('payroll_advance_')&&!payrollRecoveryPair){
+    const linked=(value:unknown)=>Array.isArray(value)?value.filter(e=>e&&typeof e==='object'&&e.salaryRecoveryId!==undefined):[];
+    demand(canonical(linked(old.events))===canonical(linked(data.events)),'Payroll recovery requires paired transaction',409);
+   }
    const monthControl=col==='school_settings'&&String(b.id).startsWith('payroll_month_');
    const salaryMonth=col==='teacher_salary'?String(data.month||old.month||''):'';
    if(monthControl)validatePayrollMonth(String(b.id),current?old:null,data,String(b.operation));
@@ -718,6 +755,11 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    // Preserve month-control ordering on the independent Script backup path.
    // A closure follows all already accepted salary revisions for that month;
    // later salary revisions wait for the preceding control revision.
+   if(payrollRecoveryPair&&bundleIndex===1&&bundleId){
+    const previous=sql.exec<{seq:number}>("SELECT seq FROM live_events WHERE bundle_id=? AND bundle_index=0 AND collection='teacher_salary'",bundleId).toArray()[0];
+    demand(previous,'Payroll recovery backup predecessor missing',409);
+    sql.exec('INSERT OR IGNORE INTO live_backup_dependencies VALUES(?,?)',appended.seq,previous.seq);
+   }
    if(monthControl||salaryMonth||leaveControl){
     const pending=monthControl
       ?sql.exec<{seq:number}>("SELECT seq FROM live_backup WHERE (collection='teacher_salary' OR (collection='school_settings' AND id LIKE 'payroll_leave_%')) AND seq<? AND state!='verified' AND json_extract(body,'$.month')=?",appended.seq,String(data.month)).toArray()
