@@ -1665,6 +1665,11 @@ class _ExamCenterDataCache {
     return snapshot;
   }
 
+  static void invalidateAfterMutation() {
+    snapshot = null;
+    _inFlight = null;
+  }
+
   static Future<_ExamCenterSnapshot> refresh({bool force = false}) async {
     _invalidateOnSchoolChange();
     final profile = FirebaseFirestore.instance.activeProfileId;
@@ -1687,10 +1692,13 @@ class _ExamCenterDataCache {
       if (_profile != profile || _school != school) {
         throw StateError('School changed. Refresh the exam screen.');
       }
+      if (!identical(_inFlight, future)) {
+        return refresh(force: true);
+      }
       snapshot = value;
       return value;
     } finally {
-      if (_profile == profile && _school == school) _inFlight = null;
+      if (identical(_inFlight, future)) _inFlight = null;
     }
   }
 
@@ -22080,13 +22088,18 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
         Text('Cannot delete this exam while saved marks/results exist.')));
       return;
     }
+    final db = FirebaseFirestore.instance;
+    final profile = db.activeProfileId;
+    final school = db.activeProfileIdentity['schoolSyncId'];
+    bool sameSchool() => db.activeProfileId == profile &&
+        db.activeProfileIdentity['schoolSyncId'] == school;
     final name = exam['examName']?.toString() ?? 'Exam';
     final className = exam['studentClass']?.toString() ?? 'Class';
     final confirmed = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (ctx) { WindowsAppearance.watch(ctx); return AlertDialog(
-        title: const Text('Delete unused exam?'),
+        title: const Text('Are you sure you want to delete this exam?'),
         content: Text('Delete "$name" for $className? '
           'Only an exam with no saved results can be deleted. '
           'The cloud and other PCs will receive the deletion through existing sync.'),
@@ -22101,9 +22114,25 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
     if (confirmed != true || !mounted) return;
     setState(() => _saving = true);
     try {
+      if (!sameSchool()) return;
+      final target = 'exams/$examId';
+      final approval = await requestWindowsAdminApproval(
+        context, scope: 'protected-settings', target: target,
+      );
+      if (approval == null || !mounted || !sameSchool()) return;
+      await WindowsAdminSecurity.consumeApproval(
+        token: approval, scope: 'protected-settings', target: target,
+      );
+      if (!mounted || !sameSchool()) return;
       await WindowsExamService.deleteUnusedExam(examId);
+      if (!sameSchool()) return;
+      _ExamCenterDataCache.invalidateAfterMutation();
       if (!mounted) return;
-      await _load();
+      setState(() {
+        _exams.removeWhere((row) => row['examId']?.toString() == examId);
+        if (_selectedPromotionExamId == examId) _selectedPromotionExamId = '';
+      });
+      await _load(silent: true);
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Unused exam deleted. Sync will deliver the deletion.')));
     } catch (error) {
