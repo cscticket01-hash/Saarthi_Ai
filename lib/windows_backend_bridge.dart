@@ -161,6 +161,12 @@ class WindowsBackendBridge {
     final amount = payment['installmentAmount'];
     final expected = payment['expectedAmount'];
     final total = payment['totalPaid'];
+    bool exactPaise(num value) {
+      final cents = value.toDouble() * 100;
+      return cents.isFinite && (cents - cents.round()).abs() <= .000001;
+    }
+    final month = payment['month']?.toString() ?? '';
+    final validMonth = RegExp(r'^\d{4}-(0[1-9]|1[0-2])$').hasMatch(month);
     if (amount is! num ||
         !amount.isFinite ||
         amount <= 0 ||
@@ -171,11 +177,16 @@ class WindowsBackendBridge {
         !total.isFinite ||
         !previousPaid.isFinite ||
         previousPaid < 0 ||
+        !exactPaise(amount) || !exactPaise(expected) ||
+        !exactPaise(total) || !exactPaise(previousPaid) ||
+        !validMonth ||
         (total - previousPaid - amount).abs() > .001 ||
         total > expected ||
         ledger['totalPaid'] != total ||
         ledger['lastPaymentId'] != paymentId ||
         ledger['studentId'] != payment['studentId'] ||
+        ledger['personId'] != payment['personId'] ||
+        ledger['feeIdentity'] != payment['feeIdentity'] ||
         ledger['month'] != payment['month'] ||
         ledger['expectedAmount'] != expected ||
         ledger['balance'] != payment['balance'] ||
@@ -193,12 +204,20 @@ class WindowsBackendBridge {
         );
       return; // Same intent retry never creates another receipt or changes balances.
     }
+    if (current != null && current.containsKey('totalPaid') &&
+        current['totalPaid'] is! num) {
+      throw StateError('Existing fee balance is invalid. Review history.');
+    }
     final currentPaid = current?['totalPaid'] is num
         ? (current!['totalPaid'] as num).toDouble()
         : 0.0;
+    final previousOwner = current?['personId']?.toString() ?? '';
+    final paymentOwner = payment['personId']?.toString() ?? '';
     if (currentPaid != previousPaid ||
         current != null &&
-            (current['studentId'] != payment['studentId'] ||
+            (previousOwner.isNotEmpty && previousOwner != paymentOwner &&
+                 previousOwner != payment['studentId'] ||
+                current['studentId'] != payment['studentId'] ||
                 current['month'] != payment['month'] ||
                 current['expectedAmount'] != expected ||
                 (current['feeIdentity'] != null &&

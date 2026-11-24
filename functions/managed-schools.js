@@ -357,7 +357,9 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
      }
      return edgeDelivery.record(m.schoolId,body,record=>signedRequest(m,record));
     }
-   if(body.action==='managed_records_batch')return edgeDelivery.record(m.schoolId,body,record=>signedRequest(m,record));
+   if(body.action==='managed_records_batch'&&body.operations?.some(op=>['fee_payments','fee_ledger'].includes(op?.collection)&&op?.data?.feeBillingPolicyVersion===1))
+     fail(409,'Versioned fee records cannot use a partial-ack batch','FEE_CLOUDFLARE_VALIDATION_REQUIRED');
+    if(body.action==='managed_records_batch')return edgeDelivery.record(m.schoolId,body,record=>signedRequest(m,record));
    if(['managed_upload_resumable','managed_upload'].includes(body.action)){
     // The *entire* resumable session must use the same durable Cloudflare
     // lane. An old Script-only begin followed by an edge part splits offset
@@ -1782,6 +1784,8 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
  if(action==='managed/records/batch'){
   if(Array.isArray(b.operations)&&b.operations.some(op=>op?.collection==='school_config'&&typeof op.id==='string'&&op.id.startsWith('universal_uid_v1_')))fail(403,'UID reservations are server-owned','UID_OWNER_REQUIRED');
   if(!Array.isArray(b.operations)||b.operations.length<1||b.operations.length>10||JSON.stringify(b.operations).length>256000)fail(400,'Invalid record batch');
+  if(b.operations.some(op=>['fee_payments','fee_ledger'].includes(op?.collection)&&op?.data?.feeBillingPolicyVersion===1))
+   fail(409,'Versioned fee records require the Cloudflare financial validation path','FEE_CLOUDFLARE_VALIDATION_REQUIRED');
   const seen=new Set(),operationIds=new Set();
   const operations=b.operations.map(op=>{
    if(!op||!COLLECTIONS.has(op.collection)||['students_directory','teachers_directory','documents','backups'].includes(op.collection)||
@@ -1823,6 +1827,11 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
  if(action==='managed/records'){
   if(b.collection==='school_config'&&b.operation!=='read'&&typeof b.id==='string'&&b.id.startsWith('universal_uid_v1_'))fail(403,'UID reservations are server-owned','UID_OWNER_REQUIRED');
   if(!COLLECTIONS.has(b.collection)||!['read','write','delete','recover'].includes(b.operation))fail(400,'Invalid school collection operation');if(b.operation!=='read'&&(!/^[^/]{1,200}$/.test(b.id||'')||['.','..'].includes(b.id)))fail(400,'Invalid record ID');const data=['write','recover'].includes(b.operation)?{...clean(b.data),schoolId:m.schoolId}:undefined;
+  if(b.operation!=='read'&&['fee_payments','fee_ledger'].includes(b.collection)&&data?.feeBillingPolicyVersion===1){
+   const feeStates=await Promise.all(['students_directory','fee_payments','fee_ledger'].map(collection=>liveMigration.state(m.schoolId,collection)));
+   if(!(allEdge(m.schoolId)&&liveSync.enabled(m.schoolId)&&feeStates.every(state=>state==='active')))
+    fail(503,'Versioned fee writes require active Cloudflare student, payment and ledger baselines; local save retained','FEE_CLOUDFLARE_VALIDATION_REQUIRED');
+  }
   if(b.expectedRevision!==undefined&&(b.collection!=='documents'||typeof b.expectedRevision!=='string'||b.expectedRevision.length>100))fail(400,'Invalid document version');if(b.syncProtocol!==undefined&&b.syncProtocol!==2)fail(400,'Invalid sync protocol');
   if(b.syncProtocol===2&&b.operation!=='read'&&(!/^[A-Za-z0-9_-]{16,100}$/.test(b.operationId||'')||typeof b.expectedRecordRevision!=='string'||b.expectedRecordRevision.length>100))fail(400,'Invalid sync operation');
   if(b.deletedTeacherGeneration!==undefined&&(b.collection!=='teachers_directory'||b.operation!=='delete'||typeof b.deletedTeacherGeneration!=='string'||!b.deletedTeacherGeneration||b.deletedTeacherGeneration.length>200))fail(400,'Invalid teacher deletion generation');

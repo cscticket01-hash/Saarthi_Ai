@@ -48,7 +48,28 @@ class WindowsFeeReceiptPreview {
     return result;
   }
 
-  /// New payments are shown as records; PDF bytes only on Download.
+  /// The receipt PDF is read/generated ONLY after the user presses Print.
+  /// Opening a saved-record preview never invokes [bytes].
+  static Future<void> print(BuildContext context, Map<String, dynamic> payment) {
+    final db = FirebaseFirestore.instance;
+    final profile = db.activeProfileId;
+    final school = db.activeProfileIdentity['schoolSyncId'];
+    final saved = Map<String, dynamic>.from(payment);
+    if (saved['schoolId'] != null && saved['schoolId'] != school) {
+      throw StateError('Another school receipt cannot be printed.');
+    }
+    return showDialog<void>(context: context,
+      builder: (_) => WindowsReceiptPrintDialog(
+        receipt: bytes(saved),
+        title: 'Receipt ${saved['receiptNo'] ?? ''}',
+        subtitle: '${saved['studentName'] ?? ''} • ${saved['month'] ?? ''}',
+        isCurrent: () => profile == db.activeProfileId &&
+            school == db.activeProfileIdentity['schoolSyncId'],
+      ));
+  }
+
+  /// All receipts preview their original saved records without rendering PDF.
+  /// Print and Download are explicit actions and never run on Payment Save.
   static Future<void> open(BuildContext context, Map<String, dynamic> payment) {
     final db = FirebaseFirestore.instance;
     final origin = db.activeProfileId;
@@ -57,29 +78,28 @@ class WindowsFeeReceiptPreview {
     if (saved['schoolId'] != null && saved['schoolId'] != school) {
       throw StateError('Another school receipt cannot be displayed.');
     }
-    final id = saved['receiptDocumentId']?.toString() ?? '';
-    if (id.isNotEmpty) {
-      final receipt = bytes(saved);
-      return showDialog<void>(context: context,
-        builder: (_) => WindowsReceiptPrintDialog(
-          receipt: receipt, title: 'Receipt ${saved['receiptNo'] ?? ''}',
-          subtitle: '${saved['studentName'] ?? ''} • ${saved['month'] ?? ''}',
-          isCurrent: () => origin == db.activeProfileId &&
-              school == db.activeProfileIdentity['schoolSyncId'],
-        ));
-    }
     String field(String key) {
       final value = saved[key]?.toString().trim() ?? '';
       return value.isEmpty ? '—' : value;
     }
-    Widget line(String label, String key) => Padding(
+    Widget lineValue(String label, String value) => Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        SizedBox(width: 110, child: Text(label,
+        SizedBox(width: 125, child: Text(label,
           style: const TextStyle(fontWeight: FontWeight.bold))),
-        Expanded(child: Text(field(key))),
+        Expanded(child: Text(value)),
       ]),
     );
+    Widget line(String label, String key) => lineValue(label, field(key));
+    String money(dynamic value) {
+      final amount = value is num ? value.toDouble() :
+          double.tryParse(value?.toString() ?? '');
+      return amount != null && amount.isFinite
+          ? '₹${amount.toStringAsFixed(2)}' : '—';
+    }
+    final items = saved['feeItems'] is Map
+        ? Map<String, dynamic>.from(saved['feeItems'] as Map)
+        : <String, dynamic>{};
     final safeNo = field('receiptNo').replaceAll(
       RegExp(r'[^A-Za-z0-9._-]+'), '_');
     return showDialog<void>(context: context, builder: (dialog) => AlertDialog(
@@ -95,16 +115,45 @@ class WindowsFeeReceiptPreview {
           line('Roll', 'rollNo'),
           line('Month', 'month'),
           line('Receipt', 'receiptNo'),
-          if (saved.containsKey('paidAmount')) line('Paid', 'paidAmount'),
-          if (saved.containsKey('amount')) line('Amount', 'amount'),
-          if (saved.containsKey('amountPaise')) line('Amount (paise)', 'amountPaise'),
-          if (saved.containsKey('paymentDate')) line('Date', 'paymentDate'),
-          if (saved.containsKey('paymentMode')) line('Payment mode', 'paymentMode'),
+          line('Date', 'dateText'),
+          line('Time', 'timeText'),
+          if (items.isNotEmpty) ...[
+            const Padding(padding: EdgeInsets.only(bottom: 8),
+              child: Text('Fee breakdown',
+                style: TextStyle(fontWeight: FontWeight.bold))),
+            for (final item in items.entries)
+              lineValue(item.key, money(item.value)),
+          ],
+          lineValue('Total fee', money(saved['expectedAmount'])),
+          lineValue('Received now', money(saved['installmentAmount'])),
+          lineValue('Paid to date', money(saved['totalPaid'])),
+          lineValue('Balance due', money(saved['balance'])),
+          line('Status', 'status'),
+          line('Payment mode', 'paymentMode'),
         ]),
       )),
       actions: [
         TextButton(onPressed: () => Navigator.pop(dialog),
           child: const Text('Close')),
+        TextButton.icon(
+          onPressed: () async {
+            if (db.activeProfileId != origin ||
+                db.activeProfileIdentity['schoolSyncId'] != school) {
+              Navigator.pop(dialog);
+              return;
+            }
+            Navigator.pop(dialog);
+            try {
+              if (!context.mounted) return;
+              await print(context, saved);
+            } catch (e) {
+              if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Receipt print error: $e')));
+            }
+          },
+          icon: const Icon(Icons.print_outlined),
+          label: const Text('Print Receipt'),
+        ),
         FilledButton.icon(
           onPressed: () async {
             if (db.activeProfileId != origin ||

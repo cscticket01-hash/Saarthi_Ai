@@ -62,6 +62,83 @@ test('native teacher identities remain reserved after retirement and cannot coll
 });
 
 
+test('one-time fee admission month is generation-bound and immutable',async()=>{
+ const {validatePersonCandidate}=await import('../src/domain-policy.ts');
+ const g='p-'+'a'.repeat(64),n='p-'+'b'.repeat(64);
+ const original={schoolId:school,id:'student-one',mobileStableId:g,class:'Class 1',section:'A',rollNo:'1'};
+ const check=(next,{current=original,id='student-one'}={})=>validatePersonCandidate({
+  schoolId:school,collection:'students_directory',id,operation:'write',
+  current,next:{...original,...next,schoolId:school},readPeers:()=>[original]});
+ assert.doesNotThrow(()=>check({feeAdmissionMonth:'2026-04',feeAdmissionPersonId:g}));
+ assert.throws(()=>check({feeAdmissionMonth:'2026-13',feeAdmissionPersonId:g}),e=>e.code==='PERSON_FEE_ADMISSION_INVALID');
+ assert.throws(()=>check({feeAdmissionMonth:'2026-04'}),e=>e.code==='PERSON_FEE_ADMISSION_INVALID');
+ assert.throws(()=>check({feeAdmissionMonth:'2026-04',feeAdmissionPersonId:n}),e=>e.code==='PERSON_FEE_ADMISSION_INVALID');
+ const locked={...original,feeAdmissionMonth:'2026-04',feeAdmissionPersonId:g};
+ assert.doesNotThrow(()=>check({name:'edited',feeAdmissionMonth:'2026-04',feeAdmissionPersonId:g},{current:locked}));
+ assert.throws(()=>check({feeAdmissionMonth:'2026-05',feeAdmissionPersonId:g},{current:locked}),e=>e.code==='PERSON_FEE_ADMISSION_IMMUTABLE');
+ assert.throws(()=>check({},{current:locked}),e=>e.code==='PERSON_FEE_ADMISSION_IMMUTABLE');
+ assert.doesNotThrow(()=>check({mobileStableId:n,replacesStudentGeneration:g},{current:locked}));
+});
+
+
+test('one-time fee payments require the server-locked student admission month',()=>{
+ const owner={...student,feeAdmissionMonth:'2026-04',feeAdmissionPersonId:'generation-one'};
+ const valid={studentId:'student',personId:'generation-one',month:'2026-04',
+  feeBillingPolicyVersion:1,expectedAmount:150,totalPaid:150,balance:0,status:'PAID',
+  installmentAmount:150,lastPaymentId:'event-one',
+  feeItems:{Admission:150},feeFrequencies:{Admission:'once'},
+  feeAdmissionMonth:'2026-04',feeAdmissionPersonId:'generation-one'};
+ assert.doesNotThrow(()=>run(valid,{owner}));
+ const unversioned={...valid};delete unversioned.feeBillingPolicyVersion;
+ assert.throws(()=>run(unversioned,{owner}),e=>e.code==='DOMAIN_FEE_BILLING_VERSION_REQUIRED');
+ assert.throws(()=>run({...valid,month:'2026-05'},{owner}),e=>e.code==='DOMAIN_FEE_ONCE_NOT_AUTHORIZED');
+ assert.throws(()=>run({...valid,feeAdmissionPersonId:'generation-two'},{owner}),e=>e.code==='DOMAIN_FEE_ONCE_NOT_AUTHORIZED');
+ assert.throws(()=>run({...valid,feeAdmissionMonth:'2026-03'},{owner}),e=>e.code==='DOMAIN_FEE_ONCE_NOT_AUTHORIZED');
+ assert.throws(()=>run({...valid,feeFrequencies:{Admission:'weekly'}},{owner}),e=>e.code==='DOMAIN_FEE_BILLING_FREQUENCY_INVALID');
+ const monthly={...valid,feeFrequencies:{Admission:'monthly'}};
+ delete monthly.feeAdmissionMonth;delete monthly.feeAdmissionPersonId;
+ assert.doesNotThrow(()=>run(monthly,{owner:student}));
+ assert.throws(()=>run({...monthly,feeItems:{Admission:151}},{owner:student}),e=>e.code==='DOMAIN_FEE_ITEMS_TOTAL_MISMATCH');
+});
+
+test('zero admission snapshot permits ordinary monthly payment without admission ownership',()=>{
+ const monthly={studentId:'student',personId:'generation-one',month:'2026-05',
+  feeBillingPolicyVersion:1,expectedAmount:100,totalPaid:100,balance:0,status:'PAID',
+  installmentAmount:100,lastPaymentId:'event-one',
+  feeItems:{Tuition:100,Admission:0},feeFrequencies:{Tuition:'monthly',Admission:'once'}};
+ assert.doesNotThrow(()=>run(monthly));
+ assert.doesNotThrow(()=>run(monthly,{collection:'fee_ledger'}));
+ assert.throws(()=>run({...monthly,feeItems:{Tuition:90,Admission:10}}),
+  e=>e.code==='DOMAIN_FEE_ONCE_NOT_AUTHORIZED');
+});
+
+test('record-only payment pair checks exact prior balance, owner and receipt identity',async()=>{
+ const {validateRecordOnlyFeePair}=await import('../src/domain-policy.ts');
+ const terms={schoolId:school,feeBillingPolicyVersion:1,studentId:'student',
+   personId:'generation-one',feeIdentity:'person:generation-one',month:'2026-05',
+   expectedAmount:125.5,feeItems:{Tuition:125.5},feeFrequencies:{Tuition:'monthly'}};
+ const payment={...terms,paymentId:'payment-one',installmentAmount:50,totalPaid:50,
+   balance:75.5,status:'PARTIAL'};
+ const ledger={...terms,lastPaymentId:'payment-one',totalPaid:50,balance:75.5,status:'PARTIAL'};
+ const input={schoolId:school,paymentId:'payment-one',payment,ledger,currentLedger:null};
+ assert.doesNotThrow(()=>validateRecordOnlyFeePair(input));
+ assert.throws(()=>validateRecordOnlyFeePair({...input,ledger:{...ledger,totalPaid:51}}),
+   e=>e.code==='DOMAIN_FEE_PAIR_MISMATCH');
+ assert.throws(()=>validateRecordOnlyFeePair({...input,ledger:{...ledger,personId:'other'}}),
+   e=>e.code==='DOMAIN_FEE_PAIR_MISMATCH');
+ assert.throws(()=>validateRecordOnlyFeePair({...input,payment:{...payment,receiptDocumentId:'file'}}),
+   e=>e.code==='DOMAIN_FEE_PAIR_INVALID');
+ const secondPayment={...payment,paymentId:'payment-two',installmentAmount:75.5,totalPaid:125.5,
+   balance:0,status:'PAID'};
+ const secondLedger={...ledger,lastPaymentId:'payment-two',totalPaid:125.5,balance:0,status:'PAID'};
+ const second={...input,paymentId:'payment-two',payment:secondPayment,ledger:secondLedger,currentLedger:ledger};
+ assert.doesNotThrow(()=>validateRecordOnlyFeePair(second));
+ assert.throws(()=>validateRecordOnlyFeePair({...second,currentLedger:{...ledger,totalPaid:55}}),
+   e=>e.code==='DOMAIN_FEE_PAIR_STALE_BALANCE');
+ assert.throws(()=>validateRecordOnlyFeePair({...second,currentLedger:{...ledger,feeIdentity:'different'}}),
+   e=>e.code==='DOMAIN_FEE_PAIR_LEDGER_CHANGED');
+});
+
 test('final promotion preserves stable owner and rejects forged or duplicate class movement',async()=>{
  const {validatePersonCandidate}=await import('../src/domain-policy.ts');
  const personId='p-'+'1'.repeat(64);

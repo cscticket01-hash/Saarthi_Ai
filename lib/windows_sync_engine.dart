@@ -3414,6 +3414,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         (canAdmit?.call() ?? true);
     bool independent(Map<String, dynamic> item) =>
         onlyOperationId == null && onlyQueueId == null &&
+        !{'fee_payments', 'fee_ledger'}.contains(item['collection']) &&
         (!independentExistingPersonPatch(item) || WindowsFirebaseRemote.recordFieldPatchSupported) &&
         canParallelStageRecord(item, school,
           edgeDeliverySupported: WindowsFirebaseRemote.edgeDeliverySupported);
@@ -3499,6 +3500,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
               'documents',
               'backups',
               'school_config',
+              'fee_payments',
+              'fee_ledger',
             }.contains(item['collection'])) {
           final next = await WindowsFirebaseRemote.prepareManagedBatch(
             _activeSchoolSyncId,

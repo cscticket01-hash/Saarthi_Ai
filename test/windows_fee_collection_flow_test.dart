@@ -333,7 +333,7 @@ void main() {
     expect(find.byKey(const ValueKey('fees-student-S1')),findsOneWidget);
     expect(find.byKey(const ValueKey('fees-student-S2')),findsOneWidget);
     expect(find.text('WhatsApp Receipt'),findsOneWidget);
-    expect(find.text('Print Receipt'),findsOneWidget);
+    expect(find.text('Preview Receipt'),findsOneWidget);
     expect(tester.takeException(),isNull);
 
     // This is just a local ledger stream update. It must not create/remove
@@ -350,6 +350,11 @@ void main() {
     await flush();
     expect(find.byKey(const ValueKey('fees-student-S1')),findsNothing);
     expect(find.byKey(const ValueKey('fees-student-S2')),findsOneWidget);
+    // Keep the existing not-yet-paid queue intact; partial installments are
+    // selectable from their own tab on the same screen.
+    await tester.tap(find.text('Partial (1)'));
+    await flush();
+    expect(find.byKey(const ValueKey('fees-student-S1')), findsOneWidget);
     expect(find.text('WhatsApp Receipt'),findsOneWidget);
     expect(tester.takeException(),isNull);
     await tester.pumpWidget(const SizedBox());
@@ -418,6 +423,81 @@ void main() {
     expect(unchanged!.data()?['mobileStableId'], isNull, reason: 'Cancel must not mutate student identity');
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
+  });
+
+  test('historical fee sessions and fraction-of-paise inputs are guarded', () async {
+    final earlier = await WindowsFeeStructure.sessionForMonth('2025-04');
+    final later = await WindowsFeeStructure.sessionForMonth('2026-04');
+    expect(earlier, isNot(later));
+    await expectLater(WindowsFeeStructure.sessionForMonth('2026-13'),
+      throwsFormatException);
+    await expectLater(WindowsFeeStructure.save('Class 1', later,
+      {'Tuition': 100.005}), throwsArgumentError);
+  });
+
+  test('record-only fee ledger refuses payment from another student generation', () async {
+    final first = payment('person-first')..['personId'] = 'p-original';
+    await WindowsBackendBridge.collectFeePayment(
+      profileId: db.activeProfileId, paymentId: first['paymentId'] as String,
+      payment: first, ledgerId: 'ledger-S1',
+      ledger: {...ledger(first), 'personId': 'p-original'},
+      previousPaid: 0,
+    );
+    final wrong = payment('person-second', previous: 100)
+      ..['personId'] = 'p-different';
+    await expectLater(WindowsBackendBridge.collectFeePayment(
+      profileId: db.activeProfileId, paymentId: wrong['paymentId'] as String,
+      payment: wrong, ledgerId: 'ledger-S1',
+      ledger: {...ledger(wrong), 'personId': 'p-different'},
+      previousPaid: 100,
+    ), throwsStateError);
+    expect((await db.collection('fee_payments').get()).docs, hasLength(1));
+    expect((await db.collection('fee_ledger').doc('ledger-S1').get())
+        .data()?['personId'], 'p-original');
+  });
+
+  testWidgets('record-only receipt preview offers print and download without PDF at preview',
+      (tester) async {
+    final p = payment('preview-payment')..remove('receiptDocumentId');
+    p['feeItems'] = {'Tuition': 200.0};
+    await tester.pumpWidget(MaterialApp(home: Builder(builder: (context) =>
+      Scaffold(body: TextButton(
+        onPressed: () => WindowsFeeReceiptPreview.open(context, p),
+        child: const Text('Open saved receipt'),
+      )),
+    )));
+    await tester.tap(find.text('Open saved receipt'));
+    await tester.pumpAndSettle();
+    expect(find.text('Received now'), findsOneWidget);
+    expect(find.text('Paid to date'), findsOneWidget);
+    expect(find.text('Balance due'), findsOneWidget);
+    expect(find.text('₹100.00'), findsWidgets);
+    expect(find.text('Print Receipt'), findsOneWidget,
+        reason: 'PDF generation is allowed only after Print is pressed');
+    expect(find.text('Download PDF'), findsOneWidget);
+  });
+
+  testWidgets('original-PDF fee receipt also opens record preview first',
+      (tester) async {
+    final p = payment('original-preview');
+    await tester.pumpWidget(MaterialApp(home: Builder(builder: (context) =>
+      Scaffold(body: TextButton(
+        onPressed: () => WindowsFeeReceiptPreview.open(context, p),
+        child: const Text('Preview original receipt'),
+      )),
+    )));
+    await tester.tap(find.text('Preview original receipt'));
+    await tester.pumpAndSettle();
+    expect(find.text('Received now'), findsOneWidget);
+    expect(find.text('Print Receipt'), findsOneWidget);
+    expect(find.text('Download PDF'), findsOneWidget);
+    // The original PDF has not been fetched, regenerated or queued by preview.
+    final outbox = await tester.runAsync(() =>
+        db.collection('_windows_document_outbox').get());
+    final localDocs = await tester.runAsync(() =>
+        db.collection('_local_student_documents').get());
+    expect(outbox!.docs, isEmpty);
+    expect(localDocs!.docs, isEmpty);
   });
 
 }
