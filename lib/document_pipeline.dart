@@ -318,6 +318,7 @@ class DocumentPipeline {
       final result = await _image({
         'bytes': bytes,
         'autoRotation': rotation,
+        'strictPhotoLimit': true,
         ...options,
       }, scope);
       if ((result['optimized'] as Uint8List).length > DocumentProcessingEngine.photoTarget) {
