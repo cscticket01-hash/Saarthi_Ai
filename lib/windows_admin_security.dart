@@ -131,9 +131,8 @@ class WindowsAdminSecurity {
       revision.value++;
       return;
     }
-    final fresh = await ManagedSchoolSession.freshSchoolPasswordProof(schoolPassword);
     final result = await _call({
-      'operation':'enroll', 'freshIdToken':fresh, 'newPassword':newPassword,
+      'operation':'enroll', 'newPassword':newPassword,
     });
     if(result['configured'] != true) {
       throw StateError('The school Admin Password was not registered.');
@@ -307,8 +306,8 @@ class _WindowsAdminSecurityGateState extends State<WindowsAdminSecurityGate> {
   Future<void> _submit() async {
     if (_busy || _loading) return;
     final pass = _password.text;
-    if ((!_configured || _recover) && (pass.length < 12 || pass.length > 128 || pass != _confirm.text)) {
-      setState(() => _error='Use a matching Admin Password of 12–128 characters.');
+    if ((!_configured || _recover) && (pass.length < 4 || pass.length > 10 || pass != _confirm.text)) {
+      setState(() => _error='Use a matching Admin Password of 4–10 characters.');
       return;
     }
     if((!_configured || _recover) && WindowsLocalSecurity.verifyPassword(pass)) {
@@ -320,9 +319,9 @@ class _WindowsAdminSecurityGateState extends State<WindowsAdminSecurityGate> {
       if (_configured && !_recover) {
         await WindowsAdminSecurity.unlock(pass);
       } else {
-        if(!_legacy && _schoolPassword.text.isEmpty)
+        if(_recover && !_legacy && _schoolPassword.text.isEmpty)
           throw StateError('Enter your school login password.');
-        if(!_legacy && _schoolPassword.text == pass)
+        if(_recover && !_legacy && _schoolPassword.text == pass)
           throw StateError('Admin Password must be different from School Login Password.');
         if(_recover) {
           await WindowsAdminSecurity.recover(
@@ -382,7 +381,7 @@ class _WindowsAdminSecurityGateState extends State<WindowsAdminSecurityGate> {
                 const SizedBox(height:22),
                 if(_loading) const CircularProgressIndicator()
                 else ...[
-                  if(!_legacy && (!_configured || _recover)) ...[
+                  if(!_legacy && _recover) ...[
                     TextField(controller:_schoolPassword,obscureText:true,
                       enabled:!_busy,
                       decoration:const InputDecoration(
@@ -422,11 +421,6 @@ class _WindowsAdminSecurityGateState extends State<WindowsAdminSecurityGate> {
                     _recover=!_recover;
                     _password.clear();_confirm.clear();_schoolPassword.clear();_error=null;
                   }),child:Text(_recover ? 'Back to Admin Password' : 'Forgot Admin Password?')),
-                ],
-                if(!_loading && _error != null) ...[
-                  const SizedBox(height:10),
-                  TextButton(onPressed:_busy ? null : _load,
-                    child:const Text('Retry security connection')),
                 ],
               ]),
             )),
@@ -518,8 +512,8 @@ class _WindowsAdminPasswordCardState extends State<WindowsAdminPasswordCard> {
   }
   Future<void> _save() async {
     if(_busy || _configured == null)return;
-    if(_next.text.length<12 || _next.text.length>128 || _next.text != _confirm.text) {
-      setState(() => _message='Use 12–128 characters and matching passwords.');
+    if(_next.text.length<4 || _next.text.length>10 || _next.text != _confirm.text) {
+      setState(() => _message='Use 4–10 characters and matching passwords.');
       return;
     }
     if(WindowsLocalSecurity.verifyPassword(_next.text)) {
@@ -556,7 +550,7 @@ class _WindowsAdminPasswordCardState extends State<WindowsAdminPasswordCard> {
       const SizedBox(height:14),
       if (_configured == null)
         TextButton(onPressed: _loadStatus, child: Text(_message ?? 'Checking status…')),
-      if (_configured != null && (_managed || _configured == true))
+      if (_configured == true)
       TextField(controller:_current,obscureText:true,enabled:!_busy,
         decoration:InputDecoration(labelText:_recover || _configured == false
           ? 'School Login Password (recovery)' : 'Current Admin Password')),
