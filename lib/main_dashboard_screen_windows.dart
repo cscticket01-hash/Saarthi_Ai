@@ -22111,15 +22111,10 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
     }
   }
 
-  Future<void> _deleteUnusedExam(Map<String, dynamic> exam) async {
+  Future<void> _deleteExamWithResults(Map<String, dynamic> exam) async {
     if (_saving) return;
     final examId = exam['examId']?.toString() ?? '';
-    final saved = _forExam(examId).length;
-    if (examId.isEmpty || saved > 0) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:
-        Text('Cannot delete this exam while saved marks/results exist.')));
-      return;
-    }
+    if (examId.isEmpty) return;
     final db = FirebaseFirestore.instance;
     final profile = db.activeProfileId;
     final school = db.activeProfileIdentity['schoolSyncId'];
@@ -22133,7 +22128,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
       builder: (ctx) { WindowsAppearance.watch(ctx); return AlertDialog(
         title: const Text('Are you sure you want to delete this exam?'),
         content: Text('Delete "$name" for $className? '
-          'Only an exam with no saved results can be deleted. '
+          'This also deletes saved marks and results for this class exam. '
           'The cloud and other PCs will receive the deletion through existing sync.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false),
@@ -22156,17 +22151,18 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
         token: approval, scope: 'protected-settings', target: target,
       );
       if (!mounted || !sameSchool()) return;
-      await WindowsExamService.deleteUnusedExam(examId);
+      await WindowsExamService.deleteExamWithResults(examId);
       if (!sameSchool()) return;
       _ExamCenterDataCache.invalidateAfterMutation();
       if (!mounted) return;
       setState(() {
         _exams.removeWhere((row) => row['examId']?.toString() == examId);
+        _results.removeWhere((row) => row['examId']?.toString() == examId);
         if (_selectedPromotionExamId == examId) _selectedPromotionExamId = '';
       });
       await _load(silent: true);
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Unused exam deleted. Sync will deliver the deletion.')));
+        const SnackBar(content: Text('Exam and saved results deleted on this PC. Sync is pending.')));
     } catch (error) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text('Delete blocked: $error')));
@@ -22317,14 +22313,12 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                             ),
                             IconButton(
                               key: ValueKey('delete-exam-$id'),
-                              tooltip: results.isNotEmpty
-                                  ? 'Saved marks: delete blocked'
-                                  : 'Delete unused class exam',
-                              onPressed: _saving || results.isNotEmpty
+                              tooltip: 'Delete class exam and its results',
+                              onPressed: _saving
                                   ? null
                                   : () {
                                       Navigator.pop(dialogContext);
-                                      _deleteUnusedExam(exam);
+                                      _deleteExamWithResults(exam);
                                     },
                               icon: const Icon(Icons.delete_outline_rounded,
                                 color: Colors.redAccent),
