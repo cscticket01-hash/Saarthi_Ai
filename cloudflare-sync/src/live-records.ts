@@ -1,4 +1,4 @@
-import {domainCollections,personCollections,validateDomainCandidate,validatePersonCandidate,validatePayrollAdvance,validatePayrollMonth,validateClosedPayrollMonth} from './domain-policy';
+import {domainCollections,personCollections,validateDomainCandidate,validatePersonCandidate,validatePayrollAdvance,validatePayrollMonth,validateClosedPayrollMonth,validatePayrollLeave} from './domain-policy';
 import {createHash,randomUUID} from 'node:crypto';
 import {canonical} from './spool';
 import {demand,schoolPattern} from './protocol';
@@ -662,6 +662,11 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    const salaryMonth=col==='teacher_salary'?String(data.month||old.month||''):'';
    if(monthControl)validatePayrollMonth(String(b.id),current?old:null,data,String(b.operation));
    if(col==='teacher_salary'&&[old.month,data.month].some(m=>typeof m==='string'&&readOwner('school_settings','payroll_month_'+m)?.closed===true))validateClosedPayrollMonth(current?old:null,data,String(b.operation));
+   const leaveControl=col==='school_settings'&&String(b.id).startsWith('payroll_leave_');
+   if(leaveControl){
+    if(b.operation!=='delete')demand(typeof data.staffId==='string'&&typeof data.month==='string'&&b.id==='payroll_leave_'+hash([data.staffId,data.month]),'Invalid payroll leave identity',409);
+    validatePayrollLeave(current?old:null,data,String(b.operation),readOwner,school);
+   }
    if(col==='school_settings'&&String(b.id).startsWith('payroll_advance_')){
     if(b.operation!=='delete')demand(typeof data.staffId==='string'&&b.id==='payroll_advance_'+createHash('sha256').update(data.staffId).digest('hex'),'Invalid payroll advance identity',409);
     validatePayrollAdvance(String(b.id),current?old:null,data,String(b.operation),readOwner,school);
@@ -713,10 +718,10 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    // Preserve month-control ordering on the independent Script backup path.
    // A closure follows all already accepted salary revisions for that month;
    // later salary revisions wait for the preceding control revision.
-   if(monthControl||salaryMonth){
+   if(monthControl||salaryMonth||leaveControl){
     const pending=monthControl
-      ?sql.exec<{seq:number}>("SELECT seq FROM live_backup WHERE collection='teacher_salary' AND seq<? AND state!='verified' AND json_extract(body,'$.month')=?",appended.seq,String(data.month)).toArray()
-      :sql.exec<{seq:number}>("SELECT seq FROM live_backup WHERE collection='school_settings' AND id=? AND seq<? AND state!='verified' ORDER BY seq DESC LIMIT 1",'payroll_month_'+salaryMonth,appended.seq).toArray();
+      ?sql.exec<{seq:number}>("SELECT seq FROM live_backup WHERE (collection='teacher_salary' OR (collection='school_settings' AND id LIKE 'payroll_leave_%')) AND seq<? AND state!='verified' AND json_extract(body,'$.month')=?",appended.seq,String(data.month)).toArray()
+      :sql.exec<{seq:number}>("SELECT seq FROM live_backup WHERE collection='school_settings' AND id=? AND seq<? AND state!='verified' ORDER BY seq DESC LIMIT 1",'payroll_month_'+(leaveControl?String(data.month):salaryMonth),appended.seq).toArray();
     for(const item of pending)sql.exec('INSERT OR IGNORE INTO live_backup_dependencies VALUES(?,?)',appended.seq,item.seq);
    }
    // Parent registration must be durably handed to Drive before its dependent
