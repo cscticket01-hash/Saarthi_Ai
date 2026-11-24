@@ -728,7 +728,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
     demand(canonical(old.advanceRecoveries??[])===canonical(data.advanceRecoveries??[]),'Payroll recovery requires paired transaction',409);
     if(Array.isArray(old.advanceRecoveries)&&old.advanceRecoveries.length){
      const recovered=(old.advanceRecoveries as Json[]).reduce((sum,event)=>sum+Number(event.amountPaise),0);
-     demand(b.operation!=='delete'&&typeof data.deductionPaise==='number'&&data.deductionPaise>=recovered,'Payroll recovery deduction must be preserved',409);
+     demand(b.operation!=='delete'&&typeof data.deductionPaise==='number'&&data.deductionPaise>=recovered+Number((data.attendanceAdjustment as Json|undefined)?.amountPaise??0),'Payroll recovery deduction must be preserved',409);
     }
    }
    if(col==='school_settings'&&String(b.id).startsWith('payroll_advance_')&&!payrollRecoveryPair){
@@ -779,7 +779,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
     const retired=new Set(Array.isArray(old[retiredKey])?old[retiredKey] as string[]:[]);if(retiring)retired.add(parentGeneration);
     if(retired.size)data[retiredKey]=[...retired];if(b.operation==='delete'){data._syncDeletedOwner=parentGeneration;if(col==='teachers_directory')data._syncRetiredTeacherId=old.teacherId||b.id;}
    }
-   const appended=appendLive(storage,school,col,String(b.id),String(b.operationId),String(b.operation),data,now,fingerprint,{...(b.deleteEverywhereVersion===1?{deleteEverywhereVersion:1}:{}),...(col==='students_directory'&&b.operation==='delete'?{deletedStudentGeneration:parentGeneration}:{})},bundleId||null,bundleSize,bundleIndex);
+   const appended=appendLive(storage,school,col,String(b.id),String(b.operationId),String(b.operation),data,now,fingerprint,{...(payrollRecoveryPair&&bundleId?{payrollRecoveryVersion:1,payrollRecoveryBundleId:bundleId}:{}),...(b.deleteEverywhereVersion===1?{deleteEverywhereVersion:1}:{}),...(col==='students_directory'&&b.operation==='delete'?{deletedStudentGeneration:parentGeneration}:{})},bundleId||null,bundleSize,bundleIndex);
    if(personCollections.has(col)){
     if(b.operation==='delete'||data.deleted===true||data.active===false){
      sql.exec('DELETE FROM live_uid_pending WHERE collection=? AND id=?',col,String(b.id));
