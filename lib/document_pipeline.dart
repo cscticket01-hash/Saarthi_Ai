@@ -320,9 +320,9 @@ class DocumentPipeline {
         'autoRotation': rotation,
         ...options,
       }, scope);
-      if ((result['optimized'] as Uint8List).length > scanPageImageBudget) {
+      if ((result['optimized'] as Uint8List).length > DocumentProcessingEngine.photoTarget) {
         throw const FormatException(
-          'The readable scan exceeds 500 KB. Original unchanged.',
+          'The image exceeds the 80 KB limit. Original unchanged.',
         );
       }
       return {...result, 'pageCount': 1};
