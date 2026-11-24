@@ -3,7 +3,7 @@ import 'windows_appearance.dart';
 import 'windows_document_templates.dart';
 import 'windows_exam_policy.dart';
 import 'windows_local_firestore.dart';
-import 'windows_local_settings.dart';
+import 'windows_admin_security.dart';
 import 'windows_school_operations.dart';
 
 /// Compact, school-themed Exam Center promotion review.
@@ -127,11 +127,6 @@ class _PromotionPanelState extends State<WindowsExamPromotionCenter> {
       _notice('Select students with saved ' + decision + ' results awaiting approval.');
       return;
     }
-    if (!WindowsLocalSecurity.configured) {
-      _notice('Configure Administrator Settings Lock to approve promotions.');
-      return;
-    }
-    final adminPassword = TextEditingController();
     try {
     final proceed = await showDialog<bool>(context:context,
       builder:(ctx)=>AlertDialog(
@@ -140,8 +135,6 @@ class _PromotionPanelState extends State<WindowsExamPromotionCenter> {
           Text('Apply to ' + chosen.length.toString() +
             ' students? Permanent IDs, fees, attendance, documents and history remain linked.'),
           const SizedBox(height: 12),
-          TextField(controller: adminPassword, obscureText: true,
-            decoration: const InputDecoration(labelText: 'Administrator lock password')),
         ]),
         actions:[
           TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),
@@ -149,10 +142,11 @@ class _PromotionPanelState extends State<WindowsExamPromotionCenter> {
         ],
       ));
     if (proceed != true || !mounted || !_sameSchool || _examId != approvedExamId) return;
-    if (!WindowsLocalSecurity.verifyPassword(adminPassword.text)) {
-      _notice('Invalid Administrator password. Nothing was changed.');
-      return;
-    }
+    final target='promotion-batch/$approvedExamId/$decision';
+    final approval=await requestWindowsAdminApproval(context,scope:'protected-settings',target:target);
+    if(approval==null||!mounted||!_sameSchool||_examId!=approvedExamId)return;
+    await WindowsAdminSecurity.consumeApproval(token:approval,scope:'protected-settings',target:target);
+    if(!mounted||!_sameSchool||_examId!=approvedExamId)return;
     setState(() => _working = true);
     var done = 0;
     final failures = <String>[];
@@ -174,9 +168,10 @@ class _PromotionPanelState extends State<WindowsExamPromotionCenter> {
       _notice(done.toString() + ' locally recorded; ' + failures.length.toString() +
           ' need review.' + (failures.isEmpty ? ' Cloudflare ACK pending.' : ' ' + failures.first));
     }
+    } catch(e) {
+      _notice('Promotion approval failed: $e');
     } finally {
       if (mounted && _working) setState(() => _working = false);
-      adminPassword.dispose();
     }
   }
 
@@ -193,12 +188,7 @@ class _PromotionPanelState extends State<WindowsExamPromotionCenter> {
       _notice('Admin override is only for a retained Final Exam FAIL student.');
       return;
     }
-    if (!WindowsLocalSecurity.configured) {
-      _notice('Configure the local Administrator Settings Lock before overriding a result.');
-      return;
-    }
     final reason = TextEditingController();
-    final password = TextEditingController();
     try {
       final proceed = await showDialog<bool>(context:context,
         builder:(ctx)=>AlertDialog(
@@ -207,8 +197,7 @@ class _PromotionPanelState extends State<WindowsExamPromotionCenter> {
             const Text('Exception requires school policy permission and an audit reason.'),
             TextField(controller:reason,maxLength:500,maxLines:3,
               decoration:const InputDecoration(labelText:'Required reason')),
-            TextField(controller:password,obscureText:true,
-              decoration:const InputDecoration(labelText:'Administrator lock password')),
+
           ]),
           actions:[
             TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),
@@ -216,10 +205,15 @@ class _PromotionPanelState extends State<WindowsExamPromotionCenter> {
           ],
         ));
       if (proceed != true || !mounted || !_sameSchool || _examId != approvedExamId) return;
-      if (reason.text.trim().isEmpty || !WindowsLocalSecurity.verifyPassword(password.text)) {
-        _notice('Override blocked: enter an audit reason and valid administrator password.');
+      if (reason.text.trim().isEmpty) {
+        _notice('Override blocked: enter an audit reason.');
         return;
       }
+      final target="${student['id']}/$approvedExamId";
+      final approval=await requestWindowsAdminApproval(context,scope:'force-promotion',target:target);
+      if(approval==null||!mounted||!_sameSchool||_examId!=approvedExamId)return;
+      await WindowsAdminSecurity.consumeApproval(token:approval,scope:'force-promotion',target:target);
+      if(!mounted||!_sameSchool||_examId!=approvedExamId)return;
       setState(() => _working = true);
       try {
         await SchoolPromotionService.apply(
@@ -233,7 +227,9 @@ class _PromotionPanelState extends State<WindowsExamPromotionCenter> {
       } finally {
         if (mounted) setState(() => _working = false);
       }
-    } finally { reason.dispose(); password.dispose(); }
+    } catch(e) {
+      _notice('Override approval failed: $e');
+    } finally { reason.dispose(); }
   }
 
   Future<void> _history() async {

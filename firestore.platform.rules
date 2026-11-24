@@ -147,7 +147,8 @@ service cloud.firestore {
     // Developer-only enumeration, keys, renewal, support and legacy collections.
     match /{root}/{document=**} {
       allow read, write: if developer() &&
-        !(root in ['repair_knowledge','repair_knowledge_evidence','repair_knowledge_sources','developer_password_otp','platform_licence_receipts']);
+        !(root in ['repair_knowledge','repair_knowledge_evidence','repair_knowledge_sources','developer_password_otp','platform_licence_receipts',
+          'school_admin_security','school_admin_action_approvals','school_admin_mutation_approvals']);
     }
   }
 }

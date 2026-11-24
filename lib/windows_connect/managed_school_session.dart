@@ -300,6 +300,33 @@ class ManagedSchoolSession {
       throw StateError('PC registration proof could not be verified. Existing data remains preserved.');
     }
   }
+  /// A fresh Firebase school credential proof for the server-owned Admin Password
+  /// enrollment/recovery boundary. Never stores the school password or ID token.
+  static Future<String> freshSchoolPasswordProof(String password) async {
+    final saved = await CentralSchoolCloud.saved();
+    if(saved['managed'] != true || saved['email'] is! String ||
+        saved['uid'] is! String || saved['endpoint'] is! String) {
+      throw StateError('Sign in to the managed school before configuring Admin Password.');
+    }
+    final cloud = CentralSchoolCloud(
+      endpoint:saved['endpoint'],
+      // Firebase Identity Toolkit is not the managed-school broker. Do not
+      // attach school-device proof headers to Google's password endpoint.
+      client:http.Client(),
+      expectedSchoolId:saved['schoolId'],
+    );
+    try {
+      final reply = await cloud.send('POST',
+        Uri.https('identitytoolkit.googleapis.com','/v1/accounts:signInWithPassword',
+          {'key':platformApiKey}),
+        body:{'email':saved['email'],'password':password,'returnSecureToken':true});
+      if(reply['localId'] != saved['uid'] || reply['idToken'] is! String) {
+        throw StateError('The school login does not match this account.');
+      }
+      return reply['idToken'] as String;
+    } finally { cloud.close(); }
+  }
+
   static Future<void> reauthenticate(String email,String password,{http.Client? client}) async {
     final saved=await CentralSchoolCloud.saved();
     if(saved['managed']!=true||saved['email']?.toString().toLowerCase()!=email.trim().toLowerCase())throw StateError('Use the currently logged-in school account.');

@@ -4,6 +4,7 @@ const {createDeleteEverywhere}=require('./delete-everywhere');
 const {createProviderPressure,retryAfterMillis,firebaseQuota,quotaError}=require('./provider-pressure');
 const {createWindowsTheme,DEFAULT_THEME}=require('./windows-theme');
 const {createDeveloperPasswordOtp}=require('./developer-password-otp');
+const {createSchoolAdminSecurity}=require('./school-admin-security');
 const {createSchoolSyncDelivery}=require('./school-sync-delivery');
 'use strict';
 const {createManagedSupport}=require('./managed-support');
@@ -28,6 +29,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
  const schoolDeltaSingleflight=createSchoolDeltaSingleflight();
  const windowsTheme=createWindowsTheme({db,now});
  const developerPasswordOtp=createDeveloperPasswordOtp({auth,db,now,fetchImpl});
+ const schoolAdminSecurity=createSchoolAdminSecurity({auth,db,now});
  const repairKnowledge=createRepairKnowledge({...repairKnowledgeOptions,db,now});
  const deviceAccess=createManagedDeviceAccess({store:deviceStore||firestoreManagedDeviceStore(db),enforced:deviceAccessEnforced,managementEnabled:deviceManagementEnabled,enrollmentEnabled:deviceEnrollmentEnabled,offlinePrivateKey:deviceOfflinePrivateKey,now,...(deviceOfflineWindowMs==null?{}:{offlineWindowMs:deviceOfflineWindowMs})});
  const cardAuthority=createManagedCardIssueAuthority({db,now});
@@ -953,6 +955,10 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
  const m=await identity(req,b.schoolId);
  m.edgeDeliveryVersion=b.edgeDeliveryVersion===1?1:0;
  const deviceDecision=await deviceAccess.authorize({req,body:b,identity:m,entitlement:lease(m)});if(deviceDecision.handled)return deviceDecision.result;
+ if(action==='managed/admin/security'){
+  if(!lease(m).allowed)fail(403,'School licence is inactive');
+  return schoolAdminSecurity.handle(b,m);
+ }
  if(action==='managed/repair-knowledge/pull'){if(!lease(m).allowed)fail(403,'School licence is inactive');return {success:true,schoolId:m.schoolId,...await repairKnowledge.pull(m,b.observation||{})};}
  if(['managed/support/list','managed/support/create','managed/support/thread','managed/support/reply','managed/support/resolve'].includes(action))return createManagedSupport({db,now,fail})(action,b,m);
  // A restored Firebase session predates enrollment on existing PCs. Optional
@@ -1389,6 +1395,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
  if(action==='managed/storage/connect'){
  uploadCapabilities.delete(m.schoolId);invalidate(m.schoolId);
   const url=scriptUrl(b.scriptUrl),ref=db.doc('school_storage_private/'+m.schoolId),old=await ref.get();
+  await schoolAdminSecurity.consumeApproval(m,b.adminApprovalToken,'drive-connection',url);
   if(old.exists&&old.data().ready===true){
    if(old.data().url!==url){if(b.replace!==true||b.expectedScriptUrl!==old.data().url)fail(409,'Existing storage retained. Confirm the current school Drive connection before replacement');}
    else {const health=await signed(m,{action:'managed_health'});if(health.storageReady!==true)fail(502,'School Drive verification failed');return {success:true,schoolId:m.schoolId,storageReady:true,scriptUrl:url,googleEmail:health.googleEmail||''};}

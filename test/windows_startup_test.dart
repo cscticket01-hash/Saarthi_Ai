@@ -169,30 +169,20 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     }
   }, skip: !Platform.isWindows);
-  testWidgets('legacy Admin lock does not add another password prompt', (
+  testWidgets('legacy Admin lock cannot open the independent admin panel', (
     tester,
   ) async {
-    await WindowsSectionLocks.addPassword(
+    await tester.runAsync(() => WindowsSectionLocks.addPassword(
       sectionKey: 'admin_section',
       password: 'admin-only-pass',
-    );
+    ));
     await tester.pumpWidget(
       const MaterialApp(home: WindowsLocalDashboardGate()),
     );
-    await tester.pump();
+    await tester.pumpAndSettle();
+    expect(find.text('Admin Panel Security'), findsOneWidget);
     expect(find.text('Admin Section Password'), findsNothing);
-    expect(find.text('Open Admin Panel'), findsNothing);
-    expect(
-      find.byType(WindowsAdminSessionDashboard, skipOffstage: false),
-      findsOneWidget,
-    );
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 350));
-    expect(find.text('Admin Section Password'), findsNothing);
-    expect(
-      find.byType(WindowsAdminSessionDashboard, skipOffstage: false),
-      findsOneWidget,
-    );
+    expect(find.byType(WindowsAdminSessionDashboard), findsNothing);
     await tester.pumpWidget(const SizedBox());
   });
   testWidgets(

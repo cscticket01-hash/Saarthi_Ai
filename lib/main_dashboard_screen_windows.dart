@@ -9,6 +9,7 @@ import 'windows_appearance.dart';
 import 'liquid_glass_theme.dart';
 import 'windows_fee_settings_design.dart';
 import 'windows_admin_settings_design.dart';
+import 'windows_admin_security.dart';
 import 'windows_settings_design.dart';
 import 'school_profile_policy.dart';
 import 'student_inventory_policy.dart';
@@ -62,6 +63,7 @@ import 'windows_backend_bridge.dart';
 import 'windows_sync_engine.dart';
 import 'windows_app_restart.dart';
 import 'dart:convert';
+import 'package:crypto/crypto.dart' as security_crypto;
 import 'windows_html_shim.dart' as html;
 import 'package:pdf/widgets.dart' as pw;
 import 'package:pdf/pdf.dart';
@@ -72,7 +74,7 @@ import 'package:flutter/material.dart' hide Text, InputDecoration;
 import 'windows_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
-import 'package:flutter/foundation.dart' show compute;
+import 'package:flutter/foundation.dart' show compute, kIsWeb;
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'dart:typed_data';
 import 'package:flutter/services.dart';
@@ -271,6 +273,7 @@ const String _windowsStudentRecordsLock = 'student_records';
 const String _windowsFeesCollectionLock = 'fees_collection';
 const String _windowsSchoolExpensesLock = 'school_expenses';
 const String _windowsAttendanceLock = 'attendance';
+const String _windowsExamCenterLock = 'exam_center';
 
 class _WindowsSectionLockDefinition {
   const _WindowsSectionLockDefinition({
@@ -317,6 +320,13 @@ List<_WindowsSectionLockDefinition> get _windowsSectionLockDefinitions => [
     icon: Icons.fact_check_rounded,
     color: WindowsAppearance.foreground(Color(0xFF69C2FF)),
   ),
+  _WindowsSectionLockDefinition(
+    key: _windowsExamCenterLock,
+    title: 'Exam Center',
+    subtitle: 'Exams, marks, results aur report cards ko protect karein.',
+    icon: Icons.assignment_turned_in_rounded,
+    color: WindowsAppearance.foreground(Colors.orangeAccent),
+  ),
 ];
 
 /// Central school authentication and the separate App Lock guard the app.
@@ -324,13 +334,29 @@ List<_WindowsSectionLockDefinition> get _windowsSectionLockDefinitions => [
 class WindowsAdminAccessGate extends StatelessWidget {
   const WindowsAdminAccessGate({super.key,required this.child});
   final Widget child;
-  @override Widget build(BuildContext context){ WindowsAppearance.watch(context); return child; }
+  @override Widget build(BuildContext context){ WindowsAppearance.watch(context); return WindowsAdminSecurityGate(child:child); }
+}
+
+// PBKDF2-HMAC-SHA256 runs off the UI isolate. Existing section passwords
+// migrate after successful verification without changing the user's secret.
+String _deriveSectionLockPassword(Map<String,String> input) {
+  final key=utf8.encode(input['password']!);
+  final salt=base64Url.decode(base64Url.normalize(input['salt']!));
+  final mac=security_crypto.Hmac(security_crypto.sha256,key);
+  var previous=mac.convert([...salt,0,0,0,1]).bytes;
+  final derived=List<int>.from(previous);
+  for(var iteration=1;iteration<120000;iteration++){
+    previous=mac.convert(previous).bytes;
+    for(var i=0;i<derived.length;i++)derived[i]^=previous[i];
+  }
+  return base64Url.encode(derived).replaceAll('=','');
 }
 
 class WindowsSectionLocks {
   WindowsSectionLocks._();
 
   static const WindowsSecureStorage _secure = WindowsSecureStorage();
+  static const String _hashPrefix='pbkdf2-sha256-v1';
 
   static Future<String> _passwordKey(String sectionKey) async {
     final saved=await CentralSchoolCloud.saved();
@@ -344,16 +370,30 @@ class WindowsSectionLocks {
     return 'vidya_saarthi_windows_section_password_enabled_v1_$sectionKey$suffix';
   }
 
+  static Future<String> _hashPassword(String password) async {
+    final secureRandom=Random.secure();
+    final salt=base64Url.encode(List<int>.generate(16,
+      (_)=>secureRandom.nextInt(256))).replaceAll('=','');
+    final value=await compute(_deriveSectionLockPassword,
+      {'password':password,'salt':salt});
+    return '$_hashPrefix:$salt:$value';
+  }
+
+  static bool _constantTimeEquals(String a,String b) {
+    if(a.length!=b.length)return false;
+    var bits=0;
+    for(var i=0;i<a.length;i++)bits |= a.codeUnitAt(i)^b.codeUnitAt(i);
+    return bits==0;
+  }
+
   static Future<bool> configured(String sectionKey) async {
-    final value = await _secure.read(key: await _passwordKey(sectionKey));
-    return value?.trim().isNotEmpty ?? false;
+    final value=await _secure.read(key:await _passwordKey(sectionKey));
+    return value?.isNotEmpty ?? false;
   }
 
   static Future<bool> enabled(String sectionKey) async {
-    if (!await configured(sectionKey)) return false;
-
-    final value = await _secure.read(key: await _enabledKey(sectionKey));
-    // A configured lock without an old enabled flag remains protected.
+    if (!await configured(sectionKey))return false;
+    final value=await _secure.read(key:await _enabledKey(sectionKey));
     return value == null || value == 'true';
   }
 
@@ -361,8 +401,26 @@ class WindowsSectionLocks {
     required String sectionKey,
     required String password,
   }) async {
-    final stored = await _secure.read(key: await _passwordKey(sectionKey));
-    return stored != null && stored.isNotEmpty && stored == password;
+    if(password.isEmpty||password.length>128)return false;
+    final storageKey=await _passwordKey(sectionKey);
+    final stored=await _secure.read(key:storageKey);
+    if(stored==null||stored.isEmpty)return false;
+    if(stored.startsWith('$_hashPrefix:')) {
+      final segments=stored.split(':');
+      if(segments.length!=3||
+          !RegExp(r'^[A-Za-z0-9_-]{22}$').hasMatch(segments[1])||
+          !RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(segments[2]))return false;
+      final candidate=await compute(_deriveSectionLockPassword,
+        {'password':password,'salt':segments[1]});
+      return _constantTimeEquals(candidate,segments[2]);
+    }
+    if(!_constantTimeEquals(stored,password))return false;
+    // A previously saved six-character lock still unlocks; only new
+    // passwords must meet the current minimum length.
+    try {
+      await _secure.write(key:storageKey,value:await _hashPassword(password));
+    } catch (_) {/* Do not lock out a valid legacy credential on migration. */}
+    return true;
   }
 
   static Future<void> addPassword({
@@ -370,16 +428,9 @@ class WindowsSectionLocks {
     required String password,
   }) async {
     _validatePassword(password);
-
-    await _secure.write(
-      key: await _passwordKey(sectionKey),
-      value: password,
-    );
-    // Adding a password turns that section lock ON by default.
-    await _secure.write(
-      key: await _enabledKey(sectionKey),
-      value: 'true',
-    );
+    final secret=await _hashPassword(password);
+    await _secure.write(key:await _passwordKey(sectionKey),value:secret);
+    await _secure.write(key:await _enabledKey(sectionKey),value:'true');
   }
 
   static Future<void> changePassword({
@@ -387,49 +438,30 @@ class WindowsSectionLocks {
     required String currentPassword,
     required String newPassword,
   }) async {
-    final storedPassword = await _secure.read(
-      key: await _passwordKey(sectionKey),
-    );
-
-    if (storedPassword == null || storedPassword.isEmpty) {
+    if(!await configured(sectionKey))
       throw StateError('Pehle section password add karein.');
-    }
-
-    if (storedPassword != currentPassword) {
+    if(!await verify(sectionKey:sectionKey,password:currentPassword))
       throw StateError('Current section password galat hai.');
-    }
-
     _validatePassword(newPassword);
-    await _secure.write(
-      key: await _passwordKey(sectionKey),
-      value: newPassword,
-    );
-    await _secure.write(
-      key: await _enabledKey(sectionKey),
-      value: 'true',
-    );
+    final secret=await _hashPassword(newPassword);
+    await _secure.write(key:await _passwordKey(sectionKey),value:secret);
+    await _secure.write(key:await _enabledKey(sectionKey),value:'true');
   }
 
   static Future<void> setEnabled({
     required String sectionKey,
     required bool value,
   }) async {
-    if (value && !(await configured(sectionKey))) {
+    if(value && !await configured(sectionKey))
       throw StateError('Pehle section password add karein.');
-    }
-
-    await _secure.write(
-      key: await _enabledKey(sectionKey),
-      value: value ? 'true' : 'false',
-    );
+    await _secure.write(key:await _enabledKey(sectionKey),
+      value:value?'true':'false');
   }
 
   static void _validatePassword(String password) {
-    if (password.trim().length < 6) {
+    if(password.length<8||password.length>128||password.trim()!=password)
       throw const FormatException(
-        'Section password kam se kam 6 characters ka hona chahiye.',
-      );
-    }
+        'New section password must contain 8–128 characters without surrounding spaces.');
   }
 }
 
@@ -860,7 +892,24 @@ Future<bool> _requireWindowsSectionPassword(
   String sectionKey,
   String sectionTitle,
 ) async {
-  if (sectionKey == _windowsAdminSectionLock) return true;
+  if (sectionKey == _windowsAdminSectionLock) {
+    // Legacy web portal already signs in through Firebase; Windows App
+    // admin section requires its independent password after the App Lock.
+    // Never call Windows-only secure storage from the web portal.
+    if(kIsWeb)return true;
+    if(await WindowsAdminSecurity.hasPanelSession()) return true;
+    if(!context.mounted)return false;
+    final approval=await requestWindowsAdminApproval(context,
+      scope:'protected-settings',target:'admin_section_access');
+    if(approval==null)return false;
+    try {
+      await WindowsAdminSecurity.consumeApproval(
+        token:approval,scope:'protected-settings',
+        target:'admin_section_access');
+      await WindowsAdminSecurity.grantPanelSession();
+      return true;
+    } catch (_) { return false; }
+  }
   if (!await WindowsSectionLocks.enabled(sectionKey)) return true;
   if (!context.mounted) return false;
 
@@ -1048,6 +1097,7 @@ void _touchPortalSession({Duration? remaining}) {
 }
 
 void _clearPortalSession() {
+  WindowsAdminSecurity.clearPanelSession();
   try {
     final storage = html.window.localStorage;
     storage.remove(_portalSessionRoleKey);
@@ -1537,6 +1587,7 @@ String? _windowsAdminModuleLock(WindowsAdminPage page) => switch (page) {
   WindowsAdminPage.fees => _windowsFeesCollectionLock,
   WindowsAdminPage.expenses => _windowsSchoolExpensesLock,
   WindowsAdminPage.attendance => _windowsAttendanceLock,
+  WindowsAdminPage.exams => _windowsExamCenterLock,
   _ => null,
 };
 String _windowsAdminModuleTitle(WindowsAdminPage page) => WindowsAdminSidebar.entries.firstWhere((e) => e.$1 == page).$2;
@@ -6085,14 +6136,11 @@ Widget _buildOverviewCards() {
             title: windowsTr('exam'),
             subtitle: 'Marks, results & report cards',
             accent: Colors.orangeAccent,
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) { WindowsAppearance.watch(context); return  const ExamCenterScreen(); },
-                ),
-              );
-            },
+            onTap: () => _openAdminModule(
+              const ExamCenterScreen(),
+              sectionKey: _windowsExamCenterLock,
+              sectionTitle: 'Exam Center',
+            ),
           ),
 
           _overviewCard(
@@ -14154,6 +14202,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
     String docId,
     Map<String, dynamic> data,
   ) async {
+    String? adminApprovalToken;
     final passwordController =
         TextEditingController();
 
@@ -14211,7 +14260,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                   ),
                   const SizedBox(height: 16),
                    Text(
-                    'App Lock Password daalein:',
+                    'Admin Password daalein:',
                     style: TextStyle(fontFamily: 'Segoe UI', 
                       color: WindowsAppearance.foreground(Colors.white),
                       fontSize: 12,
@@ -14229,7 +14278,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                     decoration:
                         InputDecoration(
                       hintText:
-                          'App Lock Password',
+                          'Admin Password',
                       hintStyle:
                            TextStyle(fontFamily: 'Segoe UI', 
                         color:
@@ -14328,7 +14377,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                             setDialogState(
                               () {
                                 errorText =
-                                    'App Lock Password daalein.';
+                                    'Admin Password daalein.';
                               },
                             );
                             return;
@@ -14344,31 +14393,9 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                           );
 
                           try {
-                            final user =
-                                FirebaseAuth
-                                    .instance
-                                    .currentUser;
-
-                            if (user ==
-                                    null ||
-                                user.email ==
-                                    null) {
-                              throw Exception();
-                            }
-
-                            final credential =
-                                EmailAuthProvider
-                                    .credential(
-                              email:
-                                  user.email!,
-                              password:
-                                  password,
-                            );
-
-                            await user
-                                .reauthenticateWithCredential(
-                              credential,
-                            );
+                            adminApprovalToken=await WindowsAdminSecurity.approve(
+                              password:password,scope:'person-delete',
+                              target:'teachers_directory/$docId');
 
                             if (!mounted) {
                               return;
@@ -14384,7 +14411,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                                 deleting =
                                     false;
                                 errorText =
-                                    'Galat App Lock Password!';
+                                    'Galat Admin Password!';
                               },
                             );
                           }
@@ -14425,6 +14452,9 @@ errorBuilder: (_, __, ___) => _teacherFallback(
     if (confirmed != true) return;
 
     try {
+      await WindowsAdminSecurity.consumeApproval(
+        token:adminApprovalToken ?? '',scope:'person-delete',
+        target:'teachers_directory/$docId');
       final result =
           await _callTeacherApi({
         'action': 'delete_teacher',
@@ -17016,6 +17046,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
     bool obscureText = true;
     bool isLoading = false;
     String? errorMessage;
+    String? adminApprovalToken;
 
     final confirm = await showDialog<bool>(
       context: context,
@@ -17042,14 +17073,14 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                     style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white70), fontSize: 13),
                   ),
                   const SizedBox(height: 18),
-                   Text('App Lock Password daalein:', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 12)),
+                   Text('Admin Password daalein:', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 12)),
                   const SizedBox(height: 8),
                   TextField(
                     controller: passwordController,
                     obscureText: obscureText,
                     style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                     decoration: InputDecoration(
-                      hintText: 'Enter App Lock Password',
+                      hintText: 'Enter Admin Password',
                       hintStyle:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.grey), fontSize: 13),
                       filled: true,
                       fillColor: WindowsAppearance.background(const Color(0xFF121B22)),
@@ -17087,16 +17118,12 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                           });
 
                           try {
-                            final user = FirebaseAuth.instance.currentUser;
-                            if (user != null && user.email != null) {
-                              final credential = EmailAuthProvider.credential(email: user.email!, password: pass);
-                              await user.reauthenticateWithCredential(credential);
-                              Navigator.pop(ctx, true);
-                            } else {
-                              setDialogState(() { isLoading = false; errorMessage = 'Admin user nahi mila.'; });
-                            }
+                            adminApprovalToken=await WindowsAdminSecurity.approve(
+                              password:pass, scope:'person-delete',
+                              target:'students_directory/$docId');
+                            if(ctx.mounted) Navigator.pop(ctx,true);
                           } catch (e) {
-                            setDialogState(() { isLoading = false; errorMessage = 'Galat Password!'; });
+                            setDialogState(() { isLoading = false; errorMessage = 'Galat Admin Password!'; });
                           }
                         },
                   child: isLoading
@@ -17113,6 +17140,9 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
     if (confirm != true) return;
 
     try {
+      await WindowsAdminSecurity.consumeApproval(
+        token:adminApprovalToken ?? '',scope:'person-delete',
+        target:'students_directory/$docId');
       final studentsRef =
           FirebaseFirestore.instance.collection('students_directory');
       final studentDoc = await studentsRef.doc(docId).get();
@@ -18113,6 +18143,8 @@ class PasswordManagementScreen extends StatelessWidget {
             constraints: const BoxConstraints(maxWidth: 900),
             child: Column(
               children: const [
+                WindowsAdminPasswordCard(),
+                SizedBox(height:14),
                 _WindowsSectionPasswordLocksPanel(),
               ],
             ),
@@ -18241,18 +18273,26 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       return;
     }
 
+    final adminApprovalToken=await requestWindowsAdminApproval(context,
+      scope:'drive-connection',target:url);
+    if(adminApprovalToken==null || !mounted)return;
     setState(() => _saving = true);
     final origin=FirebaseFirestore.instance.activeProfileId;
     var connectedEmail=email;
     try {
       final managed=await CentralSchoolCloud.saved();
       if(managed['managed']==true){
-        final result=await ManagedSchoolSession.call('managed/storage/connect',{'scriptUrl':url,if(_editingDrive)'replace':true,if(_editingDrive)'expectedScriptUrl':_linkedScript});
+        final result=await ManagedSchoolSession.call('managed/storage/connect',{'scriptUrl':url,if(adminApprovalToken!=null)'adminApprovalToken':adminApprovalToken,if(_editingDrive)'replace':true,if(_editingDrive)'expectedScriptUrl':_linkedScript});
         if(result['googleEmail'] is String) await CentralSchoolCloud.updateSession(managed['schoolId'],{'googleEmail':result['googleEmail']},expectedUid:managed['uid']);
         connectedEmail=result['googleEmail']?.toString()??'';
         await CentralSchoolCloud.updateSession(managed['schoolId'],{'scriptUrl':url},expectedUid:managed['uid']);
         await WindowsSyncEngine.instance.activateCurrentConnections(allowPairing:false);
-      }else{await WindowsSyncEngine.instance.changeGoogleConnection(email:email,scriptUrl:url);}
+      }else{
+        await WindowsAdminSecurity.consumeApproval(
+          token:adminApprovalToken,scope:'drive-connection',target:url);
+        await WindowsSyncEngine.instance.changeGoogleConnection(
+          email:email,scriptUrl:url);
+      }
       if (!mounted || FirebaseFirestore.instance.activeProfileId!=origin) return;
       setState(() {
         _linkedGmail = connectedEmail;
@@ -18296,6 +18336,24 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
 
   Future<void> _unlink() async {
     final origin=FirebaseFirestore.instance.activeProfileId;
+    if(await WindowsAdminSecurity.isManaged) {
+      if(!mounted)return;
+      final approved=await requestWindowsAdminApproval(context,
+        scope:'protected-settings',target:'school_drive_edit');
+      if(approved==null || !mounted ||
+          FirebaseFirestore.instance.activeProfileId!=origin)return;
+      try {
+        await WindowsAdminSecurity.consumeApproval(
+          token:approved,scope:'protected-settings',
+          target:'school_drive_edit');
+        if(mounted && FirebaseFirestore.instance.activeProfileId==origin)
+          setState(() => _editingDrive=true);
+      } catch (error) {
+        if(mounted)ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content:Text('Admin permission failed: $error')));
+      }
+      return;
+    }
     if(!WindowsLocalSecurity.configured){ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Set App Lock in Password Management before changing Drive.')));return;}
     final sure = await showDialog<bool>(
       context: context,
@@ -18334,9 +18392,19 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  const _DriveUnlinkSecurityDialog(); },
     );
     if (verified != true || !mounted || FirebaseFirestore.instance.activeProfileId!=origin) return;
-
-    // Editing does not disconnect or erase the existing school storage.
-    setState(() => _editingDrive=true);
+    final approved=await requestWindowsAdminApproval(context,
+      scope:'protected-settings',target:'school_drive_edit');
+    if(approved==null || !mounted || FirebaseFirestore.instance.activeProfileId!=origin)return;
+    try {
+      await WindowsAdminSecurity.consumeApproval(
+        token:approved,scope:'protected-settings',target:'school_drive_edit');
+      if(!mounted||FirebaseFirestore.instance.activeProfileId!=origin)return;
+      // Editing does not disconnect or erase the existing school storage.
+      setState(() => _editingDrive=true);
+    } catch(error) {
+      if(mounted)ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content:Text('Administrator approval failed: $error')));
+    }
   }
 
   InputDecoration _input(String text, IconData icon) => InputDecoration(
@@ -18609,9 +18677,10 @@ class _WindowsSectionPasswordLocksPanelState
                 setDialogState(() => error = 'Current password required hai.');
                 return;
               }
-              if (next.text.trim().length < 6) {
+              if (next.text.length < 8 || next.text.length > 128 ||
+                  next.text.trim() != next.text) {
                 setDialogState(
-                  () => error = 'Password kam se kam 6 characters ka ho.',
+                  () => error = 'Naya password 8–128 characters ka ho, bina extra spaces.',
                 );
                 return;
               }
@@ -18626,6 +18695,19 @@ class _WindowsSectionPasswordLocksPanelState
               });
 
               try {
+                {
+                  final approved=await requestWindowsAdminApproval(
+                    dialogContext,
+                    scope:'protected-settings',
+                    target:'section-lock/${definition.key}');
+                  if(approved==null) {
+                    if(dialogContext.mounted)setDialogState(() => saving=false);
+                    return;
+                  }
+                  await WindowsAdminSecurity.consumeApproval(
+                    token:approved,scope:'protected-settings',
+                    target:'section-lock/${definition.key}');
+                }
                 if (isChange) {
                   await WindowsSectionLocks.changePassword(
                     sectionKey: definition.key,
@@ -18810,6 +18892,17 @@ class _WindowsSectionPasswordLocksPanelState
 
     setState(() => _busyKey = definition.key);
     try {
+      {
+        final approved=await requestWindowsAdminApproval(context,
+          scope:'protected-settings',target:'section-lock/${definition.key}');
+        if(approved==null) {
+          if(mounted)setState(() => _busyKey=null);
+          return;
+        }
+        await WindowsAdminSecurity.consumeApproval(
+          token:approved,scope:'protected-settings',
+          target:'section-lock/${definition.key}');
+      }
       await WindowsSectionLocks.setEnabled(
         sectionKey: definition.key,
         value: value,

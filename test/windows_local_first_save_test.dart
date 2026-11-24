@@ -8,6 +8,7 @@ import 'package:image/image.dart' as img;
 import 'package:crypto/crypto.dart';
 import '../lib/windows_backend_bridge.dart';
 import '../lib/windows_school_operations.dart';
+import '../lib/windows_admin_security.dart';
 import '../lib/windows_school_image_cache.dart';
 import '../lib/windows_connect/school_drive_images.dart';
 import 'dart:typed_data';
@@ -488,7 +489,7 @@ void main() {
     expect(original['photoUrl'],'data:image/png;base64,YWJj');
   });
 
-  test('saved final results promote PASS offline, retain FAIL and audit the deliberate override', () async {
+  test('saved final results promote PASS offline, retain FAIL and reject unapproved override', () async {
     final exam={'examId':'final-local','examName':'Final','isFinal':true,
       'subjects':['English','Math'],'fullMarks':100,'passMarks':33};
     await db.collection('_local_exam_center_exams').doc('final-local').set(exam);
@@ -527,17 +528,40 @@ void main() {
     expect((await db.collection('students_directory').doc('failed').get()).data()?['classMovement'],'RETAINED');
     await db.collection('school_settings').doc('promotion_policy').set({'allowForcedPromotion':true});
     await expectLater(SchoolPromotionService.apply(studentId:'failed',student:{},exam:exam,result:'FAIL',force:true),throwsStateError);
-    await SchoolPromotionService.apply(studentId:'failed',student:{},exam:exam,result:'FAIL',force:true,reason:'Approved remedial review');
-    final audit=(await db.collection('school_settings').doc('promotion_audit_final-local_failed').get()).data()!;
-    expect(audit['manualAdminOverride'],true);
-    expect(audit['fromClass'],'Class 1');expect(audit['toClass'],'Class 2');
-    expect(audit['reason'],'Approved remedial review');
-    expect(audit['at'],isA<int>());
-    final forcePromoted=(await db.collection('students_directory').doc('failed').get()).data()!;
-    expect(forcePromoted['class'],'Class 2');
-    expect(forcePromoted['classMovement'],'FORCE_PROMOTED');
+    await expectLater(
+      SchoolPromotionService.apply(studentId:'failed',student:{},exam:exam,
+        result:'FAIL',force:true,reason:'Approved remedial review'),
+      throwsA(isA<StateError>().having((e)=>e.message,'message',
+        contains('fresh independent Admin Password'))));
+    final retained=(await db.collection('students_directory').doc('failed').get()).data()!;
+    expect(retained['class'],'Class 1');
+    expect(retained['classMovement'],'RETAINED');
+    expect((await db.collection('students_directory').doc('Class 2_Roll_2').get()).exists,false);
     expect((await db.collection('school_settings').doc('promotion_event_final-local_failed_RETAINED').get()).exists,true);
-    expect((await db.collection('school_settings').doc('promotion_event_final-local_failed_FORCE_PROMOTED').get()).exists,true);
+    expect((await db.collection('school_settings').doc('promotion_event_final-local_failed_FORCE_PROMOTED').get()).exists,false);
+  });
+
+  test('standalone Admin Password authorizes only the requested action once', () async {
+    FlutterSecureStorage.setMockInitialValues({});
+    WindowsAdminSecurity.clearPanelSession();
+    addTearDown(WindowsAdminSecurity.clearPanelSession);
+    await WindowsLocalSecurity.initialize();
+    await WindowsLocalSecurity.create(adminId:'School app',password:'local-app-lock');
+    const adminPassword = 'Synthetic-Admin-Password-42';
+    const target = 'failed/final-local';
+    await WindowsAdminSecurity.enroll(schoolPassword:'',newPassword:adminPassword);
+    await expectLater(WindowsAdminSecurity.approve(password:'local-app-lock',
+      scope:'force-promotion',target:target),throwsStateError);
+    final ticket = await WindowsAdminSecurity.approve(password:adminPassword,
+      scope:'force-promotion',target:target);
+    await WindowsAdminSecurity.consumeApproval(token:ticket,
+      scope:'force-promotion',target:target);
+    await expectLater(WindowsAdminSecurity.requireConsumedAction(
+      scope:'force-promotion',target:'other/final-local'),throwsStateError);
+    await WindowsAdminSecurity.requireConsumedAction(
+      scope:'force-promotion',target:target);
+    await expectLater(WindowsAdminSecurity.requireConsumedAction(
+      scope:'force-promotion',target:target),throwsStateError);
   });
 
   test('nested photo preparation leaves exam marks and payment structures unchanged', () async {

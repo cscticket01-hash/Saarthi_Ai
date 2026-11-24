@@ -29,6 +29,7 @@ import 'windows_local_storage.dart';
 import 'windows_local_firestore.dart';
 import 'windows_connection_center.dart';
 import 'windows_admin_setup.dart';
+import 'windows_admin_security.dart';
 import 'windows_update_manager.dart';
 
 final _schoolNavigatorKey = GlobalKey<NavigatorState>();
@@ -144,9 +145,9 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
           },
           routes: {
             '/admin/device-management': (_) =>
-                const WindowsStartupGate(child: WindowsDeviceManagement()),
+                const WindowsStartupGate(child: WindowsAdminSecurityGate(child: WindowsDeviceManagement())),
             '/admin/student-import': (_) =>
-                const WindowsStartupGate(child: WindowsStudentImport()),
+                const WindowsStartupGate(child: WindowsAdminSecurityGate(child: WindowsStudentImport())),
             '/first-run': (_) => const WindowsFirstRunSecuritySetup(),
             '/admin-setup': (_) => const WindowsAdminSetupScreen(),
             '/local-login': (_) =>

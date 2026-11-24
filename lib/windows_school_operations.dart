@@ -1,6 +1,7 @@
 import 'windows_support_history.dart';
 import 'windows_appearance.dart';
 import 'promotion_session_policy.dart';
+import 'windows_admin_security.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_ui_localization.dart';
 
@@ -566,6 +567,11 @@ class SchoolPromotionService {
     if (studentId.isEmpty || examId.isEmpty || studentId.contains('/')) {
       throw StateError('Valid exam and student IDs are required.');
     }
+    if (force) {
+      await WindowsAdminSecurity.requireConsumedAction(
+        scope:'force-promotion',target:'$studentId/$examId');
+      own();
+    }
     if (!await isFinal(exam, allowPreviousSession: force)) {
       throw StateError('Only a verified completed Final Exam can change class.');
     }
@@ -802,46 +808,24 @@ class _PromotionPolicySwitchState extends State<PromotionPolicySwitch> {
       'Final-exam FAIL normally keeps a student in the same class. This switch enables an administrator override.',
     ),
     onChanged: (v) async {
-      if (!WindowsLocalSecurity.configured) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Configure Administrator Settings Lock before changing promotion policy.')));
-        return;
-      }
-      final secret = TextEditingController();
+      final db = FirebaseFirestore.instance;
+      final profile = db.activeProfileId;
       try {
-        final accepted = await showDialog<bool>(context: context,
-          builder: (dialogContext) => AlertDialog(
-            title: const Text('Confirm promotion policy change'),
-            content: Column(mainAxisSize: MainAxisSize.min, children: [
-              Text(v ? 'Enable exceptional promotion after a failed Final Exam?'
-                  : 'Disable exceptional promotion?'),
-              const SizedBox(height: 12),
-              TextField(controller: secret, obscureText: true,
-                decoration: const InputDecoration(labelText: 'Administrator lock password')),
-            ]),
-            actions: [
-              TextButton(onPressed: () => Navigator.pop(dialogContext, false),
-                  child: const Text('Cancel')),
-              FilledButton(onPressed: () => Navigator.pop(dialogContext, true),
-                  child: const Text('Confirm')),
-            ],
-          ));
-        if (!mounted) return;
-        if (accepted != true || !WindowsLocalSecurity.verifyPassword(secret.text)) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Administrator approval required. Policy unchanged.')));
-          return;
-        }
-        final db = FirebaseFirestore.instance;
-        final profile = db.activeProfileId;
+        final approved=await requestWindowsAdminApproval(context,
+          scope:'protected-settings',target:'school_settings/promotion_policy');
+        if(approved==null || !mounted || db.activeProfileId!=profile)return;
+        await WindowsAdminSecurity.consumeApproval(token:approved,
+          scope:'protected-settings',target:'school_settings/promotion_policy');
+        if(!mounted || db.activeProfileId!=profile)return;
         await db.collection('school_settings').doc('promotion_policy').set({
-          'allowForcedPromotion': v,
-          'updatedBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
-          'updatedAt': FieldValue.serverTimestamp(),
+          'allowForcedPromotion':v,
+          'updatedBy':FirebaseAuth.instance.currentUser?.email ?? 'Admin',
+          'updatedAt':FieldValue.serverTimestamp(),
         });
-        if (mounted && db.activeProfileId == profile) setState(() => _enabled = v);
-      } finally {
-        secret.dispose();
+        if(mounted && db.activeProfileId==profile)setState(()=>_enabled=v);
+      }catch(error){
+        if(mounted)ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content:Text('Administrator approval failed: $error')));
       }
     },
   ); }
