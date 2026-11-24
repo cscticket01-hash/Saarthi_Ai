@@ -137,7 +137,14 @@ class StaffPayroll {
     final today=DateTime(now.year,now.month,now.day);
     for(final d in dates){
       final parsed=DateTime.tryParse(d);
-      if(!RegExp(r'^\d{4}-\d{2}-\d{2} => 'payroll_salary_structure_${sha256.convert(utf8.encode(staffId))}';
+      if(!RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(d)||!d.startsWith('$month-')||parsed==null||
+        parsed.toIso8601String().substring(0,10)!=d||!parsed.isBefore(today)||present.contains(d)){
+        throw FormatException('Invalid, future/current or recorded-present unpaid date: $d');
+      }
+    }
+    return dates.toSet();
+  }
+  static String structureId(String staffId) => 'payroll_salary_structure_${sha256.convert(utf8.encode(staffId))}';
   static Future<Map<String,dynamic>?> structure(String profile,String staffId) async {
     _sameSchool(profile);
     final row=(await FirebaseFirestore.instance.collection('school_settings').doc(structureId(staffId)).get()).data();
