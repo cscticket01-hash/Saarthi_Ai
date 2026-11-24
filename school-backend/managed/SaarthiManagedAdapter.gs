@@ -733,6 +733,51 @@ function VS_validatePayrollAdvance(b,existing,school){
     if(!owner||owner.active===false||owner.inactive===true||owner.deleted===true||owner._syncDeleted===true)throw new Error('SALARY_ADVANCE_OWNER_RETIRED');
   }
 }
+// New paired links may enter the signed Drive path only from the verified
+// native backup job. Ordinary salary/advance writes keep original links.
+function VS_validatePayrollRecoveryBackup(b,existing,school){
+  const prior=existing&&existing.data||{},next=b.data||{};
+  const list=v=>{if(v===undefined||v===null)return [];if(!Array.isArray(v)||v.some(e=>!e||typeof e!=='object'||Array.isArray(e)))throw new Error('PAYROLL_RECOVERY_HISTORY_INVALID');return v;};
+  const bound=b.payrollRecoveryVersion===1&&typeof b.payrollRecoveryBundleId==='string'&&/^[A-Za-z0-9_-]{16,100}$/.test(b.payrollRecoveryBundleId);
+  const append=(before,after)=>{if(after.length<before.length||before.some((e,i)=>VS_layoutHash(e)!==VS_layoutHash(after[i])))throw new Error('PAYROLL_RECOVERY_HISTORY_IMMUTABLE');};
+  const linked=e=>Object.prototype.hasOwnProperty.call(e,'salaryRecoveryId');
+  const positive=v=>Number.isSafeInteger(v)&&v>0;
+  if(b.collection==='teacher_salary'){
+    const before=list(prior.advanceRecoveries),after=list(next.advanceRecoveries);
+    append(before,after);
+    let recovered=0;const ids=new Set();
+    for(const link of after){
+      if(typeof link.id!=='string'||!link.id||ids.has(link.id)||!positive(link.amountPaise)||
+         link.salaryId!==b.id||link.month!==next.month||typeof next.staffId!=='string'||
+         link.advanceId!=='payroll_advance_'+VS_hash(next.staffId)||typeof link.reference!=='string'||!link.reference.trim()||
+         !Number.isSafeInteger(link.at))throw new Error('PAYROLL_RECOVERY_LINK_INVALID');
+      ids.add(link.id);recovered+=link.amountPaise;
+    }
+    if(after.length&&(!Number.isSafeInteger(recovered)||!Number.isSafeInteger(next.deductionPaise)||
+       next.deductionPaise<recovered+(next.attendanceAdjustment?.amountPaise||0)))throw new Error('PAYROLL_RECOVERY_DEDUCTION_IMMUTABLE');
+    if(after.length>before.length){
+      if(!bound||!existing||b.operation!=='write'||after.length!==before.length+1)throw new Error('PAYROLL_RECOVERY_PAIRED_BACKUP_REQUIRED');
+      const e=after[after.length-1],item=VS_sheetItem(VS_managedSheet('school_settings'),e.advanceId),advance=item&&item.data;
+      if(!item||item.schoolId!==school||!advance||advance._syncDeleted===true||advance.staffId!==next.staffId||
+         !Number.isSafeInteger(advance.balancePaise)||advance.balancePaise<e.amountPaise||list(advance.events).some(x=>x.id===e.id)||
+         next.paidPaise!==prior.paidPaise||next.netPaise!==prior.netPaise-e.amountPaise||
+         next.deductionPaise!==prior.deductionPaise+e.amountPaise)throw new Error('PAYROLL_RECOVERY_COUNTERPART_MISMATCH');
+    }
+  }else{
+    const before=list(prior.events).filter(linked),after=list(next.events).filter(linked);
+    append(before,after);
+    if(after.length>before.length){
+      if(!bound||!existing||b.operation!=='write'||after.length!==before.length+1)throw new Error('PAYROLL_RECOVERY_PAIRED_BACKUP_REQUIRED');
+      const e=after[after.length-1],item=typeof e.salaryId==='string'&&VS_sheetItem(VS_managedSheet('teacher_salary'),e.salaryId),salary=item&&item.data;
+      if(!item||item.schoolId!==school||!salary||salary._syncDeleted===true||salary.staffId!==next.staffId||
+         e.type!=='repayment'||e.salaryRecoveryId!==e.id||!positive(e.amountPaise)||
+         next.balancePaise!==prior.balancePaise-e.amountPaise||
+         list(salary.advanceRecoveries).filter(link=>link.id===e.id&&link.salaryId===e.salaryId&&link.advanceId===b.id&&
+          link.month===e.month&&link.amountPaise===e.amountPaise&&link.reference===e.reference&&link.at===e.recordedAt).length!==1)
+        throw new Error('PAYROLL_RECOVERY_COUNTERPART_MISMATCH');
+    }
+  }
+}
 function VS_validateSalaryLedger(current,next,operation){
   const fail=code=>{throw new Error(code);};
   const paise=v=>{if(!Number.isSafeInteger(v)||v<0)fail('SALARY_INVALID_AMOUNT');return v;};
@@ -887,9 +932,10 @@ function VS_managedRecordUnlocked(b,readContext) {
   if(b.collection==='teacher_salary'&&(b.operation==='write'||b.operation==='delete')){
     VS_guardClosedPayrollMonth(b,existing,school);
     VS_validateSalaryLedger(existing&&existing.data,b.data||{},b.operation);
+    VS_validatePayrollRecoveryBackup(b,existing,school);
   }
   if(b.collection==='school_settings'&&b.id.startsWith('payroll_month_'))VS_validatePayrollMonth(b,existing);
-  if(b.collection==='school_settings'&&b.id.startsWith('payroll_advance_'))VS_validatePayrollAdvance(b,existing,school);
+  if(b.collection==='school_settings'&&b.id.startsWith('payroll_advance_')){VS_validatePayrollAdvance(b,existing,school);VS_validatePayrollRecoveryBackup(b,existing,school);}
   if(b.collection==='school_settings'&&b.id.startsWith('payroll_leave_'))VS_validatePayrollLeave(b,existing,school);
   if(b.operation==='delete'){
     if(VS_recycleEnabled()&&b.syncProtocol!==2)throw new Error('Invalid sync operation');
@@ -1296,7 +1342,7 @@ function VS_managedHandle(e) {
       }
       result={storageReady:true,driveRootVerified:true,sheetsAccessVerified:sheetsVerified,documentVersions:1,recordSyncVersion:2,deleteEverywhereVersion:1,deleteEverywhereArchiveFastPathVersion:1,recordFieldPatchVersion:1,recordPointReadVersion:1,recordWriteBatchVersion:1,recordDeltaBatchVersion:1,recordChangeHeadsVersion:1,recordStorageVersion:VS_jsonEnabled()?2:1,recordJsonBackupVersion:VS_sheetLifecycleEnabled()?0:1,jsonSchemaVersion:VS_jsonEnabled()?1:0,organizedStorageVersion:2,managedViewVersion:1,recycleVersion:VS_recycleEnabled()?1:0,
         binaryInventoryVersion:1,binaryDownloadVersion:1,uploadResumableVersion:p.getProperty('VS_NATIVE_RESUMABLE_UPLOAD')==='1'?1:0,recordBackupVersion:VS_testBackupRecoveryEnabled()?4:0,disasterRehearsalVersion:VS_testBackupRecoveryEnabled()?5:0,disasterReadbackVersion:VS_testBackupRecoveryEnabled()?1:0,lastVerifiedRecordBackupAt:Number(p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP_AT')||0),
-        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',sheetLifecycleVersion:1,teacherRetirementVersion:VS_sheetLifecycleEnabled()?1:0,staffRetirementVersion:VS_sheetLifecycleEnabled()?1:0,recordStorageMode:VS_sheetLifecycleEnabled()?'sheets':VS_jsonEnabled()?'json':'sheets',attendanceScheduleVersion:1,attendanceBatchVersion:2,attendanceBatchMaxOperations:25,attendanceBatchBudgetMillis:45000,recordDeltaRecordsVersion:1,sheetIntegrityAuditVersion:1,recordLookupReuseVersion:1,photoReceiptVersion:1,scriptBundleVersion:'2026-11-04.4',googleEmail:'',...(b.profilePhoto===true?VS_managedOwnerProfilePhoto(root):{})};
+        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',sheetLifecycleVersion:1,teacherRetirementVersion:VS_sheetLifecycleEnabled()?1:0,staffRetirementVersion:VS_sheetLifecycleEnabled()?1:0,recordStorageMode:VS_sheetLifecycleEnabled()?'sheets':VS_jsonEnabled()?'json':'sheets',attendanceScheduleVersion:1,attendanceBatchVersion:2,attendanceBatchMaxOperations:25,attendanceBatchBudgetMillis:45000,recordDeltaRecordsVersion:1,sheetIntegrityAuditVersion:1,recordLookupReuseVersion:1,photoReceiptVersion:1,payrollLedgerVersion:2,payrollLeaveVersion:1,payrollRecoveryBackupVersion:1,scriptBundleVersion:'2026-11-04.4',googleEmail:'',...(b.profilePhoto===true?VS_managedOwnerProfilePhoto(root):{})};
     }
     else if(b.action==='managed_integrity_audit'){result=VS_managedIntegrityAudit(b);}
     else if(b.action==='managed_delta'){result=VS_managedDelta(b);}
