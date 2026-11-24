@@ -234,11 +234,13 @@ void main() {
     expect(find.text('Revoked'),findsOneWidget);
     await close(tester);
   });
-  testWidgets('saved devices survive unavailable refresh with gray lights and disabled revoke', (tester) async {
+  testWidgets('saved devices allow one offline removal intent but never authorize cached revoke', (tester) async {
     const scope='school-A';
     await WindowsDeviceDirectoryCache.write(scope,WindowsDeviceDirectoryCache.validate(response()['devices']));
     final pending=Completer<Map<String,dynamic>>();
-    await tester.pumpWidget(MaterialApp(builder: (context, child) => MediaQuery(data: MediaQuery.of(context).copyWith(disableAnimations: true), child: child!), home:WindowsDeviceManagement(requestRemovalApproval: (_) async => 'test-approval', cacheScope:()async=>scope,request:(a,b)=>pending.future)));
+    final actions=<String>[];
+    var approvals=0;
+    await tester.pumpWidget(MaterialApp(builder: (context, child) => MediaQuery(data: MediaQuery.of(context).copyWith(disableAnimations: true), child: child!), home:WindowsDeviceManagement(requestRemovalApproval: (_) async { approvals++; return 'test-approval'; }, cacheScope:()async=>scope,request:(a,b){actions.add(a);return pending.future;})));
     await tester.pumpAndSettle();
     expect(find.descendant(of: find.byKey(const ValueKey('device-directory-panel')), matching: find.text('School Office PC')),findsOneWidget);
     expect(find.text('Recently active'),findsNothing);
@@ -247,8 +249,16 @@ void main() {
       reason:'A cached Wi-Fi label is not live connectivity');
     expect(find.descendant(of: find.byKey(const ValueKey('device-directory-panel')), matching: find.text('Not verified')),findsNWidgets(2));
     expect(find.byType(LinearProgressIndicator),findsNothing);
-    final revoke=tester.widget<TextButton>(find.widgetWithText(TextButton,'Remove'));
-    expect(revoke.onPressed,isNull);
+    expect(find.widgetWithText(TextButton,'Remove'),findsNothing);
+    final queue=find.widgetWithText(TextButton,'Queue removal');
+    expect(tester.widget<TextButton>(queue).onPressed,isNotNull);
+    await tester.tap(queue); await tester.pumpAndSettle();
+    expect(find.text('Queue device removal?'),findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton,'Revoke')); await tester.pumpAndSettle();
+    expect(await WindowsDeviceDirectoryCache.pendingRevoke(scope),other);
+    expect(actions,['managed/device/list']);
+    expect(approvals,0);
+    expect(tester.widget<TextButton>(find.widgetWithText(TextButton,'Removal queued')).onPressed,isNull);
     pending.completeError(StateError('DEVICE_ROLLOUT_DISABLED'));
     await tester.pumpAndSettle();
     expect(find.descendant(of: find.byKey(const ValueKey('device-directory-panel')), matching: find.text('School Office PC')),findsOneWidget);
