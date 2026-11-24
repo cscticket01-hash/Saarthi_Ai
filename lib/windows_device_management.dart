@@ -1,4 +1,5 @@
 import 'windows_appearance.dart';
+import 'windows_admin_security.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'windows_connect/managed_school_session.dart';
@@ -41,7 +42,9 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
   bool busy = false, verified = false, revoking=false;
   int readGeneration=0;
   Timer? refreshTimer, activityTimer;
-  String? cacheScope;
+  String? cacheScope, pendingRevoke;
+  int? lastVerifiedAt;
+  int deviceLimit = 5;
   bool hasSnapshot=false, canRevoke=false;
   String activityFrame='';
   int? serverTime;
@@ -94,7 +97,12 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
       cacheScope=scope;
       final cached=scope==null ? <Map<String,dynamic>>[] : await WindowsDeviceDirectoryCache.read(scope);
       if(!mounted || session!=ManagedSchoolSession.changed.value) return;
+      final cachedVerified = scope == null ? null : await WindowsDeviceDirectoryCache.lastVerified(scope);
+      final pending = scope == null ? null : await WindowsDeviceDirectoryCache.pendingRevoke(scope);
+      if (!mounted || session != ManagedSchoolSession.changed.value) return;
       if(cached.isNotEmpty) setState(() {
+        lastVerifiedAt = cachedVerified;
+        pendingRevoke = pending;
         devices=deviceDirectoryCurrentFirst(cached); hasSnapshot=true;
         current=cached.singleWhere((r)=>r['current']==true && r['status']=='active')['deviceIdentity'] as String;
       });
@@ -112,7 +120,7 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
   void sessionChanged() {
     if (!mounted) return;
     readGeneration++;
-    setState(() { busy=false; revoking=false; devices = []; current = null; localConnectionType = null; verified = false; hasSnapshot=false; cacheScope=null; });
+    setState(() { busy=false; revoking=false; devices = []; current = null; localConnectionType = null; verified = false; hasSnapshot=false; cacheScope=null; pendingRevoke=null; lastVerifiedAt=null; });
     // A response from the previous session must never populate this page.
     Navigator.of(context).maybePop();
   }
@@ -155,11 +163,13 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
         current = marked['deviceIdentity'] as String;
         verified = true;
         canRevoke = response['canRevoke'] != false;
+        if (response['deviceLimit'] is int && response['deviceLimit'] > 0) deviceLimit = response['deviceLimit'] as int;
+        lastVerifiedAt = serverTime ?? DateTime.now().millisecondsSinceEpoch;
       });
       unawaited(refreshLocalConnection(session));
       final scope=cacheScope;
       if(scope!=null) {
-        try { await WindowsDeviceDirectoryCache.write(scope,ordered); } catch (_) { /* Cache is optional; server result remains authoritative. */ }
+        try { await WindowsDeviceDirectoryCache.write(scope,ordered,verifiedAt:lastVerifiedAt); } catch (_) { /* Cache is optional; server result remains authoritative. */ }
       }
     } catch (e) {
       if (mounted && session == ManagedSchoolSession.changed.value && generation==readGeneration) {
@@ -172,24 +182,49 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
   Future<void> revoke(Map<String,dynamic> row) async {
     final identity = row['deviceIdentity'];
     final session = ManagedSchoolSession.changed.value;
-    if (!verified || !canRevoke || revoking || identity == current || identity is! String || !identityPattern.hasMatch(identity)) return;
+    if (revoking || identity == current || identity is! String || !identityPattern.hasMatch(identity)) return;
+    final queueOnly = !verified;
+    if (queueOnly ? cacheScope == null : !canRevoke) return;
     final approved = await showDialog<bool>(context: context, builder: (context) { WindowsAppearance.watch(context); return  AlertDialog(
-      title: const Text('Revoke this PC?'),
-      content: Text('${row['name'] ?? 'PC'} will lose online school access. An offline PC receives this change when it reconnects; its existing offline authorization policy still applies. Local records will remain preserved.'),
+      title: Text(queueOnly ? 'Queue device removal?' : 'Revoke this PC?'),
+      content: Text(queueOnly
+        ? 'Queue removal for ${row['name'] ?? 'PC'}. Confirm with Admin Password when this PC reconnects.'
+        : '${row['name'] ?? 'PC'} will lose online school access. An offline PC receives this change when it reconnects; its existing offline authorization policy still applies. Local records will remain preserved.'),
       actions: [TextButton(onPressed: () => Navigator.pop(context,false), child: const Text('Cancel')),
         FilledButton(onPressed: () => Navigator.pop(context,true), child: const Text('Revoke'))],
     ); });
-    if (approved != true || !mounted || session != ManagedSchoolSession.changed.value || !verified || !canRevoke || revoking || identity==current) return;
+    if (approved != true || !mounted || session != ManagedSchoolSession.changed.value || revoking || identity==current) return;
+    if (queueOnly) {
+      final scope = cacheScope;
+      if (scope == null) return;
+      try {
+        await WindowsDeviceDirectoryCache.setPendingRevoke(scope, identity);
+        if (mounted && session == ManagedSchoolSession.changed.value) setState(() => pendingRevoke = identity);
+      } catch (failure) {
+        if (mounted && session == ManagedSchoolSession.changed.value) setState(() => error = failure.toString());
+      }
+      return;
+    }
+    if (!verified || !canRevoke) return;
+    final token = await requestWindowsAdminApproval(context,
+        scope: 'protected-settings', target: 'device/$identity');
+    if (token == null || !mounted || session != ManagedSchoolSession.changed.value || !verified || !canRevoke || revoking) return;
     readGeneration++; // A prior list response cannot undo this mutation.
     setState(() { busy = true; revoking=true; error = null; });
     try {
-      final result = await request('managed/device/revoke', {'targetDeviceIdentity':identity});
+      final result = await request('managed/device/revoke', {'targetDeviceIdentity':identity,'adminApprovalToken':token});
       if (result['success'] != true || result['device'] is! Map ||
           result['device']['deviceIdentity'] != identity || result['device']['status'] != 'revoked') {
         throw StateError('Revocation not verified. Refresh before retrying.');
       }
       if (!mounted || session != ManagedSchoolSession.changed.value) return;
-      setState(() { busy = false; revoking=false; verified = false; });
+      if (pendingRevoke == identity && cacheScope != null) {
+        await WindowsDeviceDirectoryCache.setPendingRevoke(cacheScope!, null);
+      }
+      if (!mounted || session != ManagedSchoolSession.changed.value) return;
+      setState(() { busy = false; revoking=false; verified = false;
+        if (pendingRevoke == identity) pendingRevoke = null;
+      });
       await load(silent:true);
     } catch(e) {
       if(mounted && session==ManagedSchoolSession.changed.value) setState(() { error=e.toString(); busy=false; revoking=false; verified=false; });
@@ -208,11 +243,12 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
       body: Align(alignment: Alignment.topCenter, child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth:1100),
         child: ListView(padding:const EdgeInsets.all(24), children:[
-          Text('Authorized PCs: ${hasSnapshot ? active : '—'} / 5   |   Recently active: ${verified ? recent : '—'}',
+          Text('Authorized PCs: ${hasSnapshot ? active : '—'} / $deviceLimit   |   Recently active: ${verified ? recent : '—'}',
             style:  TextStyle(fontFamily: 'Segoe UI', color:WindowsAppearance.foreground(Colors.white),fontSize:15)),
           const SizedBox(height:20),
           if(busy && !hasSnapshot) const LinearProgressIndicator(minHeight:2),
           if(hasSnapshot && !verified)  Padding(padding:EdgeInsets.only(bottom:10),child:Text('Saved device list • Activity not verified',style:TextStyle(fontFamily: 'Segoe UI', color:muted,fontSize:12))),
+          if (lastVerifiedAt != null) Text('Last verified: ${deviceTimeLabel(lastVerifiedAt)}'),
           if(error!=null) Padding(padding:const EdgeInsets.symmetric(vertical:12),child:Text(error!,style:TextStyle(fontFamily: 'Segoe UI', color:WindowsAppearance.foreground(Color(0xffffb4ab))))),
           Container(key:const ValueKey('device-directory-panel'),decoration:BoxDecoration(color:WindowsAppearance.background(const Color(0xff121f34)),borderRadius:BorderRadius.circular(16),border:Border.all(color:WindowsAppearance.outline(const Color(0xff26364f)))),
             child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
@@ -270,7 +306,7 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
                   );
                 }
                 Widget action(Map<String,dynamic> row) => row['status']=='active' && row['deviceIdentity']!=current
-                  ? TextButton(onPressed:revoking || !verified || !canRevoke ? null:()=>revoke(row),child:const Text('Revoke'))
+                  ? TextButton(onPressed:revoking || (verified ? !canRevoke : cacheScope == null) ? null:()=>revoke(row),child:Text(pendingRevoke == row['deviceIdentity'] ? (verified ? 'Confirm revoke' : 'Revoke queued') : 'Revoke'))
                   :  Text('—',style:TextStyle(fontFamily: 'Segoe UI', color:muted));
                 return Column(children:[
                   if(!compact)  Padding(padding:EdgeInsets.symmetric(horizontal:20,vertical:12),child:Row(children:[
