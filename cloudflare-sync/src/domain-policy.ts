@@ -138,6 +138,26 @@ export function validateClosedPayrollMonth(current:Json|null,next:Json,operation
  const immutable=(row:Json)=>Object.fromEntries(Object.entries(row).filter(([k])=>!allowed.has(k)&&!k.startsWith('_sync')));
  if(salaryCanonical(immutable(current))!==salaryCanonical(immutable(next)))reject('SALARY_MONTH_CLOSED');
 }
+export function validatePayrollLeave(current:Json|null,next:Json,operation:string,readOwner:(collection:string,id:string)=>Json|null,school:string):void {
+ if(operation==='delete'||next._syncDeleted===true)reject('SALARY_LEAVE_HISTORY_IMMUTABLE');
+ if(!nonempty(next.staffId)||typeof next.month!=='string'||!/^\d{4}-(0[1-9]|1[0-2])$/.test(next.month)||current&&(current.staffId!==next.staffId||current.month!==next.month))reject('SALARY_LEAVE_IDENTITY');
+ if(readOwner('school_settings','payroll_month_'+next.month)?.closed===true)reject('SALARY_MONTH_CLOSED');
+ const staffId=next.staffId,teacher=staffId.startsWith('teacher:');
+ const parentId=teacher?staffId.slice(8):staffId;
+ const owner=owned(school,readOwner(teacher?'teachers_directory':'staff_payroll_directory',parentId));
+ if(owner.id!==parentId||owner.active===false||owner.inactive===true||owner.deleted===true||owner._syncDeleted===true)reject('SALARY_LEAVE_OWNER_RETIRED');
+ boundedJson(next);
+ const before=salaryEvents(current?.events),after=salaryEvents(next.events);
+ salaryAppendOnly(before,after);
+ const ids=new Set<string>(),days=new Map<string,string>();
+ for(const e of after){
+  if(!nonempty(e.id)||ids.has(e.id)||typeof e.date!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(e.date)||!e.date.startsWith(next.month+'-')||
+   !Number.isFinite(Date.parse(e.date))||new Date(e.date).toISOString().slice(0,10)!==e.date||
+   typeof e.kind!=='string'||!['paid','unpaid','cancelled'].includes(e.kind)||days.get(e.date)===e.kind||e.kind==='cancelled'&&!days.has(e.date)||
+   typeof e.reason!=='string'||!e.reason.trim()||e.reason.length>500||!Number.isSafeInteger(e.at))reject('SALARY_LEAVE_EVENT_INVALID');
+  ids.add(e.id);days.set(e.date,e.kind);
+ }
+}
 export function validatePayrollAdvance(id:string,current:Json|null,next:Json,operation:string,readOwner:(collection:string,id:string)=>Json|null,school:string):void {
  if(!id.startsWith('payroll_advance_'))return;
  if(operation==='delete'||next._syncDeleted===true)reject('SALARY_ADVANCE_HISTORY_IMMUTABLE');
