@@ -22951,15 +22951,6 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
           ),
           IconButton(tooltip:'Refresh',onPressed:_loading?null:_load,
               icon:const Icon(Icons.refresh_rounded)),
-          const SizedBox(width:8),
-          Padding(padding:const EdgeInsets.symmetric(vertical:8,horizontal:12),
-            child:FilledButton.icon(
-              onPressed:_saving?null:_createExam,
-              icon:const Icon(Icons.add_rounded),
-              label:const Text('Create Exam'),
-              style:FilledButton.styleFrom(
-                  backgroundColor:WindowsAppearance.primary,
-                  foregroundColor:WindowsAppearance.onPrimary))),
         ],
       ),
       body: _loading ? Center(child: CircularProgressIndicator(
