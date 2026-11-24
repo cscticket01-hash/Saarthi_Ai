@@ -100,3 +100,14 @@ test('one-time fee payments require the server-locked student admission month',(
  assert.doesNotThrow(()=>run(monthly,{owner:student}));
  assert.throws(()=>run({...monthly,feeItems:{Admission:151}},{owner:student}),e=>e.code==='DOMAIN_FEE_ITEMS_TOTAL_MISMATCH');
 });
+
+test('zero admission snapshot permits ordinary monthly payment without admission ownership',()=>{
+ const monthly={studentId:'student',personId:'generation-one',month:'2026-05',
+  feeBillingPolicyVersion:1,expectedAmount:100,totalPaid:100,balance:0,status:'PAID',
+  installmentAmount:100,lastPaymentId:'event-one',
+  feeItems:{Tuition:100,Admission:0},feeFrequencies:{Tuition:'monthly',Admission:'once'}};
+ assert.doesNotThrow(()=>run(monthly));
+ assert.doesNotThrow(()=>run(monthly,{collection:'fee_ledger'}));
+ assert.throws(()=>run({...monthly,feeItems:{Tuition:90,Admission:10}}),
+  e=>e.code==='DOMAIN_FEE_ONCE_NOT_AUTHORIZED');
+});
