@@ -586,6 +586,11 @@ function VS_validatePersonContactFields(collection,current,next) {
   if(collection==='students_directory'&&changed('pinCode')&&next.pinCode!==null&&next.pinCode!==''&&
      (typeof next.pinCode!=='string'||!/^[0-9]{6}$/.test(next.pinCode.trim())))throw new Error('PERSON_POSTAL_PIN_INVALID');
   function parse(value){
+    if(value&&typeof value==='object'&&Object.keys(value).length===1&&typeof value.__vsTimestamp==='string'){
+      const iso=value.__vsTimestamp;
+      if(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(iso)||!Number.isFinite(Date.parse(iso)))return null;
+      value=iso.slice(0,10);
+    }
     if(typeof value!=='string')return null;
     const s=value.trim(),d=/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s),i=/^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
     if(!d&&!i)return null;
