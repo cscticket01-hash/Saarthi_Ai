@@ -1905,14 +1905,25 @@ class _LocalSchoolDatabase {
           ownerCollections = {...ownerScope.keys,'_windows_firebase_outbox',
             '_windows_local_deletions','_windows_recycle_requests'};
         }
-        final root = await _readRoot(collections:ownerCollections ?? {
+        final readCollections=ownerCollections ?? {
           ...operations.map((operation)=>operation.collection),
           '_windows_firebase_outbox','_windows_sync_baselines','_windows_sync_receipts',
           '_windows_sync_conflict_history','_windows_sync_resolution_history',
           '_windows_local_deletions','_windows_recycle_requests',
           if (retiringOwner) ...{'_windows_document_outbox','_local_student_documents','documents',
           'students_directory','teachers_directory',...studentOwnedCollections},
-        },recordScope:ownerScope ?? {for(final name in operations.map((o)=>o.collection).where((n)=>!n.startsWith('_windows_') && !retiringOwner).toSet())name:operations.where((o)=>o.collection==name).map((o)=>o.documentId).toSet().toList()});
+        };
+        final readScope=ownerScope ?? {for(final name in operations.map((o)=>o.collection).where((n)=>!n.startsWith('_windows_') && !retiringOwner).toSet())name:operations.where((o)=>o.collection==name).map((o)=>o.documentId).toSet().toList()};
+        // A read-only CAS dependency must be loaded even when the batch
+        // writes only a journal. Do not narrow existing full collection scans.
+        for(final dependency in expected.entries){
+          if(readCollections.add(dependency.key)){
+            readScope[dependency.key]=dependency.value.keys.toList();
+          }else if(readScope.containsKey(dependency.key)){
+            readScope[dependency.key]={...readScope[dependency.key]!,...dependency.value.keys}.toList();
+          }
+        }
+        final root = await _readRoot(collections:readCollections,recordScope:readScope);
         if(_activeProfileId!=profileAtEnqueue)throw StateError('School profile changed during queued write.');
         final collections = _collections(root);
         for (final collection in expected.entries) {
