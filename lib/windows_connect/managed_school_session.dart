@@ -46,7 +46,10 @@ class ManagedSchoolSession {
   }
   static Future<Map<String,dynamic>> call(String action,[Map<String,dynamic> body=const {}]) => callForSchool(null, action, body);
   static Future<Map<String,dynamic>> callForSchool(String? expectedSchoolId, String action, Map<String,dynamic> body,
-      {bool returnAfterDurableCloudflareHandoff=false}) async {
+      {bool returnAfterDurableCloudflareHandoff=false, bool backgroundHealthCheck=false}) async {
+    if (backgroundHealthCheck && !{'managed/cloudflare/status', 'managed/mobile/health'}.contains(action)) {
+      throw ArgumentError('Only read-only health actions may use backgroundHealthCheck');
+    }
     final saved=await CentralSchoolCloud.saved();verifyBuildEndpoint(saved['endpoint']?.toString()??'');if(saved['managed']!=true)throw StateError('Managed school login required');
     if(expectedSchoolId != null && saved['schoolId'] != expectedSchoolId) throw StateError('School changed before operation.');
     final cloud=CentralSchoolCloud(endpoint:saved['endpoint'],expectedSchoolId:saved['schoolId'],
@@ -57,7 +60,7 @@ class ManagedSchoolSession {
               ...await WindowsNetworkConnection.reportedMetadata()}
           : const <String,dynamic>{};
       final token=await CentralSchoolCloud.firebaseToken();
-      final visibleTransfer=action!='managed/events' && action!='managed/theme/state' && action!='managed/theme/unlock' && action!='managed/repair-knowledge/pull' && action!='managed/live/operationReceipt' && action!='managed/live/backupHistory' && action!='managed/cloudflare/operation'; // Quiet receipt/event polls are not foreground transfers.
+      final visibleTransfer=!backgroundHealthCheck && action!='managed/events' && action!='managed/theme/state' && action!='managed/theme/unlock' && action!='managed/repair-knowledge/pull' && action!='managed/live/operationReceipt' && action!='managed/live/backupHistory' && action!='managed/cloudflare/operation'; // Quiet receipt/event polls are not foreground transfers.
       if(visibleTransfer)activeTransfers.value++;
       final dataTransfer=WindowsSyncEvidence.dataAction(action);
       final dataSchool=saved['schoolId'].toString();

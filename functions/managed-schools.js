@@ -995,6 +995,25 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
  if(action==='managed/licence/activate'){if(hash(String(b.key||'').trim().toUpperCase())!==m.entitlement.licenseHash||!lease(m).allowed)fail(403,'Licence does not belong to this school or has expired');const ref=db.doc('school_entitlements/'+m.schoolId);
  await db.runTransaction(async tx=>{const current=await tx.get(ref);const e=current.data();if(!e||e.active!==true||e.blocked===true||e.licenseHash!==m.entitlement.licenseHash||Number(e.expiresAt)<=now()||Number(e.startsAt)>now())fail(403,'School licence changed or access was blocked');tx.set(ref,{activated:true},{merge:true});});return {...lease(m),activated:true,status:'licensed'};}
  if(!lease(m).allowed||(m.entitlement.status!=='trial'&&m.entitlement.activated!==true))fail(403,'Activate the school licence before normal operations');
+ if(action==='managed/mobile/health'){
+  // Authenticated PC/device probe. Never mint a student session or heartbeat.
+  const state=await mobileState(m.schoolId),school=state.school,entitlement=state.entitlement;
+  if(!school||school.managed!==true||school.deletedAt||!entitlement||!entitlement.active||entitlement.blocked)
+   fail(403,'Unable to connect: school is unavailable');
+  const e={...entitlement};
+  if(e.status!=='trial'){
+   const licence=state.licence;
+   if(!licence||licence.revoked!==false||licence.schoolId!==m.schoolId)fail(403,'School licence is inactive');
+   const end=licence.expiresAt;e.expiresAt=typeof end?.toMillis==='function'?end.toMillis():Number(end||0);
+  }
+  const mobileIdentity={schoolId:m.schoolId,entitlement:e},access=lease(mobileIdentity);
+  if(!access.allowed||(e.status!=='trial'&&e.activated!==true))fail(403,'School licence is inactive');
+  const result=await signedRequest(m,{action:'managed_mobile',
+   request:{action:'mobile_project_info'},lease:{schoolId:m.schoolId,expiresAt:access.expiresAt}});
+  if(result.success!==true||result.schoolId!==m.schoolId||result.projectId!==m.schoolId||result.mobileProtocol!==3)
+   fail(502,'Mobile server readiness could not be verified','MOBILE_HEALTH_UNVERIFIED');
+  return {success:true,schoolId:m.schoolId,mobileHealthVersion:1,mobileReady:true,mobileProtocol:3,observedAt:now()};
+ }
  if(typeof action==='string'&&action.startsWith('managed/live/')){
   if(action==='managed/live/rollout-status')return require('./live-sync-rollout-status').rolloutStatus({schoolId:m.schoolId,enabled:liveSync.enabled(m.schoolId),db,edge:cloudflareSync,readDrive:body=>signedRequest(m,body)});
   if(!liveSync.enabled(m.schoolId))fail(412,'Live sync is not enabled for this school','LIVE_SYNC_DISABLED');
