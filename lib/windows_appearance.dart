@@ -168,6 +168,9 @@ class WindowsAppearance {
 
   static Color background(Color source) {
     if (source.a == 0) return source;
+    if (presetId == 'aurora-liquid-glass' && mode.value == ThemeMode.light && source.r < .45 && source.g < .48 && source.b < .58 && source.b >= source.r * .85 && source.b >= source.g * .65) {
+      return const Color(0xFFF2F6FF).withValues(alpha: source.a * .90);
+    }
     if (presetId == 'midnight-glass' &&
         mode.value != ThemeMode.light &&
         source.r < .45 && source.g < .48 && source.b < .58 &&
@@ -219,7 +222,9 @@ class WindowsAppearance {
       iconTheme: IconThemeData(color: scheme.onSurfaceVariant),
       dividerColor: scheme.outlineVariant,
       cardTheme: CardThemeData(
-        color: dark && presetId == 'midnight-glass'
+        color: !dark && presetId == 'aurora-liquid-glass'
+            ? const Color(0xE6F7FAFF)
+            : dark && presetId == 'midnight-glass'
             ? const Color(0xA0294358)
             : scheme.surface,
         surfaceTintColor: Colors.transparent,
@@ -304,6 +309,8 @@ class WindowsAppearance {
           ? presetId == 'midnight-glass'
               ? Colors.transparent
               : preset?.darkBackground ?? const Color(0xFF0B141A)
+          : presetId == 'aurora-liquid-glass'
+          ? Colors.transparent
           : presetId == 'mint-light'
           ? const Color(0xFFECFAF7)
           : const Color(0xFFF3F5F7),
