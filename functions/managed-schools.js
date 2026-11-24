@@ -959,6 +959,25 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   if(!lease(m).allowed)fail(403,'School licence is inactive');
   return schoolAdminSecurity.handle(b,m);
  }
+ if(action==='managed/mobile/health'){
+  // Authenticated PC/device probe. Never mint a student session or heartbeat.
+  const state=await mobileState(m.schoolId),school=state.school,entitlement=state.entitlement;
+  if(!school||school.managed!==true||school.deletedAt||!entitlement||!entitlement.active||entitlement.blocked)
+   fail(403,'Unable to connect: school is unavailable');
+  const e={...entitlement};
+  if(e.status!=='trial'){
+   const licence=state.licence;
+   if(!licence||licence.revoked!==false||licence.schoolId!==m.schoolId)fail(403,'School licence is inactive');
+   const end=licence.expiresAt;e.expiresAt=typeof end?.toMillis==='function'?end.toMillis():Number(end||0);
+  }
+  const mobileIdentity={schoolId:m.schoolId,entitlement:e},access=lease(mobileIdentity);
+  if(!access.allowed||(e.status!=='trial'&&e.activated!==true))fail(403,'School licence is inactive');
+  const result=await signedRequest(m,{action:'managed_mobile',
+   request:{action:'mobile_project_info'},lease:{schoolId:m.schoolId,expiresAt:access.expiresAt}});
+  if(result.success!==true||result.schoolId!==m.schoolId||result.projectId!==m.schoolId||result.mobileProtocol!==3)
+   fail(502,'Mobile server readiness could not be verified','MOBILE_HEALTH_UNVERIFIED');
+  return {success:true,schoolId:m.schoolId,mobileHealthVersion:1,mobileReady:true,mobileProtocol:3,observedAt:now()};
+ }
  if(action==='managed/repair-knowledge/pull'){if(!lease(m).allowed)fail(403,'School licence is inactive');return {success:true,schoolId:m.schoolId,...await repairKnowledge.pull(m,b.observation||{})};}
  if(['managed/support/list','managed/support/create','managed/support/thread','managed/support/reply','managed/support/resolve'].includes(action))return createManagedSupport({db,now,fail})(action,b,m);
  // A restored Firebase session predates enrollment on existing PCs. Optional
