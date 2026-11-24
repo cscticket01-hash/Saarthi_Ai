@@ -1058,6 +1058,26 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
       result.state!=='superseded')fail(503,'Student slot review settlement unverified');
    return {success:true,...result};
   }
+  if(operation==='payroll-recovery-preview'){
+   if(!atomicBundleTestSchools.includes(m.schoolId))fail(412,'Payroll recovery pilot is disabled','ATOMIC_BUNDLE_TEST_DISABLED');
+   const validOp=value=>typeof value==='string'&&/^[A-Za-z0-9_-]{16,100}$/.test(value);
+   if(b.confirmIsolatedBundleTest!==true||!validOp(b.bundleId)||!validOp(b.salaryOperationId)||!validOp(b.advanceOperationId)||
+      b.salaryOperationId===b.advanceOperationId||typeof b.salaryId!=='string'||!/^[^/]{1,200}$/.test(b.salaryId)||
+      !/^payroll_advance_[a-f0-9]{64}$/.test(b.advanceId||'')||!Number.isSafeInteger(b.amountPaise)||b.amountPaise<=0||
+      typeof b.eventId!=='string'||!b.eventId||b.eventId.length>200||typeof b.reference!=='string'||!b.reference.trim()||b.reference.length>500)
+     fail(400,'Invalid payroll recovery proposal');
+   for(const collection of ['teacher_salary','school_settings'])await liveMigration.assertActive(m.schoolId,collection);
+   const result=await liveSync.command(m.schoolId,{command:'payrollRecoveryPreview',bundleId:b.bundleId,
+    salaryId:b.salaryId,advanceId:b.advanceId,salaryOperationId:b.salaryOperationId,advanceOperationId:b.advanceOperationId,
+    amountPaise:b.amountPaise,eventId:b.eventId,reference:b.reference.trim()});
+   if(result?.schoolId!==m.schoolId||result.bundleProtocol!==1||result.bundleId!==b.bundleId||result.preview!==true||
+      !Array.isArray(result.operations)||result.operations.length!==2||
+      !result.operations.every((op,i)=>op.collection===['teacher_salary','school_settings'][i]&&op.id===[b.salaryId,b.advanceId][i]&&
+       op.operationId===[b.salaryOperationId,b.advanceOperationId][i]&&op.operation==='write'&&op.data?.schoolId===m.schoolId&&
+       typeof op.expectedRevision==='string'&&op.expectedRevision))
+    fail(502,'Verified payroll proposal unavailable');
+   return {success:true,...result};
+  }
   if(operation==='payroll-recovery-publish'||operation==='payroll-recovery-receipt'){
    // Opt-in TEST only until local durable admission and the signed Drive
    // paired write/recovery proof are complete. Never fall back to two writes.
