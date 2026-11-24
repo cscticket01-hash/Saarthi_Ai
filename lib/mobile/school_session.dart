@@ -1631,6 +1631,7 @@ class SchoolSession {
       merged['notices']=authoritativeEdgeNotices;
     if (jsonEncode(merged).length > 2 * 1024 * 1024)
       throw StateError('School response exceeds cache safety limit.');
+    final previousAppearance = auroraAppearance.value;
     _applyPublishedAppearance(result['publishedAppearance']);
     dashboard = merged;
     person = Map<String, dynamic>.from(dashboard['person'] as Map? ?? person);
@@ -1645,6 +1646,7 @@ class SchoolSession {
     } catch (_) {
       if (generation != _generation)
         throw SchoolAccessDenied('School session changed.');
+      auroraAppearance.value = previousAppearance;
       dashboard = old;
       person = oldPerson;
       lastDashboardVerifiedAt = previousVerified;
