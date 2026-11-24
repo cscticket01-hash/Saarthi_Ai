@@ -547,7 +547,7 @@ void main() {
     addTearDown(WindowsAdminSecurity.clearPanelSession);
     await WindowsLocalSecurity.initialize();
     await WindowsLocalSecurity.create(adminId:'School app',password:'local-app-lock');
-    const adminPassword = 'Synthetic-Admin-Password-42';
+    const adminPassword = 'Admin42!';
     const target = 'failed/final-local';
     await WindowsAdminSecurity.enroll(schoolPassword:'',newPassword:adminPassword);
     await expectLater(WindowsAdminSecurity.approve(password:'local-app-lock',
