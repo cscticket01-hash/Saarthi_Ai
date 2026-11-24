@@ -179,7 +179,7 @@ void main() {
     await tester.pumpWidget(
       const MaterialApp(home: WindowsLocalDashboardGate()),
     );
-    await tester.pumpAndSettle();
+    await tester.pump();
     expect(find.text('Admin Panel Security'), findsNothing);
     expect(find.text('Admin Section Password'), findsNothing);
     expect(find.byType(WindowsAdminSessionDashboard), findsOneWidget);
