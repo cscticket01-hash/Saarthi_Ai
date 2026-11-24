@@ -303,7 +303,7 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
                   : 'Saved ${(100 * (1 - (processed!['optimized'] as Uint8List).length / selected!.bytes.length)).toStringAsFixed(1)}%'),
                 Text(selected!.mime == 'application/pdf'
                   ? 'Maximum 8 pages and 500 KB per student. Original PDF is preserved when within the limit.'
-                  : 'Single image target: 80 KB. Up to 8 imported pages and 500 KB of optimized scans per student. Readability takes priority.'),
+                  : 'Single image limit: 80 KB. Up to 8 imported pages and 500 KB of optimized scans per student. Original retained.'),
                 if (processed!['processingMillis'] is num)
                   Text(
                     'Processing time: ${((processed!['processingMillis'] as num) / 1000).toStringAsFixed(2)} s',
