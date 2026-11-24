@@ -131,15 +131,51 @@ class StaffPayroll {
         (doc.data()['date']?.toString()??'').startsWith('$month-'))
       doc.data()['date'].toString()};
   }
-  static Set<String> validatedUnpaidDays(String month,String raw,Set<String> present,DateTime now){
+  static Set<String> schoolWorkingDays(String month,Iterable<Map<String,dynamic>> calendar,List<dynamic> closedWeekdays){
+    rowId('attendance-calendar',month);
+    if(closedWeekdays.any((v)=>v is! int||v<0||v>6))throw StateError('School calendar settings require review.');
+    final start=DateTime.parse('$month-01');
+    final end=DateTime(start.year,start.month+1,1);
+    final overrides=<String,bool>{};
+    for(final r in calendar){
+      final key=(r['date']??r['id'])?.toString()??'';
+      if(!key.startsWith('$month-')||r['_syncDeleted']==true)continue;
+      final day=DateTime.tryParse(key);
+      if(day==null||!RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(key)||day.toIso8601String().substring(0,10)!=key||r['isOpen'] is! bool)throw StateError('Invalid school calendar entry.');
+      final open=r['isOpen'] as bool;
+      if(overrides.containsKey(key)&&overrides[key]!=open)throw StateError('Conflicting school calendar entries.');
+      overrides[key]=open;
+    }
+    final result=<String>{};
+    for(var d=start;d.isBefore(end);d=DateTime(d.year,d.month,d.day+1)){
+      final key=d.toIso8601String().substring(0,10);
+      if(overrides[key]??!closedWeekdays.contains(d.weekday%7))result.add(key);
+    }
+    return result;
+  }
+  static Future<Set<String>> loadWorkingDays(String profile,String month)async{
+    _sameSchool(profile);
+    final db=FirebaseFirestore.instance;
+    final config=(await db.collection('school_settings').doc('calendar').get()).data();
+    final rows=await db.collection('school_calendar').get();
+    _sameSchool(profile);
+    final closed=config?['closedWeekdays']??[0];
+    if(closed is! List)throw StateError('School calendar settings require review.');
+    return schoolWorkingDays(month,[for(final r in rows.docs){...r.data(),'id':r.id}],closed);
+  }
+  static int proratedDailyRate(int basicPaise,int workingDays){
+    if(basicPaise<0||workingDays<=0)throw ArgumentError('A valid basic salary and school working days are required.');
+    return (basicPaise+workingDays~/2)~/workingDays;
+  }
+  static Set<String> validatedUnpaidDays(String month,String raw,Set<String> present,DateTime now,{Set<String>? workingDays}){
     final dates=raw.split(',').map((v)=>v.trim()).where((v)=>v.isNotEmpty).toList();
     if(dates.toSet().length!=dates.length)throw FormatException('Duplicate unpaid dates.');
     final today=DateTime(now.year,now.month,now.day);
     for(final d in dates){
       final parsed=DateTime.tryParse(d);
       if(!RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(d)||!d.startsWith('$month-')||parsed==null||
-        parsed.toIso8601String().substring(0,10)!=d||!parsed.isBefore(today)||present.contains(d)){
-        throw FormatException('Invalid, future/current or recorded-present unpaid date: $d');
+        parsed.toIso8601String().substring(0,10)!=d||!parsed.isBefore(today)||present.contains(d)||workingDays!=null&&!workingDays.contains(d)){
+        throw FormatException('Invalid, closed, future/current or recorded-present unpaid date: $d');
       }
     }
     return dates.toSet();
@@ -357,7 +393,8 @@ class StaffPayroll {
       final dates=attendanceAdjustment['unpaidDates'],rate=attendanceAdjustment['ratePaise'],reason=attendanceAdjustment['reason'];
       if(dates is! List||rate is! int||rate<0||reason is! String||reason.trim().isEmpty)throw StateError('Attendance adjustment requires approved dates, rate and reason.');
       final present=await verifiedAttendanceDays(profile,employee,month);
-      final checked=validatedUnpaidDays(month,dates.join(','),present,DateTime.now());
+      final workingDays=await loadWorkingDays(profile,month);
+      final checked=validatedUnpaidDays(month,dates.join(','),present,DateTime.now(),workingDays:workingDays);
       if(checked.length*rate>deduction||attendanceAdjustment['amountPaise']!=checked.length*rate)throw StateError('Invalid attendance deduction.');
       await requireAdmin(profile,adminPassword);
     }
@@ -669,6 +706,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     final template=old==null?await StaffPayroll.structure(_profile,person['id'].toString()):null;
     if(!mounted)return;
     final present=await StaffPayroll.verifiedAttendanceDays(_profile,person,month);
+    final workingDays=await StaffPayroll.loadWorkingDays(_profile,month);
     if(!mounted)return;
     final priorAttendance=old?['attendanceAdjustment'] is Map?Map<String,dynamic>.from(old!['attendanceAdjustment'] as Map):<String,dynamic>{};
     final controllers = [for (final k in keys) TextEditingController(text: StaffPayroll.format((((old??template)?[k] as num?)?.toInt() ?? 0)-(k=='deductionPaise'?((priorAttendance['amountPaise'] as num?)?.toInt()??0):0)))];
@@ -676,7 +714,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     final rate=TextEditingController(text:StaffPayroll.format((priorAttendance['ratePaise'] as num?)?.toInt()??0));
     final reason=TextEditingController(text:priorAttendance['reason']?.toString()??'');
     Map<String,dynamic>? adjustment(){
-      final dates=StaffPayroll.validatedUnpaidDays(month,unpaid.text,present,DateTime.now());
+      final dates=StaffPayroll.validatedUnpaidDays(month,unpaid.text,present,DateTime.now(),workingDays:workingDays);
       if(dates.isEmpty&&priorAttendance.isEmpty)return null;
       final perDay=StaffPayroll.money(rate.text);
       if(dates.isNotEmpty&&perDay<=0)throw StateError('Enter a positive approved deduction per day.');
@@ -689,9 +727,10 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
       return [for (var i = 0; i < controllers.length; i++) TextField(controller: controllers[i],
         keyboardType: const TextInputType.numberWithOptions(decimal: true), onChanged: (_) => setD(() {}),
         decoration: InputDecoration(labelText: labels[i], prefixText: '₹ ')),
-        Text('Recorded QR present days: ${present.length}. Missing scans do not establish absence. Confirm unpaid dates against approved leave and the school calendar.'),
+        Text('School working days: ${workingDays.length} • Recorded QR present days: ${present.where(workingDays.contains).length}. Closed days cannot be deducted. Missing scans do not establish absence. Enter only approved unpaid dates; paid leave is excluded.'),
         TextField(controller:unpaid,onChanged:(_)=>setD((){}),decoration:const InputDecoration(labelText:'Approved unpaid dates (YYYY-MM-DD, comma separated)')),
         TextField(controller:rate,onChanged:(_)=>setD((){}),keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Approved deduction per day',prefixText:'₹ ')),
+        OutlinedButton(onPressed:workingDays.isEmpty?null:(){try{final daily=StaffPayroll.proratedDailyRate(StaffPayroll.money(controllers.first.text),workingDays.length);setD(()=>rate.text=StaffPayroll.format(daily));}catch(_){setD(()=>rate.text='');}},child:const Text('Calculate rate from basic salary / working days')),
         TextField(controller:reason,onChanged:(_)=>setD((){}),decoration:const InputDecoration(labelText:'Attendance adjustment approval / reason')),
         Text('Net salary: ₹$net', style: TextStyle(fontFamily: 'Segoe UI', fontSize: 20, fontWeight: FontWeight.bold)),
         Text('Salary changes preserve all recorded payments.')];
