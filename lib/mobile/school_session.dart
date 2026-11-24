@@ -961,6 +961,7 @@ class SchoolSession {
               'request': {
                 ...body,
                 'action': action,
+                if (action == 'mobile_login' || action == 'mobile_dashboard') 'appearanceProtocol': 1,
                 'sessionToken': schoolToken,
                 'deviceId': deviceId,
                 if (_cardAuthorizationToken != null)
