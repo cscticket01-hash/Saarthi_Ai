@@ -661,7 +661,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    const monthControl=col==='school_settings'&&String(b.id).startsWith('payroll_month_');
    const salaryMonth=col==='teacher_salary'?String(data.month||old.month||''):'';
    if(monthControl)validatePayrollMonth(String(b.id),current?old:null,data,String(b.operation));
-   if(salaryMonth&&readOwner('school_settings','payroll_month_'+salaryMonth)?.closed===true)validateClosedPayrollMonth(current?old:null,data,String(b.operation));
+   if(col==='teacher_salary'&&[old.month,data.month].some(m=>typeof m==='string'&&readOwner('school_settings','payroll_month_'+m)?.closed===true))validateClosedPayrollMonth(current?old:null,data,String(b.operation));
    if(col==='school_settings'&&String(b.id).startsWith('payroll_advance_')){
     if(b.operation!=='delete')demand(typeof data.staffId==='string'&&b.id==='payroll_advance_'+createHash('sha256').update(data.staffId).digest('hex'),'Invalid payroll advance identity',409);
     validatePayrollAdvance(String(b.id),current?old:null,data,String(b.operation),readOwner,school);
