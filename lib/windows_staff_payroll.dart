@@ -1,4 +1,5 @@
 import 'windows_payment_confirmation.dart';
+import 'main_dashboard_screen_windows.dart' show WindowsSectionLocks;
 import 'windows_appearance.dart';
 import 'windows_other_staff.dart';
 import 'windows_school_identity.dart';
@@ -45,6 +46,13 @@ class StaffPayroll {
   }
   static void _sameSchool(String profile) {
     if (FirebaseFirestore.instance.activeProfileId != profile) throw StateError('School changed. Reopen the salary page.');
+  }
+  static Future<void> requireAdmin(String profile, String? password) async {
+    _sameSchool(profile);
+    if (password == null || !await WindowsSectionLocks.verify(sectionKey: 'admin_section', password: password)) {
+      throw StateError('Admin Section password verification required. Configure it in Password Management.');
+    }
+    _sameSchool(profile);
   }
   static Future<T> _serial<T>(Future<T> Function() operation) {
     final next = _tail.then((_) => operation());
@@ -105,7 +113,7 @@ class StaffPayroll {
       (row['status']?.toString().toLowerCase() == 'paid' ? total(row) : 0);
   static int total(Map<String, dynamic> row) => (row['netPaise'] as num?)?.toInt() ?? ((row['amount'] as num? ?? 0) * 100).round();
   static Future<Map<String, dynamic>> save(String profile, Map<String, dynamic> person, String month,
-      {required int basic, int allowance = 0, int bonus = 0, int overtime = 0, int deduction = 0}) => _serial(() async {
+      {required int basic, int allowance = 0, int bonus = 0, int overtime = 0, int deduction = 0, String? adminPassword}) => _serial(() async {
     _sameSchool(profile);
     final people = await staff(profile);
     final current = people.where((s) => s['id'] == person['id']);
@@ -117,6 +125,11 @@ class StaffPayroll {
     final before = (await ref.get()).data();
     final old = before ?? <String, dynamic>{};
     _sameSchool(profile);
+    if (before != null) {
+      final same = old['basicPaise']==basic && old['allowancePaise']==allowance && old['bonusPaise']==bonus && old['overtimePaise']==overtime && old['deductionPaise']==deduction;
+      if (same) return old;
+      await requireAdmin(profile, adminPassword);
+    }
     final alreadyPaid = paid(old);
     if (amount < alreadyPaid) throw StateError('Net salary cannot be lower than the payments already recorded.');
     final row = <String, dynamic>{...old, 'id': id, 'staffId': employee['id'],
@@ -178,18 +191,15 @@ class StaffPayroll {
     required int correctedPaise,
     required String reason,
     required String correctionId,
-    required String appLockPassword,
+    required String adminPassword,
+    bool reverse = false,
   }) => _serial(() async {
     _sameSchool(profile);
-    await WindowsLocalSecurity.initialize();
-    if (!WindowsLocalSecurity.configured ||
-        !WindowsLocalSecurity.verifyPassword(appLockPassword)) {
-      throw StateError('App Lock verification required to modify a salary payment.');
-    }
+    await requireAdmin(profile, adminPassword);
     final explanation = SalaryPaymentCorrectionPolicy.validateNote(reason);
-    if (correctedPaise <= 0 || correctedPaise == expectedPaise ||
+    if (correctedPaise < 0 || (reverse ? correctedPaise != 0 : correctedPaise == 0) || correctedPaise == expectedPaise ||
         expectedPaise <= 0 || correctionId.trim().isEmpty) {
-      throw StateError('Enter a different, positive corrected amount.');
+      throw StateError('Enter a different positive amount, or use the explicit reversal action.');
     }
     final doc = FirebaseFirestore.instance.collection('teacher_salary').doc(salaryRowId);
     final row = (await doc.get()).data();
@@ -230,13 +240,12 @@ class StaffPayroll {
       'correctedPaise': correctedPaise,
       'differencePaise': correctedPaise - effective,
       'reason': explanation,
+      'eventType': reverse ? 'reversal' : 'correction',
       'authorizedBy': WindowsLocalSecurity.adminId,
       'correctedAt': timestamp,
     });
     _sameSchool(profile);
-    if (!WindowsLocalSecurity.verifyPassword(appLockPassword)) {
-      throw StateError('App Lock verification expired; original payment retained.');
-    }
+    await requireAdmin(profile, adminPassword);
     final batch = FirebaseFirestore.instance.batch();
     batch.requireUnchanged(doc, row);
     batch.set(doc, {
@@ -311,6 +320,8 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
   }
   Future<void> _salary(Map<String, dynamic> person, Map<String, dynamic>? old) async {
     final month = StaffPayroll.monthKey(_month);
+    final adminPassword = old == null ? null : await _adminAuthorization('Edit Salary');
+    if (old != null && adminPassword == null || !mounted) return;
     const keys = ['basicPaise', 'allowancePaise', 'bonusPaise', 'overtimePaise', 'deductionPaise'];
     const labels = ['Basic salary', 'Allowances', 'Bonus', 'Overtime', 'Deductions / advance adjustment'];
     final controllers = [for (final k in keys) TextEditingController(text: StaffPayroll.format((old?[k] as num?)?.toInt() ?? 0))];
@@ -324,7 +335,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
         Text('Salary changes preserve all recorded payments.')];
     }, () async {
       final v = controllers.map((c) => StaffPayroll.money(c.text)).toList();
-      await StaffPayroll.save(_profile, person, month, basic:v[0],allowance:v[1],bonus:v[2],overtime:v[3],deduction:v[4]);
+      await StaffPayroll.save(_profile, person, month, basic:v[0],allowance:v[1],bonus:v[2],overtime:v[3],deduction:v[4],adminPassword:adminPassword);
     });
     await Future<void>.delayed(const Duration(milliseconds: 250));
     for (final c in controllers) { c.dispose(); }
@@ -357,56 +368,64 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     amount.dispose(); reference.dispose();
   }
 
-  Future<void> _correctPayment(Map<String,dynamic> salary) async {
+  Future<String?> _adminAuthorization(String action) async {
+    StaffPayroll._sameSchool(_profile);
+    if (!await WindowsSectionLocks.configured('admin_section')) {
+      if(mounted) setState(() => _error = 'Configure the Admin Section password in Password Management before changing financial records.');
+      return null;
+    }
+    if(!mounted) return null;
+    final controller = TextEditingController();
+    try {
+      return await showDialog<String>(context:context,barrierDismissible:false,builder:(dialog){
+        String? error;
+        bool checking=false;
+        return StatefulBuilder(builder:(ctx,refresh)=>AlertDialog(
+          title:Text('Admin Password • $action'),
+          content:Column(mainAxisSize:MainAxisSize.min,children:[
+            TextField(controller:controller,obscureText:true,autofocus:true,enableSuggestions:false,autocorrect:false,
+              decoration:const InputDecoration(labelText:'Admin Section password')),
+            if(error!=null)Text(error!),
+          ]),
+          actions:[
+            TextButton(onPressed:checking?null:()=>Navigator.pop(dialog),child:const Text('Cancel')),
+            FilledButton(onPressed:checking?null:()async{
+              refresh(()=>checking=true);
+              try {
+                await StaffPayroll.requireAdmin(_profile,controller.text);
+                if(dialog.mounted)Navigator.pop(dialog,controller.text);
+              } catch (_) {
+                if(ctx.mounted)refresh((){checking=false;error='Admin password incorrect or school changed.';});
+              }
+            },child:const Text('Verify')),
+          ]));
+      });
+    } finally {
+      await Future<void>.delayed(const Duration(milliseconds:250));
+      controller.dispose();
+    }
+  }
+
+  Future<void> _correctPayment(Map<String,dynamic> salary,{bool reverse=false}) async {
     StaffPayroll._sameSchool(_profile);
     final raw = List<dynamic>.from(salary['payments'] as List? ?? []);
-    final eligible = raw.whereType<Map>().where((p) =>
-        p['id'] is String && p['amountPaise'] is num).toList();
-    if (eligible.isEmpty) {
-      setState(() => _error = 'This is a legacy paid total without individual payment details. Open payment history for review; automatic correction is blocked.');
-      return;
-    }
-    await WindowsLocalSecurity.initialize();
-    if (!WindowsLocalSecurity.configured) {
-      setState(() => _error = 'Configure this school App Lock before modifying payment records.');
-      return;
-    }
-    final lock = TextEditingController();
-    String? password;
+    final history = List<dynamic>.from(salary['paymentCorrections'] as List? ?? []);
+    final eligible = <Map>[];
     try {
-      password = await showDialog<String>(context: context, barrierDismissible:false,
-        builder: (dialog) {
-          String? error;
-          return StatefulBuilder(builder:(context, refresh) => AlertDialog(
-            title: const Text('App Lock • Modify Payment'),
-            content: SizedBox(width:410, child:Column(mainAxisSize:MainAxisSize.min,
-              crossAxisAlignment:CrossAxisAlignment.start, children:[
-                const Text('Confirm your school App Lock password before changing this financial record.'),
-                const SizedBox(height:16),
-                TextField(controller:lock, obscureText:true, autofocus:true,
-                  decoration:const InputDecoration(labelText:'App Lock password')),
-                if(error!=null) Padding(padding:const EdgeInsets.only(top:10),
-                  child:Text(error!,style:const TextStyle(color:Colors.redAccent))),
-              ])),
-            actions:[
-              TextButton(onPressed:()=>Navigator.pop(dialog),child:const Text('Cancel')),
-              FilledButton(onPressed:(){
-                if (FirebaseFirestore.instance.activeProfileId != _profile ||
-                    !WindowsLocalSecurity.verifyPassword(lock.text)) {
-                  refresh(()=>error='App Lock incorrect or school changed.');
-                  return;
-                }
-                Navigator.pop(dialog,lock.text);
-              },child:const Text('Unlock')),
-            ],
-          ));
-        });
-    } finally {
-      // Dialog widgets remain mounted during their closing animation.
-      await Future<void>.delayed(const Duration(milliseconds:250));
-      lock.dispose();
+      for(final p in raw.whereType<Map>()) {
+        if(p['id'] is String && p['amountPaise'] is num &&
+           SalaryPaymentCorrectionPolicy.effectiveAmount(Map<String,dynamic>.from(p),history)>0) eligible.add(p);
+      }
+    } catch(e) {
+      if(mounted)setState(()=>_error='$e');
+      return;
     }
-    if (password == null || !mounted) return;
+    if (eligible.isEmpty) {
+      if(mounted)setState(() => _error = 'No active itemized payment available. Legacy balances require manual review.');
+      return;
+    }
+    final password = await _adminAuthorization(reverse?'Reverse Payment':'Modify Payment');
+    if(password==null||!mounted)return;
     StaffPayroll._sameSchool(_profile);
     final corrections = List<dynamic>.from(salary['paymentCorrections'] as List? ?? []);
     final choices = <String,Map<String,dynamic>>{};
@@ -421,10 +440,10 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     final note = TextEditingController();
     int effective(String id) => SalaryPaymentCorrectionPolicy.effectiveAmount(
       choices[id]!,corrections);
-    amount.text=StaffPayroll.format(effective(selected));
+    amount.text=reverse?'0.00':StaffPayroll.format(effective(selected));
     final correctionId='${salary['id']}:correction:${DateTime.now().microsecondsSinceEpoch}';
     try {
-      await _editor('Modify Payment • ${salary['name']}', (setD) => [
+      await _editor('${reverse?'Reverse Payment':'Modify Payment'} • ${salary['name']}', (setD) => [
         DropdownButtonFormField<String>(
           value:selected,isExpanded:true,
           decoration:const InputDecoration(labelText:'Recorded payment to correct'),
@@ -433,11 +452,11 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
             child:Text('Original ₹${StaffPayroll.format((item.value['amountPaise'] as num).toInt())} • ${item.key}',
               maxLines:1,overflow:TextOverflow.ellipsis))],
           onChanged:(v){if(v!=null)setD((){
-            selected=v;amount.text=StaffPayroll.format(effective(selected));
+            selected=v;amount.text=reverse?'0.00':StaffPayroll.format(effective(selected));
           });},
         ),
         Text('Previous recorded: ₹${StaffPayroll.format(effective(selected))}'),
-        TextField(controller:amount,
+        if(reverse) const Text('Reversal cancels the recorded payment amount. It does not refund or transfer money.') else TextField(controller:amount,
           keyboardType:const TextInputType.numberWithOptions(decimal:true),
           decoration:const InputDecoration(labelText:'Corrected recorded amount',prefixText:'₹ '),
           onChanged:(_)=>setD((){})),
@@ -459,7 +478,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
         final corrected=StaffPayroll.money(amount.text);
         await StaffPayroll.correctPayment(_profile,salary['id'].toString(),selected,
           expectedPaise:expected,correctedPaise:corrected,
-          reason:note.text,correctionId:correctionId,appLockPassword:password!);
+          reason:note.text,correctionId:correctionId,adminPassword:password,reverse:reverse);
       });
     } finally {
       await Future<void>.delayed(const Duration(milliseconds:250));
@@ -582,6 +601,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
             Card(child:ListTile(title:Text('${row['name'] ?? row['teacherId'] ?? 'Previous staff'} • ₹${StaffPayroll.format(StaffPayroll.total(row))}'),subtitle:Text('${row['status'] ?? 'Previous record'} • Balance ₹${StaffPayroll.format(StaffPayroll.total(row)-StaffPayroll.paid(row))}'),trailing:Wrap(spacing:8,children:[
               if(row['netPaise'] is num && StaffPayroll.paid(row)<StaffPayroll.total(row)) TextButton(onPressed:()=>_payment(row),child:Text('Record payment')),
               if(StaffPayroll.paid(row)>0) TextButton(onPressed:()=>_correctPayment(row),child:Text('Modify payment')),
+              if(StaffPayroll.paid(row)>0) TextButton(onPressed:()=>_correctPayment(row,reverse:true),child:Text('Reverse payment')),
               IconButton(tooltip:'Payment history',icon:Icon(Icons.history),onPressed:()=>_history(row)),
               IconButton(tooltip:'View payslip',icon:Icon(Icons.receipt_long),onPressed:_working?null:()=>_output(row:row)),
             ]))),
@@ -618,11 +638,13 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
           if(action=='edit')_salary(person,row);
           if(action=='pay'&&row!=null)_payment(row);
           if(action=='correct'&&row!=null)_correctPayment(row);
+          if(action=='reverse'&&row!=null)_correctPayment(row,reverse:true);
           if(action=='history'&&row!=null)_history(row);
         },itemBuilder:(_)=>[
           PopupMenuItem(value:'edit',child:Text(row==null?'Set salary':'Edit salary')),
           if(row!=null&&StaffPayroll.paid(row)<StaffPayroll.total(row))const PopupMenuItem(value:'pay',child:Text('Record payment')),
-          if(row!=null&&StaffPayroll.paid(row)>0)const PopupMenuItem(value:'correct',child:Text('Modify Payment • App Lock')),
+          if(row!=null&&StaffPayroll.paid(row)>0)const PopupMenuItem(value:'correct',child:Text('Modify Payment • Admin Password')),
+          if(row!=null&&StaffPayroll.paid(row)>0)const PopupMenuItem(value:'reverse',child:Text('Reverse Payment • Admin Password')),
           if(row!=null)const PopupMenuItem(value:'history',child:Text('Payment history')),
         ]),
       ])),
