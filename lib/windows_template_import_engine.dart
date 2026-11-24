@@ -729,6 +729,37 @@ class SchoolTemplateImportEngine {
         ),
       ));
     }
+    // Existing approved template geometry is never altered. A real salary
+    // record receives its accounting identifiers on a separate audit page.
+    final salaryId=record['payslipRecordId']?.toString()??'';
+    if(draft.kind==SchoolTemplateKind.payslip&&salaryId.isNotEmpty){
+      final payments=(record['payments'] as List? ?? []).whereType<Map>();
+      final corrections=(record['paymentCorrections'] as List? ?? []).whereType<Map>();
+      pdf.addPage(pw.MultiPage(
+        pageFormat:PdfPageFormat.a4,margin:const pw.EdgeInsets.all(36),
+        build:(_)=>[
+          pw.Text('Payslip accounting reference',style:pw.TextStyle(font:normal,fontSize:18)),
+          pw.SizedBox(height:12),
+          pw.Text('Salary record: $salaryId',style:font),
+          pw.Text('Salary month: '+valueFor('month',record),style:font),
+          pw.Text('Employee ID: '+valueFor('employeeId',record),style:font),
+          pw.SizedBox(height:12),
+          for(final p in payments) ...[
+            pw.Text("Payment ID: ${p['id']??'Not recorded'}",style:font),
+            pw.Text("Amount (paise): ${p['amountPaise']??'Not recorded'} | Method: ${p['mode']??'Not recorded'}",style:font),
+            pw.SizedBox(height:6),
+          ],
+          for(final c in corrections) ...[
+            pw.Text("Correction / reversal ID: ${c['id']??'Not recorded'}",style:font),
+            pw.Text("Original payment ID: ${c['paymentId']??'Not recorded'}",style:font),
+            pw.Text("Adjustment (paise): ${c['differencePaise']??'Not recorded'}",style:font),
+            pw.SizedBox(height:6),
+          ],
+          if(payments.isEmpty)pw.Text('No itemized payment identifiers recorded.',style:font),
+          pw.Divider(),
+          pw.Text('This audit page is a record summary, not a new payment.',style:font),
+        ]));
+    }
     return pdf.save();
   }
 

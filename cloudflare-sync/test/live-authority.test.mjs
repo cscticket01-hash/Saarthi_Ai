@@ -771,3 +771,40 @@ test('financial school PDF cannot be read after its original document is deleted
    id:before.value.id})).status,409,
    'Deleted original cannot authorize stale Cloudflare PDF bytes');
 });
+
+test('isolated payroll recovery rolls back stale pair and accepts exact two-record transaction',async()=>{
+ const staffId='teacher:teacher-stage-first',salaryId='payroll-native-recovery-salary';
+ const advanceId='payroll_advance_'+createHash('sha256').update(staffId).digest('hex');
+ await seed('teacher_salary');
+ const baseSalary={id:salaryId,schoolId:A,staffId,teacherId:'teacher-stage-first',employeeId:'teacher-stage-first',month:'2026-11',
+  basicPaise:2000000,deductionPaise:0,netPaise:2000000,paidPaise:0,balancePaise:2000000,amount:20000,status:'Pending'};
+ const baseAdvance={schoolId:A,staffId,balancePaise:400000,events:[{id:'original-loan',type:'loan',amountPaise:400000,reference:'Synthetic loan',recordedAt:1795500000000}]};
+ const salary=await rpc({command:'commit',collection:'teacher_salary',id:salaryId,operation:'write',operationId:'payroll-native-salary-init-001',expectedRevision:'',data:baseSalary});
+ assert.equal(salary.status,200,JSON.stringify(salary));
+ const advance=await rpc({command:'commit',collection:'school_settings',id:advanceId,operation:'write',operationId:'payroll-native-advance-init-001',expectedRevision:'',data:baseAdvance});
+ assert.equal(advance.status,200,JSON.stringify(advance));
+ const at=1795500000000,reference='Synthetic salary recovery',id='recovery-native-001';
+ const link={id,amountPaise:100000,salaryId,advanceId,month:'2026-11',reference,at};
+ const operations=[
+  {collection:'teacher_salary',id:salaryId,operation:'write',operationId:'payroll-native-salary-recover-001',expectedRevision:salary.value.recordRevision,
+   data:{...baseSalary,advanceRecoveries:[link],deductionPaise:100000,netPaise:1900000,amount:19000,balancePaise:1900000,updatedAt:at}},
+  {collection:'school_settings',id:advanceId,operation:'write',operationId:'payroll-native-advance-recover-001',expectedRevision:advance.value.recordRevision,
+   data:{...baseAdvance,balancePaise:300000,events:[...baseAdvance.events,{id,type:'repayment',amountPaise:100000,reference,recordedAt:at,salaryRecoveryId:id,salaryId,month:'2026-11'}],updatedAt:at}},
+ ];
+ const request={command:'bundleCommit',bundleId:'payroll-native-bundle-001',operations};
+ const bad=await rpc({...request,operations:[operations[0],{...operations[1],expectedRevision:'stale'}]});
+ assert.equal(bad.status,428,JSON.stringify(bad));
+ const standalone=await rpc({command:'commit',...operations[0]});
+ assert.equal(standalone.status,409,JSON.stringify(standalone));
+ const tampered=await rpc({...request,operations:[operations[0],{...operations[1],data:{...operations[1].data,balancePaise:1}}]});
+ assert.equal(tampered.status,409,JSON.stringify(tampered));
+ const before=(await rpc({command:'read',collection:'teacher_salary',id:salaryId})).value.record;
+ assert.equal(before.netPaise,2000000);
+ const committed=await rpc(request);
+ assert.equal(committed.status,200,JSON.stringify(committed));
+ assert.equal(committed.value.acknowledgements.length,2);
+ assert.equal(committed.value.backupState,'pending');
+ assert.deepEqual((await rpc(request)).value,committed.value);
+ assert.equal((await rpc({command:'read',collection:'teacher_salary',id:salaryId})).value.record.netPaise,1900000);
+ assert.equal((await rpc({command:'read',collection:'school_settings',id:advanceId})).value.record.balancePaise,300000);
+});

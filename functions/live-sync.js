@@ -79,6 +79,24 @@ function createLiveSync({edge,schools=[],now=Date.now}){
   return command(school,{...wire,command:'commit',
     ...(baseline?{baseline}:{}),...(promotionProof?{promotionProof}:{})});
  }
+ async function payrollRecovery(school,body,readDrive){
+  const publishing=body.command==='bundleCommit';
+  if(!publishing&&body.command!=='payrollRecoveryPreview')refuse(400,'PAYROLL_RECOVERY_INVALID_COMMAND');
+  if(publishing){
+   // Lost HTTP response: settle against the immutable pair before reading
+   // today's balances. A replay must not require the original current head.
+   const prior=await command(school,{command:'bundleReceipt',bundleId:body.bundleId,operations:body.operations});
+   if(prior?.schoolId!==school||typeof prior.found!=='boolean')refuse(502,'PAYROLL_RECEIPT_UNVERIFIED');
+   if(prior.found===true)return prior.receipt;
+  }
+  const targets=publishing?body.operations:[{collection:'teacher_salary',id:body.salaryId},{collection:'school_settings',id:body.advanceId}];
+  if(!Array.isArray(targets)||targets.length!==2||targets[0].collection!=='teacher_salary'||targets[1].collection!=='school_settings')refuse(400,'PAYROLL_RECOVERY_INVALID_PAIR');
+  const records=await Promise.all(targets.map(op=>resolve(school,op.collection,op.id,readDrive)));
+  if(records.some(({result},i)=>result.schoolId!==school||!result.record||result.record._syncDeleted===true||
+    publishing&&result.recordRevision!==targets[i].expectedRevision))refuse(409,'PAYROLL_RECOVERY_BASELINE_CHANGED');
+  const payrollBaselines=records.map(({baseline})=>baseline);
+  return command(school,{...body,payrollBaselines});
+ }
  async function replay(school,body,readDrive){
   const result=await command(school,body),cache=new Map();
   const authority=body.command==='changes'?await command(school,{command:'head'}):null;
@@ -249,7 +267,7 @@ function createLiveSync({edge,schools=[],now=Date.now}){
   const result=await command(school,{command:'rollbackSeal',collection,cursor:head.cursor,fingerprint});
   return {success:true,...result,rollbackToken};
  }
- return {enabled,command,prepare,drain,read,commit,replay,rollback};
+ return {enabled,command,prepare,drain,read,commit,payrollRecovery,replay,rollback};
 }
 function liveGrant({schoolId,uid,key,endpoint,now=Date.now()}){
  const value=Buffer.from(JSON.stringify({version:1,schoolId,uid,expiresAt:now+60000})).toString('base64url');

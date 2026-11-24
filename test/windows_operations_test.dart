@@ -9,7 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../lib/windows_staff_payroll.dart';
 import '../lib/windows_salary_payment_correction.dart';
-import '../lib/main_dashboard_screen_windows.dart' show TeachersDirectoryScreen;
+import '../lib/main_dashboard_screen_windows.dart' show TeachersDirectoryScreen, WindowsSectionLocks;
 import '../lib/windows_salary_history.dart';
 import '../lib/fitted_document_preview.dart';
 import 'package:printing/src/interface.dart';
@@ -53,10 +53,33 @@ void main() {
     expect(find.text('Open teachers'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });
+  test('durable payroll journal checks read-only salary and advance dependencies atomically',()async{
+    await db.ensureDurableSchoolRecords();
+    expect(await db.localPersistenceEnabled(),true);
+    final salary=db.collection('teacher_salary').doc('cas-salary'),advance=db.collection('school_settings').doc('cas-advance'),
+      journal=db.collection('_local_payroll_recovery_journal').doc('cas-advance');
+    await salary.set({'netPaise':100000});
+    await advance.set({'balancePaise':40000});
+    final beforeSalary=(await salary.get()).data()!,beforeAdvance=(await advance.get()).data()!;
+    final batch=db.batch();
+    batch.requireUnchanged(salary,beforeSalary);batch.requireUnchanged(advance,beforeAdvance);
+    batch.requireUnchanged(journal,null);batch.set(journal,{'state':'pending'});
+    await batch.commit();
+    expect((await journal.get()).data()?['state'],'pending');
+    expect((await salary.get()).data(),beforeSalary);expect((await advance.get()).data(),beforeAdvance);
+    final oldJournal=(await journal.get()).data();
+    final stale=db.batch();stale.requireUnchanged(salary,beforeSalary);stale.requireUnchanged(journal,oldJournal);
+    stale.update(journal,{'state':'cloudCommitted'});
+    await salary.update({'netPaise':90000});
+    await expectLater(stale.commit(),throwsStateError);
+    expect((await journal.get()).data()?['state'],'pending');
+    expect((await salary.get()).data()?['netPaise'],90000);
+  });
   test('salary correction audit requires 100–300 words and never changes the original', () async {
     final profile=db.activeProfileId;
     await WindowsLocalSecurity.initialize();
     await WindowsLocalSecurity.create(adminId:'School Admin',password:'secure-lock-123');
+    await WindowsSectionLocks.addPassword(sectionKey:'admin_section',password:'payroll-admin-456');
     const rowId='salary-correction-fixture',paymentId='payment-original';
     final original=<String,dynamic>{
       'id':rowId,'name':'Teacher Test','month':'2026-10','netPaise':500000,
@@ -71,11 +94,11 @@ void main() {
     expect(()=>SalaryPaymentCorrectionPolicy.validateNote(List.filled(301,'word').join(' ')),throwsFormatException);
     await expectLater(StaffPayroll.correctPayment(profile,rowId,paymentId,
         expectedPaise:50000,correctedPaise:500000,reason:reason,
-        correctionId:'correction-1',appLockPassword:'wrong'),throwsStateError);
+        correctionId:'correction-1',adminPassword:'secure-lock-123'),throwsStateError);
     expect((await db.collection('teacher_salary').doc(rowId).get()).data()?['paidPaise'],50000);
     await StaffPayroll.correctPayment(profile,rowId,paymentId,
         expectedPaise:50000,correctedPaise:500000,reason:reason,
-        correctionId:'correction-1',appLockPassword:'secure-lock-123');
+        correctionId:'correction-1',adminPassword:'payroll-admin-456');
     final saved=(await db.collection('teacher_salary').doc(rowId).get()).data()!;
     expect((saved['payments'] as List).single['amountPaise'],50000);
     expect((saved['paymentCorrections'] as List),hasLength(1));
@@ -89,14 +112,23 @@ void main() {
     expect(events.any((e)=>e['reference']?.toString().contains('Legacy paid total')==true),false);
     await StaffPayroll.correctPayment(profile,rowId,paymentId,
         expectedPaise:50000,correctedPaise:500000,reason:reason,
-        correctionId:'correction-1',appLockPassword:'secure-lock-123');
+        correctionId:'correction-1',adminPassword:'payroll-admin-456');
     expect(((await db.collection('teacher_salary').doc(rowId).get()).data()!['paymentCorrections'] as List),hasLength(1));
     await expectLater(StaffPayroll.correctPayment(profile,rowId,paymentId,
         expectedPaise:50000,correctedPaise:510000,reason:reason,
-        correctionId:'correction-2',appLockPassword:'secure-lock-123'),throwsStateError);
+        correctionId:'correction-2',adminPassword:'payroll-admin-456'),throwsStateError);
     final unchanged=(await db.collection('teacher_salary').doc(rowId).get()).data()!;
     expect(unchanged['paidPaise'],500000);
     expect((unchanged['payments'] as List).single['amountPaise'],50000);
+    await StaffPayroll.correctPayment(profile,rowId,paymentId,expectedPaise:500000,correctedPaise:0,reason:reason,correctionId:'reversal-1',adminPassword:'payroll-admin-456',reverse:true);
+    await StaffPayroll.correctPayment(profile,rowId,paymentId,expectedPaise:500000,correctedPaise:0,reason:reason,correctionId:'reversal-1',adminPassword:'payroll-admin-456',reverse:true);
+    final reversed=(await db.collection('teacher_salary').doc(rowId).get()).data()!;
+    expect(reversed['paidPaise'],0);
+    expect(reversed['balancePaise'],500000);
+    expect(reversed['status'],'Pending');
+    expect((reversed['payments'] as List).single['amountPaise'],50000);
+    expect((reversed['paymentCorrections'] as List),hasLength(2));
+    expect((reversed['paymentCorrections'] as List).last['eventType'],'reversal');
   });
   test('payment history keeps separate staff/month events and never invents missing times', () {
     final rows = [
@@ -318,6 +350,110 @@ void main() {
     expect(saved['status'], 'Paid');
     expect(saved['balancePaise'], 0);
     expect(saved['payments'], hasLength(2));
+  });
+  test('legacy normalization derives only known amounts and preserves ambiguous rows',(){
+    expect(StaffPayroll.legacyProposal({'month':'2026-10','netPaise':10000,'paidPaise':3000,'status':'Part paid'}),{'balancePaise':7000});
+    expect(StaffPayroll.legacyProposal({'month':'2026-10','amount':100,'status':'Paid'}),{'netPaise':10000,'paidPaise':10000,'balancePaise':0,'status':'Paid'});
+    expect(StaffPayroll.legacyProposal({'month':'2026-10','amount':100,'status':'Part paid'}),isNull);
+  });
+  test('advance ledger rejects duplicate events and repayments above outstanding',(){
+    final advance={'id':'a','type':'advance','amountPaise':5000};
+    final repayment={'id':'r','type':'repayment','amountPaise':2000};
+    expect(StaffPayroll.advanceBalance([advance,repayment]),3000);
+    expect(()=>StaffPayroll.advanceBalance([advance,advance]),throwsStateError);
+    expect(()=>StaffPayroll.advanceBalance([advance,{'id':'r','type':'repayment','amountPaise':6000}]),throwsStateError);
+  });
+  test('closed payroll month blocks future salary creation and permits reopening',()async{
+    final profile=db.activeProfileId;
+    final person=await teacher();
+    await WindowsSectionLocks.addPassword(sectionKey:'admin_section',password:'month-admin-456');
+    await StaffPayroll.setMonthClosed(profile,'2026-11',closed:true,adminPassword:'month-admin-456');
+    expect(await StaffPayroll.monthClosed(profile,'2026-11'),true);
+    await expectLater(StaffPayroll.save(profile,person,'2026-11',basic:10000),throwsStateError);
+    await StaffPayroll.setMonthClosed(profile,'2026-11',closed:false,adminPassword:'month-admin-456');
+    final saved=await StaffPayroll.save(profile,person,'2026-11',basic:10000);
+    expect(saved['netPaise'],10000);
+  });
+  test('leave decisions are append-only and paid or cancelled leave never becomes a deduction',(){
+    final leave=StaffPayroll.effectiveLeave('2026-11',[
+      {'id':'a','date':'2026-11-03','kind':'unpaid','reason':'Approved'},
+      {'id':'b','date':'2026-11-04','kind':'paid','reason':'Approved'},
+      {'id':'c','date':'2026-11-05','kind':'unpaid','reason':'Approved'},
+      {'id':'d','date':'2026-11-05','kind':'cancelled','reason':'Cancelled'},
+      {'id':'e','date':'2026-11-30','kind':'unpaid','reason':'Approved'},
+    ]);
+    final working={'2026-11-03','2026-11-04','2026-11-05','2026-11-30'};
+    expect(StaffPayroll.approvedUnpaidDays(leave,working,{},DateTime(2026,11,24)),{'2026-11-03'});
+    expect(()=>StaffPayroll.approvedUnpaidDays(leave,working,{'2026-11-03'},DateTime(2026,11,24)),throwsStateError);
+    expect(()=>StaffPayroll.effectiveLeave('2026-11',[{'id':'a','date':'2026-11-31','kind':'paid','reason':'Approved'}]),throwsStateError);
+  });
+  test('salary calendar excludes holidays and respects explicit working day overrides',(){
+    final days=StaffPayroll.schoolWorkingDays('2026-11',[
+      {'date':'2026-11-02','isOpen':false},{'date':'2026-11-01','isOpen':true}
+    ],[0]);
+    expect(days.contains('2026-11-01'),true);
+    expect(days.contains('2026-11-02'),false);
+    expect(days.contains('2026-11-08'),false);
+    expect(StaffPayroll.proratedDailyRate(260000,26),10000);
+    expect(()=>StaffPayroll.validatedUnpaidDays('2026-11','2026-11-02',{},DateTime(2026,11,24),workingDays:days),throwsFormatException);
+  });
+  test('unpaid dates require distinct past dates without verified check-in',(){
+    final today=DateTime(2026,11,24);
+    expect(StaffPayroll.validatedUnpaidDays('2026-11','2026-11-01, 2026-11-02',{},today),{'2026-11-01','2026-11-02'});
+    for(final input in ['2026-11-24','2026-11-31','2026-10-01','2026-11-02,2026-11-02']){
+      expect(()=>StaffPayroll.validatedUnpaidDays('2026-11',input,{},today),throwsFormatException);
+    }
+    expect(()=>StaffPayroll.validatedUnpaidDays('2026-11','2026-11-03',{'2026-11-03'},today),throwsFormatException);
+  });
+  test('bulk payment is guarded, atomic locally, durable and idempotent',()async{
+    final profile=db.activeProfileId;
+    final a=await teacher();
+    final first=await StaffPayroll.save(profile,a,'2026-11',basic:100000);
+    final second=await StaffPayroll.save(profile,a,'2026-12',basic:200000);
+    final date=DateTime(2026,11,5);
+    final intents=<Map<String,dynamic>>[
+      {'id':first['id'],'paymentId':'bulk-1','amountPaise':100000},
+      {'id':second['id'],'paymentId':'bulk-2','amountPaise':199999}];
+    await expectLater(StaffPayroll.recordBulkPayments(profile,intents,date:date,mode:'Cash'),throwsStateError);
+    final ref=db.collection('teacher_salary').doc(first['id'] as String);
+    expect((await ref.get()).data()?['paidPaise'],0);
+    intents[1]['amountPaise']=200000;
+    await StaffPayroll.recordBulkPayments(profile,intents,date:date,mode:'Cash');
+    await StaffPayroll.recordBulkPayments(profile,intents,date:date,mode:'Cash');
+    expect((await ref.get()).data()?['paidPaise'],100000);
+    expect((await ref.get()).data()?['payments'],hasLength(1));
+    expect(await db.localPersistenceEnabled(),true);
+    final journals=(await db.collection('_local_salary_bulk_journal').get()).docs;
+    expect(journals,hasLength(1));
+    expect(journals.single.data()['identity']['entries'],hasLength(2));
+    final report=await StaffPayroll.bulkVerification(profile);
+    expect(report,hasLength(1));
+    expect((report.single['entries'] as List).every((e)=>e['cloudflareRecordVerified']==false&&e['driveRecordVerified']==false),true);
+  });
+  test('bulk verification requires exact payment identity, amount and school',(){
+    const school='vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    final row={'schoolId':school,'id':'row-a','payments':[{'id':'payment-a','amountPaise':500,'date':'2026-11-05','mode':'Cash','reference':'evidence'}]};
+    final entry={'id':'row-a','paymentId':'payment-a','amountPaise':500};
+    final identity={'date':'2026-11-05','mode':'Cash','reference':'evidence'};
+    expect(StaffPayroll.containsBulkPayment(row,entry,identity,school),true);
+    expect(StaffPayroll.containsBulkPayment(row,{...entry,'amountPaise':501},identity,school),false);
+    expect(StaffPayroll.containsBulkPayment(row,entry,identity,'other-school'),false);
+    expect(StaffPayroll.containsBulkPayment(row,entry,{...identity,'reference':'changed'},school),false);
+  });
+  test('salary approval locks amounts but permits recording payment and authorized reopening',()async{
+    final profile=db.activeProfileId;
+    await WindowsSectionLocks.addPassword(sectionKey:'admin_section',password:'salary-admin-lock');
+    final person=await teacher();
+    final row=await StaffPayroll.save(profile,person,'2026-11',basic:100000);
+    final id=row['id'] as String;
+    await StaffPayroll.setSalaryLocked(profile,id,locked:true,adminPassword:'salary-admin-lock');
+    await expectLater(StaffPayroll.save(profile,person,'2026-11',basic:110000,adminPassword:'salary-admin-lock'),throwsStateError);
+    await StaffPayroll.recordPayment(profile,id,20000,paymentId:'paid-lock',date:DateTime(2026,11,5),mode:'Cash');
+    await expectLater(StaffPayroll.setSalaryLocked(profile,id,locked:false,adminPassword:'wrong'),throwsStateError);
+    await StaffPayroll.setSalaryLocked(profile,id,locked:false,adminPassword:'salary-admin-lock');
+    final saved=await StaffPayroll.save(profile,person,'2026-11',basic:110000,adminPassword:'salary-admin-lock');
+    expect(saved['paidPaise'],20000);
+    expect(saved['salaryLockHistory'],hasLength(2));
   });
   test('worker records are school-isolated and cannot be confused with teacher salary', () async {
     final profile = db.activeProfileId;
@@ -789,7 +925,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Record payment'), findsOneWidget);
     expect(find.text('Payment history'), findsOneWidget);
-    expect(find.text('Modify Payment • App Lock'), findsNothing); // no payment yet
+    expect(find.text('Modify Payment • Admin Password'), findsNothing); // no payment yet
     await tester.tapAt(const Offset(20, 20));
     await tester.pumpAndSettle();
     expect(find.text('Net payroll'), findsOneWidget);

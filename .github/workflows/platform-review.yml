@@ -121,7 +121,7 @@ jobs:
     - name: Verify payroll, reset and licence activation regressions
       env:
         APPDATA: ${{ runner.temp }}/windows-operations-tests
-      run: flutter test --concurrency=1 test/windows_operations_test.dart test/windows_developer_notifications_test.dart
+      run: flutter test --concurrency=1 test/windows_operations_test.dart test/windows_developer_notifications_test.dart test/windows_salary_reconciliation_test.dart test/windows_payroll_recovery_pilot_test.dart
     - uses: actions/upload-artifact@v4
       with:
         name: staff-salary-layout-preview

@@ -867,3 +867,41 @@ test('student slot settlement needs the admitted TEST school and current signed 
   id:receipt,successorId,recordId:id,generation:record.mobileStableId,
   operationId:record._syncOperationId,revision:record._syncRevision}]]);
 });
+
+test('paired payroll broker refuses non-TEST, foreign and incomplete migration before publication',async()=>{
+ const calls=[],edge={enabled:()=>true,rpc:async(s,l,b)=>{calls.push({s,l,b});throw Error('Unexpected payroll write');}};
+ const disabled=fixture(null,{cloudflareSync:edge,liveSyncSchools:[A]});
+ const f=fixture(null,{cloudflareSync:edge,liveSyncSchools:[A],atomicBundleTestSchools:[A]});
+ const request={action:'managed/live/payroll-recovery-publish',liveProtocol:1,confirmIsolatedBundleTest:true,
+  bundleId:'payroll-test-bundle-00001',operations:[
+   {collection:'teacher_salary',id:'salary-1',operation:'write',operationId:'payroll-test-salary-00001',expectedRevision:'live-old1',data:{schoolId:A}},
+   {collection:'school_settings',id:'payroll_advance_'+'a'.repeat(64),operation:'write',operationId:'payroll-test-advance-00001',expectedRevision:'live-old2',data:{schoolId:A}},
+  ]};
+ await assert.rejects(disabled.call(request),e=>e.status===412);
+ await assert.rejects(f.call({...request,schoolId:B}),e=>e.status===403);
+ await assert.rejects(f.call({...request,operations:[request.operations[0]]}),e=>e.status===400);
+ await assert.rejects(f.call(request),e=>e.status===503&&e.code==='LIVE_MIGRATION_NOT_ACTIVE');
+ f.docs.set('school_live_migrations/'+A,{collections:{teacher_salary:{state:'active'},school_settings:{state:'legacy'}}});
+ await assert.rejects(f.call(request),e=>e.status===503&&e.code==='LIVE_MIGRATION_NOT_ACTIVE');
+ assert.equal(calls.length,0);
+});
+test('paired payroll broker verifies both cloud and Drive receipt identities',async()=>{
+ const bundleId='payroll-receipt-bundle-001';
+ const operations=[
+  {collection:'teacher_salary',id:'salary-1',operation:'write',operationId:'payroll-receipt-salary-001',expectedRevision:'live-old1',data:{schoolId:A}},
+  {collection:'school_settings',id:'payroll_advance_'+'a'.repeat(64),operation:'write',operationId:'payroll-receipt-advance-001',expectedRevision:'live-old2',data:{schoolId:A}},
+ ];
+ const acknowledgements=operations.map((op,i)=>({operationId:op.operationId,recordRevision:'live-new'+i,cloudState:'committed',backupState:'pending'}));
+ const receipt={bundleProtocol:1,schoolId:A,bundleId,cloudState:'committed',backupState:'pending',acknowledgements};
+ let mismatch=false;
+ const edge={enabled:()=>true,rpc:async(s,l,b)=>{
+  assert.equal(b.command,'bundleReceipt');assert.deepEqual(b.operations,operations);
+  return {found:true,bundleProtocol:1,schoolId:A,receipt,driveVerified:false,backups:operations.map((op,i)=>({
+    collection:op.collection,id:mismatch&&i===1?'different':op.id,operationId:op.operationId,recordRevision:acknowledgements[i].recordRevision,driveVerified:false}))};
+ }};
+ const f=fixture(null,{cloudflareSync:edge,liveSyncSchools:[A],atomicBundleTestSchools:[A]});
+ const request={action:'managed/live/payroll-recovery-receipt',liveProtocol:1,confirmIsolatedBundleTest:true,bundleId,operations};
+ assert.equal((await f.call(request)).driveVerified,false);
+ mismatch=true;
+ await assert.rejects(f.call(request),e=>e.status===502);
+});

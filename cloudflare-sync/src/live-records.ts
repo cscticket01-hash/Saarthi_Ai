@@ -1,5 +1,6 @@
-import {domainCollections,personCollections,validateDomainCandidate,validatePersonCandidate} from './domain-policy';
+import {domainCollections,personCollections,validateDomainCandidate,validatePersonCandidate,validatePayrollAdvance,validatePayrollMonth,validateClosedPayrollMonth,validatePayrollLeave} from './domain-policy';
 import {createHash,randomUUID} from 'node:crypto';
+import {proposePayrollRecovery} from './payroll-recovery';
 import {canonical} from './spool';
 import {demand,schoolPattern} from './protocol';
 import {UniversalUidRegistry,uidNameCode,type PersonCategory} from './universal-uid';
@@ -66,7 +67,7 @@ export function initLive(storage:DurableObjectStorage){
  storage.sql.exec('CREATE TABLE IF NOT EXISTS live_retention(id INTEGER PRIMARY KEY,floor INTEGER NOT NULL)');
  storage.sql.exec('INSERT OR IGNORE INTO live_retention VALUES(1,0)');
 }
-const ownerFields=new Set(['schoolId','id','mobileStableId','teacherId','personId','studentId','studentDocId','studentDocumentId','teacherDocId','teacherDocumentId','documentId','oldStudentId','previousStudentId','previousStudentIds','employeeId','staffId','role','ownerRole','active','inactive','status','class','studentClass','section','rollNo','roll','replacesStudentGeneration','_syncDeleted','_syncDeletedOwner','_syncRetiredTeacherId','_syncRetiredStudentGenerations','_syncRetiredTeacherGenerations']);
+const ownerFields=new Set(['schoolId','id','mobileStableId','teacherId','personId','studentId','studentDocId','studentDocumentId','teacherDocId','teacherDocumentId','documentId','oldStudentId','previousStudentId','previousStudentIds','employeeId','staffId','role','ownerRole','active','inactive','status','month','closed','class','studentClass','section','rollNo','roll','replacesStudentGeneration','_syncDeleted','_syncDeletedOwner','_syncRetiredTeacherId','_syncRetiredStudentGenerations','_syncRetiredTeacherGenerations']);
 function ownerMetadata(data:Json,id:string):Json {return {...Object.fromEntries(Object.entries(data).filter(([key])=>ownerFields.has(key))),id};}
 function teacherPhoneKey(data:Json):string|null {
  if(data._syncDeleted===true||data.deleted===true)return null;
@@ -129,7 +130,7 @@ function retireChildren(storage:DurableObjectStorage,school:string,col:string,id
  }
  return predecessors;
 }
-export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,now=Date.now(),withinBundle=false,verifiedMedia?:Json,bundleId?:string,bundleSize=0,bundleIndex=-1):Json{
+export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,now=Date.now(),withinBundle=false,verifiedMedia?:Json,bundleId?:string,bundleSize=0,bundleIndex=-1,payrollRecoveryPair=false):Json{
  demand(schoolPattern.test(school),'Invalid school');
  const sql=storage.sql,command=b.command,col=String(b.collection||'');
  const collection=()=>demand(liveCollections.has(col),'Collection not admitted to live authority',412);
@@ -410,11 +411,41 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
     ownerRole:(receipt.owner as Json)?.role,personId:(receipt.owner as Json)?.personId,
     ...(typeof found[0].fileId==='string'?{fileId:found[0].fileId}:{})};
  }
+ // Retained bodies and signed Drive baselines share the same canonical hash.
+ const payrollBaseline=(collection:string,id:string,index:number,expected?:unknown):Json=>{
+  const stored=sql.exec<Row>('SELECT * FROM live_records WHERE collection=? AND id=?',collection,id).toArray()[0];
+  demand(stored&&(expected===undefined||stored.revision===expected),'Verified payroll revision required',428);
+  demand(sql.exec<{state:string}>('SELECT state FROM live_collections WHERE collection=?',collection).toArray()[0]?.state==='active','Verified payroll authority required',412);
+  if(stored.body)return JSON.parse(stored.body) as Json;
+  const candidate=Array.isArray(b.payrollBaselines)?b.payrollBaselines[index] as Json:undefined;
+  demand(candidate&&candidate.schoolId===school&&candidate._syncRevision===stored.drive_revision&&
+   (candidate.id===undefined||candidate.id===id)&&payloadHash(candidate)===stored.payload_hash,
+   'Signed Drive payroll baseline required',428);
+  return {...candidate,_syncRevision:stored.revision};
+ };
+ if(command==='payrollRecoveryPreview'){
+  demand(validId(b.salaryId)&&validId(b.advanceId)&&opId(b.bundleId)&&opId(b.salaryOperationId)&&
+   opId(b.advanceOperationId)&&b.salaryOperationId!==b.advanceOperationId&&
+   typeof b.amountPaise==='number'&&typeof b.reference==='string'&&typeof b.eventId==='string','Invalid payroll recovery proposal');
+  const salary=payrollBaseline('teacher_salary',String(b.salaryId),0),advance=payrollBaseline('school_settings',String(b.advanceId),1);
+  demand(typeof salary.staffId==='string'&&b.advanceId==='payroll_advance_'+createHash('sha256').update(salary.staffId).digest('hex'),'Payroll recovery owner mismatch',409);
+  const pair=proposePayrollRecovery({schoolId:school,salaryId:String(b.salaryId),advanceId:String(b.advanceId),
+   salary,advance,amountPaise:b.amountPaise,eventId:b.eventId,reference:b.reference,at:now,
+   monthClosed:findOwner(storage,'school_settings','payroll_month_'+String(salary.month))?.closed===true});
+  return {schoolId:school,bundleProtocol:1,bundleId:b.bundleId,preview:true,
+   operations:[
+    {collection:'teacher_salary',id:b.salaryId,operation:'write',operationId:b.salaryOperationId,expectedRevision:salary._syncRevision,data:pair.salary},
+    {collection:'school_settings',id:b.advanceId,operation:'write',operationId:b.advanceOperationId,expectedRevision:advance._syncRevision,data:pair.advance}
+   ]};
+ }
  if(command==='bundleReceipt'){
-  demand(opId(b.bundleId)&&Array.isArray(b.operations)&&Array.isArray(b.media)&&
-    typeof b.mediaManifestHash==='string','Invalid bundle replay identity');
+  const payrollPair=Array.isArray(b.operations)&&b.operations.length===2&&b.operations[0]?.collection==='teacher_salary'&&
+   b.operations[1]?.collection==='school_settings'&&String(b.operations[1]?.id||'').startsWith('payroll_advance_')&&
+   b.media===undefined&&b.mediaManifestHash===undefined;
+  demand(opId(b.bundleId)&&Array.isArray(b.operations)&&(payrollPair||
+    Array.isArray(b.media)&&typeof b.mediaManifestHash==='string'),'Invalid bundle replay identity');
   const fingerprint=hash({schoolId:school,bundleId:b.bundleId,operations:b.operations,
-    media:b.media,mediaManifestHash:b.mediaManifestHash});
+    ...(payrollPair?{}:{media:b.media,mediaManifestHash:b.mediaManifestHash})});
   const prior=sql.exec<{fingerprint:string;receipt:string}>(
     'SELECT fingerprint,receipt FROM live_bundles WHERE bundle_id=?',String(b.bundleId)).toArray()[0];
   if(!prior)return {found:false,bundleProtocol:1,schoolId:school};
@@ -430,6 +461,19 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    const backup=sql.exec<{state:string;drive_revision:string|null;verified_at:number}>(
      'SELECT state,drive_revision,verified_at FROM live_backup WHERE operation_id=? AND collection=? AND id=? ORDER BY seq DESC LIMIT 1',
      String(expected.operationId),String(expected.collection),String(expected.id)).toArray()[0];
+   if(!backup&&payrollPair){
+    // Compaction removes only verified jobs. Original immutable operation
+    // receipts survive; a bundle identity alone never certifies Drive.
+    const persisted=sql.exec<{receipt:string}>('SELECT receipt FROM live_operations WHERE operation_id=?',String(ack.operationId)).toArray()[0];
+    const proof=persisted?JSON.parse(persisted.receipt) as Json:null;
+    demand(proof&&proof.schoolId===school&&proof.operationId===ack.operationId&&proof.recordRevision===ack.recordRevision&&
+      proof.backupState==='verified'&&typeof proof.driveRevision==='string'&&proof.driveRevision.length>0&&
+      !/^(live-|cf-)/.test(proof.driveRevision)&&typeof proof.payloadHash==='string'&&/^[a-f0-9]{64}$/.test(proof.payloadHash),
+      'Compacted payroll receipt has no verified original backup',412);
+    return {operationId:expected.operationId,recordRevision:ack.recordRevision,collection:expected.collection,id:expected.id,
+     backupState:'verified',driveVerified:true,driveRevision:proof.driveRevision,
+     ...(typeof proof.verifiedAt==='number'?{verifiedAt:proof.verifiedAt}:{})};
+   }
    demand(backup,'Atomic operation has no durable backup job',412);
    return {operationId:expected.operationId,
      recordRevision:ack.recordRevision,collection:expected.collection,id:expected.id,
@@ -460,8 +504,11 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
   }else demand(b.media===undefined&&b.mediaManifestHash===undefined,
     'Media bundle staging not yet verified',412);
   demand(byteLength(JSON.stringify(b))<=256000,'Atomic bundle too large',413);
+  const operations=b.operations as Json[];
+  const payrollPair=!verifiedMedia&&operations.length===2&&operations[0]?.collection==='teacher_salary'&&
+   operations[1]?.collection==='school_settings'&&String(operations[1]?.id||'').startsWith('payroll_advance_');
   const allowed=verifiedMedia?new Set(['students_directory','teachers_directory','fee_payments','fee_ledger','exam_results','exam_center_results','documents']):
-   new Set(['school_notices','school_calendar','school_settings','school_expenses']);
+   new Set(['school_notices','school_calendar','school_settings','school_expenses',...(payrollPair?['teacher_salary']:[])]);
   let archiveFiles:Json[]=[],bundleOwner:Json|undefined;
   if(verifiedMedia){
    const ops=b.operations as Json[];
@@ -584,6 +631,23 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
   return storage.transactionSync(()=>{
    const prior=sql.exec<{fingerprint:string;receipt:string}>('SELECT fingerprint,receipt FROM live_bundles WHERE bundle_id=?',String(b.bundleId)).toArray()[0];
    if(prior){demand(prior.fingerprint===fingerprint,'Atomic bundle replay changed',409);return JSON.parse(prior.receipt) as Json;}
+   if(payrollPair){
+    const [salaryOp,advanceOp]=operations;
+    demand(salaryOp.operation==='write'&&advanceOp.operation==='write','Payroll recovery requires two exact snapshots',409);
+    const salary=payrollBaseline('teacher_salary',String(salaryOp.id),0,salaryOp.expectedRevision),
+     advance=payrollBaseline('school_settings',String(advanceOp.id),1,advanceOp.expectedRevision);
+    demand(typeof salary.staffId==='string'&&advanceOp.id==='payroll_advance_'+createHash('sha256').update(salary.staffId).digest('hex'),'Payroll recovery owner mismatch',409);
+    const proposedSalary=salaryOp.data as Json;
+    const links=proposedSalary?.advanceRecoveries;
+    demand(Array.isArray(links)&&links.length>0,'Payroll recovery link missing',409);
+    const last=links[links.length-1] as Json;
+    demand(last&&typeof last.id==='string'&&typeof last.amountPaise==='number'&&typeof last.reference==='string'&&typeof last.at==='number','Invalid payroll recovery link',409);
+    const pair=proposePayrollRecovery({schoolId:school,salaryId:String(salaryOp.id),advanceId:String(advanceOp.id),
+     salary,advance,amountPaise:last.amountPaise,eventId:last.id,reference:last.reference,at:last.at,
+     monthClosed:findOwner(storage,'school_settings','payroll_month_'+String(salary.month))?.closed===true});
+    demand(canonical(pair.salary)===canonical(proposedSalary)&&canonical(pair.advance)===canonical(advanceOp.data),
+     'Payroll recovery snapshots differ from verified paired proposal',409);
+   }
    // A previously committed single-record operation must never be relabeled
    // as a new atomic bundle: peers could already have seen it independently.
    for(const id of operationIds)demand(
@@ -591,6 +655,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
     'An existing operation cannot be repackaged as an atomic bundle',409);
    const acknowledgements=(b.operations as Json[]).map((item,index)=>
     liveCommand(storage,school,{...item,command:'commit',
+     ...(payrollPair&&Array.isArray(b.payrollBaselines)&&b.payrollBaselines[index]?{baseline:b.payrollBaselines[index]}:{}),
      ...(verifiedMedia&&['students_directory','teachers_directory'].includes(String((b.operations as Json[])[0].collection))&&index===0&&archiveFiles.length===2?{
        data:{...(item.data as Json),atomicPortrait:{
          bundleId:b.bundleId,documentId:(b.operations as Json[])[1].id,
@@ -602,7 +667,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
      ...(verifiedMedia&&index===(b.operations as Json[]).length-1?{data:{...(item.data as Json),bundleMedia:archiveFiles,
        bundleManifestHash:b.mediaManifestHash,bundleId:b.bundleId,
        ...(archiveFiles[0].fileId?{fileId:archiveFiles[0].fileId}:{})}}:{})},
-       now,true,undefined,String(b.bundleId),(b.operations as Json[]).length,index));
+       now,true,undefined,String(b.bundleId),(b.operations as Json[]).length,index,payrollPair));
    // A no-op or offline duplicate can produce no event. It must never
    // count towards the number of visible records promised by a bundle.
    demand(acknowledgements.every(r=>r.unchanged!==true&&r.duplicate!==true),
@@ -699,6 +764,31 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
     }
    }else demand(!b.promotionProof,
       'Unrequested promotion proof; only broker-verified changes are permitted',403);
+   // Linked recovery events can only be introduced by the checked pair.
+   if(col==='teacher_salary'&&!payrollRecoveryPair){
+    demand(canonical(old.advanceRecoveries??[])===canonical(data.advanceRecoveries??[]),'Payroll recovery requires paired transaction',409);
+    if(Array.isArray(old.advanceRecoveries)&&old.advanceRecoveries.length){
+     const recovered=(old.advanceRecoveries as Json[]).reduce((sum,event)=>sum+Number(event.amountPaise),0);
+     demand(b.operation!=='delete'&&typeof data.deductionPaise==='number'&&data.deductionPaise>=recovered+Number((data.attendanceAdjustment as Json|undefined)?.amountPaise??0),'Payroll recovery deduction must be preserved',409);
+    }
+   }
+   if(col==='school_settings'&&String(b.id).startsWith('payroll_advance_')&&!payrollRecoveryPair){
+    const linked=(value:unknown)=>Array.isArray(value)?value.filter(e=>e&&typeof e==='object'&&e.salaryRecoveryId!==undefined):[];
+    demand(canonical(linked(old.events))===canonical(linked(data.events)),'Payroll recovery requires paired transaction',409);
+   }
+   const monthControl=col==='school_settings'&&String(b.id).startsWith('payroll_month_');
+   const salaryMonth=col==='teacher_salary'?String(data.month||old.month||''):'';
+   if(monthControl)validatePayrollMonth(String(b.id),current?old:null,data,String(b.operation));
+   if(col==='teacher_salary'&&[old.month,data.month].some(m=>typeof m==='string'&&readOwner('school_settings','payroll_month_'+m)?.closed===true))validateClosedPayrollMonth(current?old:null,data,String(b.operation));
+   const leaveControl=col==='school_settings'&&String(b.id).startsWith('payroll_leave_');
+   if(leaveControl){
+    if(b.operation!=='delete')demand(typeof data.staffId==='string'&&typeof data.month==='string'&&b.id==='payroll_leave_'+hash([data.staffId,data.month]),'Invalid payroll leave identity',409);
+    validatePayrollLeave(current?old:null,data,String(b.operation),readOwner,school);
+   }
+   if(col==='school_settings'&&String(b.id).startsWith('payroll_advance_')){
+    if(b.operation!=='delete')demand(typeof data.staffId==='string'&&b.id==='payroll_advance_'+createHash('sha256').update(data.staffId).digest('hex'),'Invalid payroll advance identity',409);
+    validatePayrollAdvance(String(b.id),current?old:null,data,String(b.operation),readOwner,school);
+   }
    if(domainCollections.has(col))validateDomainCandidate({schoolId:school,collection:col,id:String(b.id),operation:String(b.operation),current:current?old:null,next:data,readOwner});
    if(personCollections.has(col))validatePersonCandidate({schoolId:school,collection:col,id:String(b.id),operation:String(b.operation),current:current?old:null,next:data,readPeers});
    if(col==='teachers_directory'&&b.operation!=='delete'){
@@ -730,7 +820,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
     const retired=new Set(Array.isArray(old[retiredKey])?old[retiredKey] as string[]:[]);if(retiring)retired.add(parentGeneration);
     if(retired.size)data[retiredKey]=[...retired];if(b.operation==='delete'){data._syncDeletedOwner=parentGeneration;if(col==='teachers_directory')data._syncRetiredTeacherId=old.teacherId||b.id;}
    }
-   const appended=appendLive(storage,school,col,String(b.id),String(b.operationId),String(b.operation),data,now,fingerprint,{...(b.deleteEverywhereVersion===1?{deleteEverywhereVersion:1}:{}),...(col==='students_directory'&&b.operation==='delete'?{deletedStudentGeneration:parentGeneration}:{})},bundleId||null,bundleSize,bundleIndex);
+   const appended=appendLive(storage,school,col,String(b.id),String(b.operationId),String(b.operation),data,now,fingerprint,{...(payrollRecoveryPair&&bundleId?{payrollRecoveryVersion:1,payrollRecoveryBundleId:bundleId}:{}),...(b.deleteEverywhereVersion===1?{deleteEverywhereVersion:1}:{}),...(col==='students_directory'&&b.operation==='delete'?{deletedStudentGeneration:parentGeneration}:{})},bundleId||null,bundleSize,bundleIndex);
    if(personCollections.has(col)){
     if(b.operation==='delete'||data.deleted===true||data.active===false){
      sql.exec('DELETE FROM live_uid_pending WHERE collection=? AND id=?',col,String(b.id));
@@ -743,6 +833,20 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
     }
    }
    for(const predecessor of dependencies)sql.exec('INSERT OR IGNORE INTO live_backup_dependencies VALUES(?,?)',appended.seq,predecessor);
+   // Preserve month-control ordering on the independent Script backup path.
+   // A closure follows all already accepted salary revisions for that month;
+   // later salary revisions wait for the preceding control revision.
+   if(payrollRecoveryPair&&bundleIndex===1&&bundleId){
+    const previous=sql.exec<{seq:number}>("SELECT seq FROM live_events WHERE bundle_id=? AND bundle_index=0 AND collection='teacher_salary'",bundleId).toArray()[0];
+    demand(previous,'Payroll recovery backup predecessor missing',409);
+    sql.exec('INSERT OR IGNORE INTO live_backup_dependencies VALUES(?,?)',appended.seq,previous.seq);
+   }
+   if(monthControl||salaryMonth||leaveControl){
+    const pending=monthControl
+      ?sql.exec<{seq:number}>("SELECT seq FROM live_backup WHERE (collection='teacher_salary' OR (collection='school_settings' AND id LIKE 'payroll_leave_%')) AND seq<? AND state!='verified' AND json_extract(body,'$.month')=?",appended.seq,String(data.month)).toArray()
+      :sql.exec<{seq:number}>("SELECT seq FROM live_backup WHERE collection='school_settings' AND id=? AND seq<? AND state!='verified' ORDER BY seq DESC LIMIT 1",'payroll_month_'+(leaveControl?String(data.month):salaryMonth),appended.seq).toArray();
+    for(const item of pending)sql.exec('INSERT OR IGNORE INTO live_backup_dependencies VALUES(?,?)',appended.seq,item.seq);
+   }
    // Parent registration must be durably handed to Drive before its dependent
    // child can reach the old lifecycle engine. Acceptance at the edge is atomic.
    if(!personCollections.has(col)&&b.operation!=='delete'){
@@ -917,7 +1021,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    const retainedUntil=Math.max(retentionStart+cloudflareVerifiedRetentionMs,now);
    const reference={...receipt,
     ...(b.archiveFiles!==undefined?{record:finalBody}:{}),
-    backupState:'verified',source:'cloudflare',driveRevision:b.driveRevision,
+    backupState:'verified',source:'cloudflare',driveRevision:b.driveRevision,verifiedAt:now,
     payloadHash:payloadHash(finalBody),reconcileRequired:true,
     retainedUntil};
    sql.exec('UPDATE live_events SET receipt=? WHERE seq=?',JSON.stringify(reference),job.seq);
@@ -927,7 +1031,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
     sql.exec("UPDATE live_operations SET receipt=json_set(receipt,'$.record',json(?)) WHERE json_extract(receipt,'$.recordRevision')=?",
       canonical(finalBody),String(receipt.recordRevision));
    }
-   sql.exec("UPDATE live_operations SET receipt=json_set(receipt,'$.backupState','verified','$.driveRevision',?,'$.payloadHash',?,'$.retainedUntil',?,'$.reconcileRequired',json('true')) WHERE json_extract(receipt,'$.recordRevision')=?",String(b.driveRevision),String(reference.payloadHash),retainedUntil,String(receipt.recordRevision));
+   sql.exec("UPDATE live_operations SET receipt=json_set(receipt,'$.backupState','verified','$.driveRevision',?,'$.payloadHash',?,'$.retainedUntil',?,'$.verifiedAt',?,'$.reconcileRequired',json('true')) WHERE json_extract(receipt,'$.recordRevision')=?",String(b.driveRevision),String(reference.payloadHash),retainedUntil,now,String(receipt.recordRevision));
    const metadata=JSON.parse((job as Job&{request_metadata:string}).request_metadata||'{}');
    if(job.operation==='delete'&&metadata.deleteEverywhereVersion===1){
     // Explicit verified deletion overrides ordinary 24-hour cache retention.
