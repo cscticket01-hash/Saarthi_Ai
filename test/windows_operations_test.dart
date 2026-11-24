@@ -329,6 +329,40 @@ void main() {
     expect(saved['balancePaise'], 0);
     expect(saved['payments'], hasLength(2));
   });
+  test('bulk payment is guarded, atomic locally, durable and idempotent',()async{
+    final profile=db.activeProfileId;
+    final a=await teacher();
+    final first=await StaffPayroll.save(profile,a,'2026-11',basic:100000);
+    final second=await StaffPayroll.save(profile,a,'2026-12',basic:200000);
+    final date=DateTime(2026,11,5);
+    final intents=<Map<String,dynamic>>[
+      {'id':first['id'],'paymentId':'bulk-1','amountPaise':100000},
+      {'id':second['id'],'paymentId':'bulk-2','amountPaise':199999}];
+    await expectLater(StaffPayroll.recordBulkPayments(profile,intents,date:date,mode:'Cash'),throwsStateError);
+    final ref=db.collection('teacher_salary').doc(first['id'] as String);
+    expect((await ref.get()).data()?['paidPaise'],0);
+    intents[1]['amountPaise']=200000;
+    await StaffPayroll.recordBulkPayments(profile,intents,date:date,mode:'Cash');
+    await StaffPayroll.recordBulkPayments(profile,intents,date:date,mode:'Cash');
+    expect((await ref.get()).data()?['paidPaise'],100000);
+    expect((await ref.get()).data()?['payments'],hasLength(1));
+    expect(await db.localPersistenceEnabled(),true);
+  });
+  test('salary approval locks amounts but permits recording payment and authorized reopening',()async{
+    final profile=db.activeProfileId;
+    await WindowsSectionLocks.addPassword(sectionKey:'admin_section',password:'salary-admin-lock');
+    final person=await teacher();
+    final row=await StaffPayroll.save(profile,person,'2026-11',basic:100000);
+    final id=row['id'] as String;
+    await StaffPayroll.setSalaryLocked(profile,id,locked:true,adminPassword:'salary-admin-lock');
+    await expectLater(StaffPayroll.save(profile,person,'2026-11',basic:110000,adminPassword:'salary-admin-lock'),throwsStateError);
+    await StaffPayroll.recordPayment(profile,id,20000,paymentId:'paid-lock',date:DateTime(2026,11,5),mode:'Cash');
+    await expectLater(StaffPayroll.setSalaryLocked(profile,id,locked:false,adminPassword:'wrong'),throwsStateError);
+    await StaffPayroll.setSalaryLocked(profile,id,locked:false,adminPassword:'salary-admin-lock');
+    final saved=await StaffPayroll.save(profile,person,'2026-11',basic:110000,adminPassword:'salary-admin-lock');
+    expect(saved['paidPaise'],20000);
+    expect(saved['salaryLockHistory'],hasLength(2));
+  });
   test('worker records are school-isolated and cannot be confused with teacher salary', () async {
     final profile = db.activeProfileId;
     await StaffPayroll.addStaff(profile, 'Driver One', 'Driver', 'School bus');
