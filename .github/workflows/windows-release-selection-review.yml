@@ -5,6 +5,8 @@ on:
       - 'lib/windows_release_selection.dart'
       - 'lib/windows_update_service.dart'
       - 'lib/windows_update_manager.dart'
+      - 'lib/windows_verified_update.dart'
+      - 'test/windows_verified_update_test.dart'
       - 'lib/release_download.dart'
       - 'test/windows_release_selection_test.dart'
       - 'test/release_download_test.dart'
@@ -25,6 +27,6 @@ jobs:
       - run: flutter create --platforms=web --project-name=saarthi_ai .
       - run: flutter pub get
       - name: Analyze release parser and Windows updater
-        run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_release_selection.dart lib/windows_update_service.dart lib/windows_update_manager.dart lib/release_download.dart
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_release_selection.dart lib/windows_update_service.dart lib/windows_update_manager.dart lib/windows_verified_update.dart lib/release_download.dart
       - name: Test unordered, invalid and cross-tag Windows installers
-        run: flutter test test/windows_release_selection_test.dart test/release_download_test.dart
+        run: flutter test test/windows_release_selection_test.dart test/release_download_test.dart test/windows_verified_update_test.dart
