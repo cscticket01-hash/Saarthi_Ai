@@ -40,7 +40,7 @@ function memoryDatabase() {
 
 const proof='fresh-id-token-'.repeat(9);
 const school={schoolId:'vs-'+'a'.repeat(32),uid:'owner-123'};
-const password='HorseRiverClock-37!';
+const password='River-37';
 function harness() {
   const db=memoryDatabase();
   let clock=1764000000000;
@@ -55,18 +55,18 @@ function harness() {
 test('school admin enrolls once, can unlock, and never returns password hash',async()=>{
   const {admin}=harness();
   assert.equal((await admin.handle({operation:'status'},school)).configured,false);
-  await admin.handle({operation:'enroll',freshIdToken:proof,newPassword:password},school);
+  await admin.handle({operation:'enroll',newPassword:password},school);
   const status=await admin.handle({operation:'status'},school);
   assert.equal(status.configured,true);
   assert.equal(Object.hasOwn(status,'passwordHash'),false);
   const unlocked=await admin.handle({operation:'unlock',password},school);
   assert.equal(unlocked.scope,'admin-panel');
-  await assert.rejects(admin.handle({operation:'enroll',freshIdToken:proof,newPassword:password},school),/configured/);
+  await assert.rejects(admin.handle({operation:'enroll',newPassword:password},school),/configured/);
 });
 
 test('grants are school-scoped, target-scoped and single-use',async()=>{
   const {admin,db}=harness();
-  await admin.handle({operation:'enroll',freshIdToken:proof,newPassword:password},school);
+  await admin.handle({operation:'enroll',newPassword:password},school);
   const grant=await admin.handle({
     operation:'authorize',password,scope:'person-delete',
     target:'students_directory/Student_1'
@@ -90,7 +90,7 @@ test('grants are school-scoped, target-scoped and single-use',async()=>{
 
 test('expired grant and a password change invalidate previous authorization',async()=>{
   const {admin,advance}=harness();
-  await admin.handle({operation:'enroll',freshIdToken:proof,newPassword:password},school);
+  await admin.handle({operation:'enroll',newPassword:password},school);
   const grant=await admin.handle({operation:'authorize',password,
     scope:'force-promotion',target:'Student_1/exam_final'},school);
   advance(121000);
@@ -99,7 +99,7 @@ test('expired grant and a password change invalidate previous authorization',asy
     target:'Student_1/exam_final'},school),/expired/);
   const fresh=await admin.handle({operation:'authorize',password,
     scope:'force-promotion',target:'Student_1/exam_final'},school);
-  await admin.handle({operation:'change',password,newPassword:'NewAdminPassword-99!'},school);
+  await admin.handle({operation:'change',password,newPassword:'NewPass99'},school);
   await assert.rejects(admin.handle({operation:'consume',
     approvalToken:fresh.approvalToken,scope:'force-promotion',
     target:'Student_1/exam_final'},school),/expired or does not match/);
@@ -107,7 +107,7 @@ test('expired grant and a password change invalidate previous authorization',asy
 
 test('five bad passwords temporarily block unlock',async()=>{
   const {admin,advance}=harness();
-  await admin.handle({operation:'enroll',freshIdToken:proof,newPassword:password},school);
+  await admin.handle({operation:'enroll',newPassword:password},school);
   for(let n=0;n<5;n++){
     await assert.rejects(admin.handle({operation:'unlock',password:'wrong-password'},school));
   }
@@ -119,11 +119,11 @@ test('five bad passwords temporarily block unlock',async()=>{
 test('failed audit writes cannot partially commit credentials or consume approval',async()=>{
   const {admin,db}=harness();
   db.rejectNextAudit();
-  await assert.rejects(admin.handle({operation:'enroll',freshIdToken:proof,newPassword:password},school),/synthetic audit failure/);
+  await assert.rejects(admin.handle({operation:'enroll',newPassword:password},school),/synthetic audit failure/);
   assert.equal((await admin.handle({operation:'status'},school)).configured,false);
-  await admin.handle({operation:'enroll',freshIdToken:proof,newPassword:password},school);
+  await admin.handle({operation:'enroll',newPassword:password},school);
   db.rejectNextAudit();
-  await assert.rejects(admin.handle({operation:'change',password,newPassword:'NewAdminPassword-99!'},school),/synthetic audit failure/);
+  await assert.rejects(admin.handle({operation:'change',password,newPassword:'NewPass99'},school),/synthetic audit failure/);
   assert.equal((await admin.handle({operation:'unlock',password},school)).verified,true);
   const target='students_directory/Student_1';
   const request={operation:'authorize',password,scope:'person-delete',target};
@@ -139,7 +139,7 @@ test('failed audit writes cannot partially commit credentials or consume approva
 
 test('durable delete approval preserves exact original retry but rejects changed generation, revision, payload or actor',async()=>{
   const {admin,advance,db}=harness();
-  await admin.handle({operation:'enroll',freshIdToken:proof,newPassword:password},school);
+  await admin.handle({operation:'enroll',newPassword:password},school);
   const intent={scope:'person-delete',collection:'students_directory',id:'Student_1',
     operationId:'delete-original-00001',recordRevision:'live-original',
     generation:'p-'+'a'.repeat(64),payloadHash:'a'.repeat(64)};
@@ -165,7 +165,7 @@ test('durable delete approval preserves exact original retry but rejects changed
 
 test('force promotion binding requires exact exam and result revisions',async()=>{
   const {admin}=harness();
-  await admin.handle({operation:'enroll',freshIdToken:proof,newPassword:password},school);
+  await admin.handle({operation:'enroll',newPassword:password},school);
   const intent={scope:'force-promotion',collection:'students_directory',id:'Student_1',
     operationId:'promotion-original-001',recordRevision:'live-student',
     generation:'p-'+'a'.repeat(64),payloadHash:'c'.repeat(64),examId:'exam_final',
