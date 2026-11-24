@@ -147,10 +147,7 @@ void main(){
     await WindowsLocalSecurity.initialize();expect(WindowsLocalSecurity.configured,false);
     await WindowsLocalSecurity.create(adminId:'School app',password:'app-only-pass');
     expect(await WindowsSectionLocks.enabled('admin_section'),false);
-    await tester.runAsync(() => WindowsSectionLocks.addPassword(
-      sectionKey: 'admin_section',
-      password: 'admin-only-pass',
-    ));
+    await WindowsSectionLocks.addPassword(sectionKey:'admin_section',password:'admin-only-pass');
     expect(WindowsLocalSecurity.verifyPassword('admin-only-pass'),false);
     expect(await WindowsSectionLocks.verify(sectionKey:'admin_section',password:'app-only-pass'),false);
     expect(await WindowsSectionLocks.verify(sectionKey:'admin_section',password:'admin-only-pass'),true);
@@ -162,10 +159,14 @@ void main(){
   });
   testWidgets('Admin entry requires independent setup even with a legacy lock saved',(tester)async{
     FlutterSecureStorage.setMockInitialValues({});
-    await WindowsSectionLocks.addPassword(sectionKey:'admin_section',password:'admin-only-pass');
+    await tester.runAsync(() => WindowsSectionLocks.addPassword(
+      sectionKey: 'admin_section',
+      password: 'admin-only-pass',
+    ));
     await tester.pumpWidget(const MaterialApp(home:WindowsAdminAccessGate(child:Text('Direct admin panel'))));
     await tester.pumpAndSettle();
-    expect(find.text('New Admin Password'),findsOneWidget);
+    expect(find.text('Admin Panel Security'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'New Admin Password'), findsOneWidget);
     expect(find.text('Direct admin panel'),findsNothing);
     expect(find.text('Admin Section Password'),findsNothing);
     await tester.pumpWidget(const SizedBox());
