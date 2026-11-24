@@ -26,11 +26,23 @@ Future<Uint8List> renderWindowsPayslip(Map<String,dynamic> row,{String schoolNam
     build:(_)=>[
       pw.Text(schoolName.isEmpty?'SCHOOL PAYSLIP':schoolName,style:pw.TextStyle(color:ink,fontSize:22,fontWeight:pw.FontWeight.bold)),
       pw.SizedBox(height:6),pw.Text('STAFF SALARY PAYSLIP',style:pw.TextStyle(color:ink,fontWeight:pw.FontWeight.bold)),pw.SizedBox(height:20),
+      if((row['id']?.toString()??'').isNotEmpty)pw.Text('Payslip record: ${row['id']}',style:const pw.TextStyle(fontSize:8)),
       table([['Employee','Salary period'],['${row['name']??''}','${row['month']??''}'],['Role: ${row['role']??''}','Employee: ${row['employeeId']??row['teacherId']??row['staffId']??''}']]),
       pw.SizedBox(height:20),table([['Earnings / deductions','Amount'],
         ['Basic pay',money(amount('basicPaise'))],['Allowances',money(amount('allowancePaise'))],['Bonus',money(amount('bonusPaise'))],
         ['Overtime',money(amount('overtimePaise'))],['Deductions',money(amount('deductionPaise'))],['NET SALARY',money(net)]]),
       pw.SizedBox(height:16),table([['Payment summary','Amount'],['Paid',money(paid)],['Balance',money(net-paid)],['Status','${row['status']??'Pending'}']]),
+      if ((row['payments'] as List? ?? []).isNotEmpty) ...[
+        pw.SizedBox(height:16),
+        pw.Text('RECORDED PAYMENTS',style:pw.TextStyle(color:ink,fontWeight:pw.FontWeight.bold)),
+        for(final p in (row['payments'] as List).whereType<Map>()) ...[
+          pw.SizedBox(height:6),
+          pw.Text('Payment ID: ${p['id']??'Not recorded'}',style:const pw.TextStyle(fontSize:8)),
+          table([['Recorded amount','Date / time','Method'],
+            [money((p['amountPaise'] as num?)?.toInt()??0),p['date']?.toString()??'Not recorded',p['mode']?.toString()??'Not recorded']]),
+          if((p['reference']?.toString()??'').isNotEmpty)pw.Text('Reference: ${p['reference']}',style:const pw.TextStyle(fontSize:9)),
+        ],
+      ],
       if ((row['paymentCorrections'] as List? ?? []).isNotEmpty) ...[
         pw.SizedBox(height:18),
         pw.Text('PAYMENT CORRECTION AUDIT',style:pw.TextStyle(color:ink,fontSize:13,fontWeight:pw.FontWeight.bold)),
@@ -47,7 +59,7 @@ Future<Uint8List> renderWindowsPayslip(Map<String,dynamic> row,{String schoolNam
               [money(original),money(previous),money(revised),money(change)],
             ]),
             pw.SizedBox(height:5),
-            pw.Text('Correction by: ${entry['authorizedBy'] ?? 'School Admin'}',style:const pw.TextStyle(fontSize:9)),
+            pw.Text('${entry['eventType']=='reversal'?'Reversal':'Correction'} ID: ${entry['id']??'Not recorded'} • By: ${entry['authorizedBy'] ?? 'Not recorded'}',style:const pw.TextStyle(fontSize:9)),
             pw.SizedBox(height:4),
             pw.Text('Reason: $reason',style:const pw.TextStyle(fontSize:9)),
             pw.SizedBox(height:12),
