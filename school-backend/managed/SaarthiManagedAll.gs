@@ -7114,6 +7114,35 @@ function VS_guardClosedPayrollMonth(b,existing,school){
     if(VS_layoutHash(frozen(current))!==VS_layoutHash(frozen(next)))throw new Error('SALARY_MONTH_CLOSED');
   }
 }
+function VS_validatePayrollLeave(b,existing,school){
+  const current=existing&&existing.data,next=b.data;
+  if(b.operation==='delete'||!next||next._syncDeleted===true)throw new Error('SALARY_LEAVE_HISTORY_IMMUTABLE');
+  const staffId=next.staffId,month=next.month;
+  if(typeof staffId!=='string'||!staffId||typeof month!=='string'||!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)||
+    b.id!=='payroll_leave_'+VS_hash(JSON.stringify([staffId,month]))||current&&(current.staffId!==staffId||current.month!==month))throw new Error('SALARY_LEAVE_IDENTITY');
+  const settings=VS_managedSheet('school_settings'),control=VS_sheetItem(settings,'payroll_month_'+month);
+  if(control&&(control.schoolId!==school||control.data.month!==month||control.data.closed===true))throw new Error('SALARY_MONTH_CLOSED');
+  let owner;
+  if(staffId.startsWith('teacher:')){
+    const item=VS_sheetItem(VS_managedSheet('teachers_directory'),staffId.slice(8));
+    owner=item&&item.schoolId===school?item.data:null;
+  }else{
+    const item=VS_sheetItem(settings,'staff_payroll_directory');
+    const staff=item&&item.schoolId===school&&Array.isArray(item.data.staff)?item.data.staff.filter(x=>x.id===staffId):[];
+    owner=staff.length===1?staff[0]:null;
+  }
+  if(!owner||owner.active===false||owner.inactive===true||owner.deleted===true||owner._syncDeleted===true)throw new Error('SALARY_LEAVE_OWNER_RETIRED');
+  const before=current&&current.events||[],after=next.events;
+  if(!Array.isArray(before)||!Array.isArray(after)||after.length<before.length||before.some((e,i)=>VS_layoutHash(e)!==VS_layoutHash(after[i])))throw new Error('SALARY_LEAVE_HISTORY_IMMUTABLE');
+  const ids=new Set(),days=new Map();
+  for(const e of after){
+    if(!e||typeof e.id!=='string'||!e.id||e.id.length>200||ids.has(e.id)||typeof e.date!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(e.date)||
+      !e.date.startsWith(month+'-')||!Number.isFinite(Date.parse(e.date))||new Date(e.date).toISOString().slice(0,10)!==e.date||
+      !['paid','unpaid','cancelled'].includes(e.kind)||days.get(e.date)===e.kind||e.kind==='cancelled'&&!days.has(e.date)||
+      typeof e.reason!=='string'||!e.reason.trim()||e.reason.length>500||!Number.isSafeInteger(e.at))throw new Error('SALARY_LEAVE_EVENT_INVALID');
+    ids.add(e.id);days.set(e.date,e.kind);
+  }
+}
 function VS_validatePayrollAdvance(b,existing,school){
   const current=existing&&existing.data;
   if(b.operation==='delete'||!b.data||b.data._syncDeleted===true)throw new Error('SALARY_ADVANCE_HISTORY_IMMUTABLE');
@@ -7302,6 +7331,7 @@ function VS_managedRecordUnlocked(b,readContext) {
   }
   if(b.collection==='school_settings'&&b.id.startsWith('payroll_month_'))VS_validatePayrollMonth(b,existing);
   if(b.collection==='school_settings'&&b.id.startsWith('payroll_advance_'))VS_validatePayrollAdvance(b,existing,school);
+  if(b.collection==='school_settings'&&b.id.startsWith('payroll_leave_'))VS_validatePayrollLeave(b,existing,school);
   if(b.operation==='delete'){
     if(VS_recycleEnabled()&&b.syncProtocol!==2)throw new Error('Invalid sync operation');
     if(existing&&existing.data._syncDeleted){VS_saveRecordHead(store,existing);if(existing.row){VS_refreshStudentReadable(store,existing,existing.row);VS_refreshRecordReadable(store,existing,existing.row);}VS_recordJsonBackup(store,existing);return {recordRevision:existing.data._syncRevision,syncProtocol:2,...(b.operation==='write'?{record:Object.assign({id:b.id},existing.data)}:{}),fileCleanup:VS_managedDeletedFile(store,b.id,existing.data)};}
