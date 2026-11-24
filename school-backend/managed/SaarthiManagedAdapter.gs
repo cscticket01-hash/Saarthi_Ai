@@ -503,6 +503,83 @@ function VS_studentSlot(data) {
 /** Called while existing school ScriptLock is held, including normal app writes.
  * Legacy unmeasured slots are reported; never rewrite them merely for import.
  */
+/**
+ * A signed school record write that changes promotion state must be backed
+ * by the existing authoritative Final Exam and its saved result. This guard
+ * runs inside the same managed ScriptLock as the student slot/revision check.
+ * A class transition cannot be simulated by deleting/recreating the pupil.
+ */
+function VS_guardFinalPromotion(b,existing,school){
+  if(!b||b.collection!=='students_directory'||b.operation!=='write'||!b.data)return;
+  const next=b.data,old=existing&&existing.data;
+  const changed=old&&(next.promotionTransactionId!==old.promotionTransactionId||
+    next.promotionExamId!==old.promotionExamId||next.classMovement!==old.classMovement||
+    old.promotionExamId&&(next.class!==old.class||next.studentClass!==old.studentClass));
+  if(!changed){
+    if(!old&&(next.promotionTransactionId||next.promotionExamId||next.classMovement))
+      throw new Error('New student cannot claim an approved promotion');
+    return;
+  }
+  if(!old||old._syncDeleted||old.deleted||next.schoolId!==school||
+      old.schoolId!==school||next.mobileStableId!==old.mobileStableId||
+      next.rollNo!==old.rollNo||String(next.section||'')!==String(old.section||''))
+    throw new Error('Promotion student identity must stay unchanged');
+  const examId=String(next.promotionExamId||''),operation='promotion:'+examId+':'+b.id;
+  if(!examId||next.promotionTransactionId!==operation)
+    throw new Error('Promotion transaction identity mismatch');
+  const examRow=VS_sheetItem(VS_managedSheet('exams'),examId),
+    canonical=VS_sheetItem(VS_managedSheet('exam_center_results'),examId+'_'+b.id),
+    legacy=canonical?null:VS_sheetItem(VS_managedSheet('exam_results'),examId+'_'+b.id),
+    exam=examRow&&examRow.data,resultRow=canonical||legacy,result=resultRow&&resultRow.data;
+  if(!exam||!result||exam._syncDeleted||result._syncDeleted||
+      exam.schoolId!==school||result.schoolId!==school||exam.isFinal!==true||
+      exam.completed===false||['draft','scheduled','in_progress'].includes(exam.status)||
+      result.studentId!==b.id||result.examId!==undefined&&result.examId!==examId||
+      !['PASS','FAIL'].includes(result.result)||result.result!==next.lastExamResult)
+    throw new Error('Verified Final Exam result is required for promotion');
+  const classOf=value=>{const match=/^Class ([1-9]|1[0-2])$/.exec(String(value||''));return match?Number(match[1]):0;};
+  const before=classOf(old.class||old.studentClass),after=classOf(next.class||next.studentClass);
+  if(!before||!after||classOf(exam.studentClass)!==before||
+     result.studentClass&&classOf(result.studentClass)!==before||
+     next.studentClass!==undefined&&next.studentClass!==next.class||
+     String(exam.academicSession||'')!==String(result.academicSession||'')||
+     next.previousClass&&next.previousClass!==old.class)
+    throw new Error('Promotion class/session verification failed');
+  if(result.personId!=null&&result.personId!==(old.mobileStableId||b.id))
+    throw new Error('Final result belongs to another student generation');
+  const subjects=exam.subjects;
+  if(!Array.isArray(subjects)||!subjects.length||
+     subjects.some(subject=>typeof subject!=='string'||!subject.trim())||
+     new Set(subjects.map(subject=>subject.toLowerCase().trim())).size!==subjects.length||
+     !result.marks||typeof result.marks!=='object'||Array.isArray(result.marks)||
+     Object.keys(result.marks).length!==subjects.length||
+     !Number.isFinite(Number(exam.fullMarks))||Number(exam.fullMarks)<=0||
+     !Number.isFinite(Number(exam.passMarks))||Number(exam.passMarks)<0||
+     Number(exam.passMarks)>Number(exam.fullMarks))
+    throw new Error('Complete saved subject marks are required');
+  const values=subjects.map(subject=>result.marks[subject]),full=Number(exam.fullMarks),pass=Number(exam.passMarks);
+  if(values.some(value=>typeof value!=='number'||!Number.isFinite(value)||value<0||value>full)||
+     (values.every(value=>value>=pass)?'PASS':'FAIL')!==result.result)
+    throw new Error('Final marks and result disagree');
+  const movement=next.classMovement,prior=old.classMovement;
+  if(movement==='RETAINED'){
+    if(after!==before||result.result!=='FAIL')throw new Error('Retention requires a failed exam');
+  }else if(movement==='GRADUATED'){
+    if(before!==12||after!==12||result.result!=='PASS')throw new Error('Graduation requires Class 12 pass');
+  }else if(movement==='PROMOTED'){
+    if(before>=12||after!==before+1||result.result!=='PASS')throw new Error('Promotion requires a pass and next class');
+  }else if(movement==='FORCE_PROMOTED'){
+    const policy=VS_sheetItem(VS_managedSheet('school_settings'),'promotion_policy');
+    if(before>=12||after!==before+1||result.result!=='FAIL'||
+       prior!=='RETAINED'||old.promotionExamId!==examId||
+       !policy||policy.data.allowForcedPromotion!==true||
+       typeof next.promotionOverrideReason!=='string'||
+       !next.promotionOverrideReason.trim()||next.promotionOverrideReason.length>500)
+      throw new Error('Force promotion needs prior retention, policy and audit reason');
+  }else throw new Error('Invalid promotion movement');
+  if(next.promotionPending!==true||next.promotionSyncState!=='Pending')
+    throw new Error('Promotion must retain pending acknowledgement state');
+}
 function VS_studentUnique(store,id,data,existing) {
   const slot=VS_studentSlot(data),oldSlot=existing?VS_studentSlot(existing.data):null,all=VS_sheetRecords(store);let partial=slot===null;
   Object.keys(all).forEach(other=>{
@@ -930,6 +1007,8 @@ function VS_managedRecordUnlocked(b,readContext) {
     } else if(revision) throw new Error('Versioned document requires a matching revision');
   }
   if(b.operation==='write' && existing && existing.data._syncDeleted && !VS_reusableStudentChild(b,existing) && !(b.syncProtocol===2&&b.expectedRecordRevision===existing.data._syncRevision&&b.data&&(b.data._syncRecreatesDeletedRevision===existing.data._syncRevision||b.data._syncRecreatesDeletedOperationId&&b.data._syncRecreatesDeletedOperationId===existing.data._syncOperationId)&&b.collection!=='students_directory') && !(VS_sheetLifecycleEnabled()&&b.collection==='students_directory'&&b.syncProtocol===2&&/^p-[a-f0-9]{32,64}$/.test(b.data&&b.data.mobileStableId||'')&&b.data.mobileStableId!==existing.data._syncDeletedOwner&&(b.expectedRecordRevision===existing.data._syncRevision||b.data.replacesStudentGeneration===existing.data._syncDeletedOwner)))throw new Error('Record revision conflict');
+  if(b.collection==='school_settings'&&String(b.id||'').startsWith('promotion_event_')&&b.operation==='delete')
+    throw new Error('Promotion audit events are immutable');
   if(b.collection==='teacher_salary'&&(b.operation==='write'||b.operation==='delete')){
     VS_guardClosedPayrollMonth(b,existing,school);
     VS_validateSalaryLedger(existing&&existing.data,b.data||{},b.operation);
@@ -956,6 +1035,13 @@ function VS_managedRecordUnlocked(b,readContext) {
     }
 
   }
+  if(b.collection==='school_settings'&&String(b.id||'').startsWith('promotion_event_')){
+    if(b.operation!=='write'||!b.data||existing&&existing.data||
+       !['RETAINED','PROMOTED','FORCE_PROMOTED','GRADUATED'].includes(b.data.movement)||
+       b.id!=='promotion_event_'+b.data.examId+'_'+b.data.studentId+'_'+b.data.movement||
+       b.data.schoolId!==school||typeof b.data.at!=='number'||!Number.isFinite(b.data.at))
+      throw new Error('Promotion audit event requires immutable school ownership');
+  }
   if(b.operation!=='write'||!b.data||b.data.schoolId!==school)throw new Error('Invalid school record');
   VS_validateScanQuota(store,b,existing,school);
   if(VS_sheetLifecycleEnabled()&&b.collection==='teachers_directory')VS_validateTeacherPayrollIdentity(b.id,b.data);
@@ -970,6 +1056,7 @@ function VS_managedRecordUnlocked(b,readContext) {
     if(known&&known._syncDeleted){if(b.data.personId===known._syncDeletedOwner||(known._syncRetiredStudentGenerations||[]).indexOf(b.data.personId)>=0)throw new Error('Student generation was deleted; stale child rejected');throw new Error('New student parent must sync first');}
     if(known&&known.mobileStableId&&known.mobileStableId!==b.data.personId)throw new Error('Student generation was deleted; stale child rejected');
   }
+  if(b.collection==='students_directory')VS_guardFinalPromotion(b,existing,school);
   const studentUniquenessScope=b.collection==='students_directory'?VS_studentUnique(store,b.id,b.data,existing):undefined;
   const generation=b.collection!=='students_directory'&&existing&&!existing.data._syncDeleted&&existing.data._syncRecreatesDeletedRevision;
   if(generation&&b.data._syncRecreatesDeletedRevision&&b.data._syncRecreatesDeletedRevision!==generation)throw new Error('Record revision conflict');

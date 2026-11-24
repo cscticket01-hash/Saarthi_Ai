@@ -61,6 +61,38 @@ test('native teacher identities remain reserved after retirement and cannot coll
  assert.throws(()=>check({current:{...next,id:'teacher-new',teacherId:'T2'}}),e=>e.code==='PERSON_TEACHER_REASSIGNMENT_REQUIRES_REVIEW');
 });
 
+
+test('final promotion preserves stable owner and rejects forged or duplicate class movement',async()=>{
+ const {validatePersonCandidate}=await import('../src/domain-policy.ts');
+ const personId='p-'+'1'.repeat(64);
+ const old={schoolId:school,id:'pupil-one',mobileStableId:personId,
+   class:'Class 10',studentClass:'Class 10',section:'A',rollNo:'4'};
+ const check=(next,{current=old,peers=[]}={})=>
+   validatePersonCandidate({schoolId:school,collection:'students_directory',
+     id:'pupil-one',operation:'write',current,next:{schoolId:school,...next},
+     readPeers:()=>peers});
+ const good={...old,class:'Class 11',studentClass:'Class 11',
+   previousClass:'Class 10',promotionExamId:'final-10',lastExamResult:'PASS',
+   promotionTransactionId:'promotion:final-10:pupil-one',
+   classMovement:'PROMOTED',promotionPending:true,promotionSyncState:'Pending'};
+ assert.doesNotThrow(()=>check(good));
+ assert.throws(()=>check({...good,mobileStableId:'p-'+'2'.repeat(64)}),
+   e=>e.code==='PERSON_GENERATION_REPLACEMENT_REQUIRED');
+ assert.throws(()=>check({...good,class:'Class 12',studentClass:'Class 12'}),
+   e=>e.code==='PERSON_PROMOTION_RULE_MISMATCH');
+ assert.throws(()=>check({...good,studentClass:'Class 10'}),
+   e=>e.code==='PERSON_PROMOTION_IDENTITY_MISMATCH');
+ assert.throws(()=>check({...good,rollNo:'5'}),
+   e=>e.code==='PERSON_PROMOTION_IDENTITY_MISMATCH');
+ assert.throws(()=>check({...good,classMovement:'FORCE_PROMOTED',lastExamResult:'FAIL'}),
+   e=>e.code==='PERSON_PROMOTION_RULE_MISMATCH');
+ assert.throws(()=>check({...good,classMovement:'PROMOTED'},
+   {current:null}),e=>e.code==='PERSON_PROMOTION_REQUIRES_EXISTING_OWNER');
+ assert.throws(()=>check(good,{peers:[{...old,id:'another',
+   class:'Class 11',studentClass:'Class 11',rollNo:'4'}]}),
+   e=>e.code==='PERSON_STUDENT_SLOT_CONFLICT');
+});
+
 test('exact-paise payroll ledger retains immutable payment and correction history',()=>{
  const base={schoolId:school,staffId:'teacher:teacher',employeeId:'T1',teacherId:'T1',month:'2026-11',basicPaise:10000,netPaise:10000,amount:100,paidPaise:0,balancePaise:10000,status:'Pending'};
  const options={collection:'teacher_salary',owner:teacher};

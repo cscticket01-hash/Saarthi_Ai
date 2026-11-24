@@ -773,12 +773,19 @@ void main() {
         'class': 'Class 12',
         'rollNo': '2',
       });
-      final exam = {'examId': 'final-12', 'examName': 'Final', 'isFinal': true};
+      final exam = {
+        'examId':'final-12','examName':'Final','isFinal':true,
+        'subjects':['English','Math'],'fullMarks':100,'passMarks':33,
+      };
       await db.collection('_local_exam_center_exams').doc('final-12').set(exam);
       for (final entry in {'pass': 'PASS', 'fail': 'FAIL'}.entries) {
         await db.collection('exam_results').doc('final-12_${entry.key}').set({
           'studentId': entry.key,
           'result': entry.value,
+          'examId':'final-12',
+          'marks':entry.value=='PASS'
+              ? {'English':80,'Math':75}
+              : {'English':20,'Math':60},
         });
       }
       expect(

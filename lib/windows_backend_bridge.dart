@@ -2685,18 +2685,8 @@ class WindowsBackendBridge {
             ? data['examId']?.toString() ?? 'EXAM-${secureSetupToken(12)}'
             : '${data['examId']}_${data['studentId']}';
         final record = Map<String, dynamic>.from(data)..remove('pdfBase64');
-        if (action == 'save_exam_result' &&
-            (data['pdfBase64']?.toString().isNotEmpty ?? false)) {
-          final file = await cloud.upload(
-            'Report-$id.pdf',
-            'application/pdf',
-            data['pdfBase64'].toString(),
-            uploadKey: CentralSchoolCloud.uploadIdentity(
-              school, id, 'exam_report', data['pdfBase64'].toString()),
-          );
-          record['reportCardUrl'] = file['fileUrl'];
-          record['reportCardFileId'] = file['fileId'];
-        }
+        // Save Marks is record-only on every supported Windows path.
+        // Legacy PDF links can still be read; incoming PDF bytes are ignored.
         await save(
           action == 'save_exam' ? 'exams' : 'exam_center_results',
           id,

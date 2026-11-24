@@ -1,6 +1,7 @@
 'use strict';
 const {createHash,createHmac}=require('node:crypto');
 const {canonical}=require('./live-sync-canonical');
+const {hasChangedPromotion,validatePromotionAuthority}=require('./promotion-authority');
 const COLLECTIONS=new Set(['school_expenses','school_calendar','school_notices','school_settings','students_directory','teachers_directory','fee_settings','fee_ledger','fee_payments','teacher_salary','attendance_records','attendance_logs','teacher_attendance','teacher_schedules','exams','exam_results','exam_center_results','documents','student_scan_index','scanner_devices','school_config']);
 const payloadHash=record=>createHash('sha256').update(canonical({deleted:record._syncDeleted===true,data:Object.fromEntries(Object.entries(record).filter(([key])=>!key.startsWith('_sync')))})).digest('hex');
 const refuse=(status,code)=>{throw Object.assign(Error('Live sync admission requires verified school state.'),{status,code,publicMessage:true});};
@@ -22,7 +23,8 @@ function createLiveSync({edge,schools=[],now=Date.now}){
  }
  async function read(school,collection,id,readDrive){return (await resolve(school,collection,id,readDrive)).result;}
  async function commit(school,body,readDrive){
-  const {cachedBaseline,...wire}=body;
+  // Never forward an untrusted client-supplied promotion proof.
+  const {cachedBaseline,promotionProof:_untrustedProof,...wire}=body;
   const {result,baseline}=await resolve(school,body.collection,body.id,readDrive,cachedBaseline);
   if(body.collection==='teachers_directory'&&result.teacherPhoneBackfillPending===true){
    const changesPhone=body.operation==='write'?body.data?.phone:
@@ -44,7 +46,38 @@ function createLiveSync({edge,schools=[],now=Date.now}){
     }
    }
   }
-  return command(school,{...wire,command:'commit',...(baseline?{baseline}:{})});
+  let promotionProof;
+  if(body.collection==='students_directory'&&body.operation==='write'&&
+     result.record&&body.data&&hasChangedPromotion(result.record,body.data)){
+   const examId=body.data.promotionExamId,studentId=body.id;
+   if(typeof examId!=='string'||!examId||typeof studentId!=='string')
+    refuse(409,'PROMOTION_FINAL_EXAM_INVALID');
+   const [examReply,resultReply]=await Promise.all([
+    resolve(school,'exams',examId,readDrive),
+    resolve(school,'exam_center_results',examId+'_'+studentId,readDrive),
+   ]);
+   const exam=examReply.result.record,marks=resultReply.result.record;
+   const examRevision=examReply.result.recordRevision,
+     resultRevision=resultReply.result.recordRevision;
+   if(!exam||!marks||typeof examRevision!=='string'||
+      typeof resultRevision!=='string')
+    refuse(412,'PROMOTION_VERIFIED_SOURCE_REQUIRED');
+   let policyReply;
+   if(body.data.classMovement==='FORCE_PROMOTED'){
+    policyReply=await resolve(school,'school_settings','promotion_policy',readDrive);
+    if(!policyReply.result.record||
+       typeof policyReply.result.recordRevision!=='string')
+     refuse(412,'PROMOTION_POLICY_PROOF_REQUIRED');
+   }
+   validatePromotionAuthority({schoolId:school,studentId,
+    previous:result.record,next:body.data,exam,result:marks,
+    policy:policyReply?.result.record});
+   promotionProof={examId,examRevision,
+    resultId:examId+'_'+studentId,resultRevision,
+    ...(policyReply?{policyRevision:policyReply.result.recordRevision}:{})};
+  }
+  return command(school,{...wire,command:'commit',
+    ...(baseline?{baseline}:{}),...(promotionProof?{promotionProof}:{})});
  }
  async function payrollRecovery(school,body,readDrive){
   const publishing=body.command==='bundleCommit';
