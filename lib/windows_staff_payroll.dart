@@ -144,6 +144,70 @@ class StaffPayroll {
     }
     return dates.toSet();
   }
+  /// Only normalize fields that are already provable from this row. Never
+  /// manufacture a dated transaction or infer an ambiguous partial amount.
+  static Map<String,dynamic>? legacyProposal(Map<String,dynamic> row){
+    if(row['_syncDeleted']==true||row['month'] is! String||!RegExp(r'^\d{4}-(0[1-9]|1[0-2])$').hasMatch(row['month'] as String))return null;
+    if(row['netPaise'] is int&&row['paidPaise'] is int&&row['balancePaise']==null){
+      final net=row['netPaise'] as int,paid=row['paidPaise'] as int;
+      if(net<0||paid<0||paid>net||row['status']!=(paid==net?'Paid':paid==0?'Pending':'Part paid'))return null;
+      return {'balancePaise':net-paid};
+    }
+    if(row['netPaise']!=null||row['balancePaise']!=null||row['amount'] is! num||
+      (row['payments'] as List? ?? []).isNotEmpty||(row['paymentCorrections'] as List? ?? []).isNotEmpty||
+      ['basicPaise','allowancePaise','bonusPaise','overtimePaise','deductionPaise'].any(row.containsKey))return null;
+    final amount=(row['amount'] as num).toDouble(),scaled=amount*100;
+    if(!scaled.isFinite||scaled<0||scaled>99999999999||(scaled-scaled.round()).abs()>0.00001)return null;
+    final net=scaled.round(),status=(row['status']?.toString()??'').toLowerCase();
+    if(status!='paid'&&status!='pending')return null;
+    final paid=status=='paid'?net:0;
+    if(row['paidPaise']!=null&&row['paidPaise']!=paid)return null;
+    return {'netPaise':net,'paidPaise':paid,'balancePaise':net-paid,'status':paid==net?'Paid':'Pending'};
+  }
+  static Future<List<Map<String,dynamic>>> legacyReview(String profile)async{
+    _sameSchool(profile);
+    final data=await FirebaseFirestore.instance.collection('teacher_salary').get();
+    _sameSchool(profile);
+    final rows=[for(final d in data.docs){...d.data(),'id':d.id}];
+    String owner(Map<String,dynamic> r){
+      final teacher=(r['teacherId']?.toString()??'').trim();
+      return teacher.isNotEmpty?'teacher:$teacher':(r['staffId']?.toString()??'');
+    }
+    final counts=<String,int>{};
+    for(final row in rows){
+      if(owner(row).isEmpty||row['month']==null)continue;
+      final key=jsonEncode([owner(row),row['month']]);counts[key]=(counts[key]??0)+1;
+    }
+    final review=<Map<String,dynamic>>[];
+    for(final row in rows){
+      final key=jsonEncode([owner(row),row['month']]);
+      final duplicate=(counts[key]??0)>1;
+      if(!duplicate&&row['netPaise']!=null&&row['balancePaise']!=null)continue;
+      Map<String,dynamic>? proposal;
+      try{if(!duplicate&&owner(row).isNotEmpty)proposal=legacyProposal(row);}catch(_){}
+      review.add({...row,'reviewIssue':duplicate?'Duplicate owner/month; manual reconciliation required':proposal==null?'Ambiguous legacy record; original retained':'Derived fields available for reviewed normalization','canNormalize':proposal!=null});
+    }
+    return review;
+  }
+  static Future<void> normalizeLegacy(String profile,String id,{required String adminPassword})=>_serial(()async{
+    await requireAdmin(profile,adminPassword);
+    await _durable(profile);
+    final review=await legacyReview(profile);
+    if(!review.any((r)=>r['id']==id&&r['canNormalize']==true))throw StateError('Record is ambiguous or already normalized. Refresh review.');
+    final db=FirebaseFirestore.instance,ref=db.collection('teacher_salary').doc(id);
+    final row=(await ref.get()).data();
+    _sameSchool(profile);
+    if(row==null)throw StateError('Legacy record missing.');
+    final proposal=legacyProposal(row);
+    if(proposal==null)throw StateError('No safe normalization available.');
+    await _requireMonthOpen(profile,row['month'] as String);
+    if(row['salaryLocked']==true)throw StateError('Reopen the approved salary before normalizing.');
+    await requireAdmin(profile,adminPassword);
+    final batch=db.batch();
+    batch.requireUnchanged(ref,row);
+    batch.update(ref,{...proposal,'updatedAt':DateTime.now().millisecondsSinceEpoch});
+    await batch.commit();
+  });
   static String monthControlId(String month){
     rowId('month-control',month);
     return 'payroll_month_'+month;
@@ -904,6 +968,29 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     }catch(e){if(mounted)setState(()=>_error='$e');}
     finally{if(mounted)setState(()=>_working=false);}
   }
+  Future<void> _legacyReview() async{
+    try{
+      final rows=await StaffPayroll.legacyReview(_profile);
+      if(!mounted)return;
+      final selected=await showDialog<String>(context:context,builder:(ctx)=>AlertDialog(
+        title:const Text('Legacy Salary Review'),
+        content:SizedBox(width:660,child:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,crossAxisAlignment:CrossAxisAlignment.start,children:[
+          Text('${rows.length} records requiring review. Original payment history is retained. No dates, payment IDs or transactions are invented.'),
+          for(final row in rows)ListTile(title:Text('${row['name']??row['id']} • ${row['month']??'Unknown month'}'),
+            subtitle:Text(row['reviewIssue'].toString()),trailing:row['canNormalize']==true?TextButton(onPressed:()=>Navigator.pop(ctx,row['id'].toString()),child:const Text('Review & normalize')):null),
+        ]))),
+        actions:[TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Close'))]));
+      if(selected==null||!mounted)return;
+      final password=await _adminAuthorization('Normalize Verified Legacy Fields');
+      if(password==null||!mounted)return;
+      final confirmed=await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(title:const Text('Confirm normalization'),
+        content:const Text('Confirm that the saved salary amount and status match the original school records. Only derived paise fields are added; no payment is created.'),
+        actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Normalize'))]));
+      if(confirmed!=true||!mounted)return;
+      await StaffPayroll.normalizeLegacy(_profile,selected,adminPassword:password);
+      if(mounted)await _load();
+    }catch(e){if(mounted)setState(()=>_error='$e');}
+  }
   Future<void> _toggleMonth() async{
     if(_working)return;
     final month=StaffPayroll.monthKey(_month),closed=!_monthClosed;
@@ -986,6 +1073,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
             OutlinedButton.icon(onPressed:_working||_staff.isEmpty||_monthClosed?null:_generateMonth,icon:Icon(Icons.playlist_add),label:Text('Generate Monthly Salary')),
             OutlinedButton.icon(onPressed:_working?null:_toggleMonth,icon:Icon(_monthClosed?Icons.lock_open:Icons.lock),label:Text(_monthClosed?'Reopen Payroll Month':'Close Payroll Month')),
             FilledButton.icon(style:FilledButton.styleFrom(backgroundColor: WindowsAppearance.primary, foregroundColor: WindowsAppearance.onPrimary),onPressed:_selected.isEmpty?null:_paySelected,icon:Icon(Icons.done_all),label:Text('Record Selected Payments')),
+            OutlinedButton.icon(onPressed:_working?null:_legacyReview,icon:Icon(Icons.fact_check_outlined),label:Text('Legacy Salary Review')),
             OutlinedButton.icon(key: const ValueKey('salary-history'), onPressed:()=>_history(),icon:Icon(Icons.history),label:Text('Payment History')),
             OutlinedButton.icon(onPressed:_working?null:()=>_output(csv:true),icon:Icon(Icons.download_outlined),label:Text('Export CSV')),
 
@@ -1020,6 +1108,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
               if(row['netPaise'] is num && StaffPayroll.paid(row)<StaffPayroll.total(row)) TextButton(onPressed:()=>_payment(row),child:Text('Record payment')),
               if(StaffPayroll.paid(row)>0) TextButton(onPressed:()=>_correctPayment(row),child:Text('Modify payment')),
               if(StaffPayroll.paid(row)>0) TextButton(onPressed:()=>_correctPayment(row,reverse:true),child:Text('Reverse payment')),
+              if((row['staffId']?.toString()??'').isNotEmpty)TextButton(onPressed:()=>_advance(row),child:Text('Advance ledger')),
               IconButton(tooltip:'Payment history',icon:Icon(Icons.history),onPressed:()=>_history(row)),
               IconButton(tooltip:'View payslip',icon:Icon(Icons.receipt_long),onPressed:_working?null:()=>_output(row:row)),
             ]))),
