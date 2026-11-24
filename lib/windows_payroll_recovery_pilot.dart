@@ -18,6 +18,24 @@ class WindowsPayrollRecoveryPilot {
         db.activeProfileId!=profile||db.activeProfileIdentity['schoolSyncId']!=school||
         !RegExp(r'^vs-[a-f0-9]{32}$').hasMatch(school))throw StateError('Isolated TEST payroll recovery is unavailable.');
   }
+  static bool get enabled=>AtomicBundlePilot.buildEnabled&&ManagedSchoolSession.enabled;
+  static Future<bool> hasDue(String school)async{
+    if(!enabled)return false;
+    final db=FirebaseFirestore.instance,profile=db.activeProfileId;
+    if(db.activeProfileIdentity['schoolSyncId']!=school)return false;
+    final now=DateTime.now().millisecondsSinceEpoch;
+    final rows=(await db.collection(journal).get()).docs;
+    if(db.activeProfileId!=profile||db.activeProfileIdentity['schoolSyncId']!=school)return false;
+    return rows.any((r){final d=r.data();return d['schoolId']==school&&['pending','cloudCommitted'].contains(d['state'])&&
+      (d['lastCheckAt'] is! int||now-(d['lastCheckAt'] as int)>=30000);});
+  }
+  static Future<void> guardStaff(String staffId)async{
+    if(!enabled||staffId.isEmpty)return;
+    final db=FirebaseFirestore.instance;
+    final rows=(await db.collection(journal).get()).docs;
+    if(rows.any((r){final d=r.data();return d['staffId']==staffId&&d['schoolId']==db.activeProfileIdentity['schoolSyncId']&&d['state']=='pending';}))
+      throw StateError('An original paired recovery is awaiting verified Cloudflare acknowledgement. Review recovery verification first.');
+  }
   static Future<String> prepare(String profile,String school,{required String salaryId,required String advanceId,
       required int amountPaise,required String reference})async{
     _scope(profile,school);
@@ -76,7 +94,7 @@ class WindowsPayrollRecoveryPilot {
         if(canAdmit?.call()==false)break;
         _scope(profile,school);
         final original=row.data(),state=original['state'];
-        if(original['schoolId']!=school||!['pending','cloudCommitted'].contains(state))continue;
+        if(original['schoolId']!=school||!['pending','cloudCommitted'].contains(state)||original['lastCheckAt'] is int&&DateTime.now().millisecondsSinceEpoch-(original['lastCheckAt'] as int)<30000)continue;
         final bundleId=original['bundleId'],ops=original['operations'];
         if(bundleId is! String||ops is! List||ops.length!=2||ops.any((op)=>op is! Map))continue;
         final wire={'liveProtocol':1,'confirmIsolatedBundleTest':true,'bundleId':bundleId,'operations':ops};
@@ -90,7 +108,7 @@ class WindowsPayrollRecoveryPilot {
             _scope(profile,school);
             if(!verifiedCloud(sent,school,bundleId,ops))throw StateError('Recovery cloud acknowledgement unverified.');
             final batch=db.batch();batch.requireUnchanged(row.reference,original);
-            batch.update(row.reference,{'state':'cloudCommitted','cloudReceipt':sent,'cloudAckAt':DateTime.now().millisecondsSinceEpoch});
+            batch.update(row.reference,{'state':'cloudCommitted','cloudReceipt':sent,'cloudAckAt':DateTime.now().millisecondsSinceEpoch,'lastCheckAt':DateTime.now().millisecondsSinceEpoch,'verificationPending':false});
             await batch.commit();completed++;continue;
           }
           if(receipt['found']!=true||receipt['receipt'] is! Map||
@@ -106,7 +124,7 @@ class WindowsPayrollRecoveryPilot {
           final verified=receipt['driveVerified']==true&&proofs.every((p)=>p['driveVerified']==true&&p['driveRevision'] is String&&(p['driveRevision'] as String).isNotEmpty);
           final batch=db.batch();batch.requireUnchanged(row.reference,original);
           batch.update(row.reference,{'state':verified?'driveVerified':'cloudCommitted','cloudReceipt':receipt['receipt'],
-            'backupProofs':proofs,if(verified)'driveVerifiedAt':DateTime.now().millisecondsSinceEpoch});
+            'backupProofs':proofs,'lastCheckAt':DateTime.now().millisecondsSinceEpoch,'verificationPending':false,if(verified)'driveVerifiedAt':DateTime.now().millisecondsSinceEpoch});
           await batch.commit();if(state=='pending')completed++;
         }catch(e){
           // An uncertain request remains intact. Never regenerate IDs or write
