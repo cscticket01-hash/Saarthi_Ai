@@ -389,6 +389,32 @@ function slot(data:Json|null):string|null {
  if(typeof cls!=='string'||!cls.trim()||typeof section!=='string'||!(typeof roll==='string'||typeof roll==='number')||typeof roll==='number'&&(!Number.isSafeInteger(roll)||roll<0)||!String(roll).trim())return null;
  return JSON.stringify([cls.trim(),section.trim(),String(roll).trim()]);
 }
+// Validate newly supplied values at the authoritative record boundary.
+ // An untouched historical typo is not a reason to block unrelated sync.
+export function validatePersonContactFields(collection:string,current:Json|null,next:Json):void {
+ const changed=(key:string)=>next[key]!==undefined&&next[key]!==current?.[key];
+ if(collection==='students_directory'&&changed('pinCode')&&next.pinCode!==null&&next.pinCode!==''){
+  if(typeof next.pinCode!=='string'||!/^[0-9]{6}$/.test(next.pinCode.trim()))
+   reject('PERSON_POSTAL_PIN_INVALID',400);
+ }
+ const parse=(value:unknown):number|null=>{
+  if(typeof value!=='string')return null;
+  const s=value.trim(),d=/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s),i=/^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if(!d&&!i)return null;
+  const year=Number(d?d[3]:i![1]),month=Number(d?d[2]:i![2]),day=Number(d?d[1]:i![3]);
+  const date=new Date(Date.UTC(year,month-1,day));
+  return year>=1900&&year<=2100&&date.getUTCFullYear()===year&&date.getUTCMonth()===month-1&&date.getUTCDate()===day?date.getTime():null;
+ };
+ for(const key of ['dateOfBirth','joiningDate']){
+  if(!changed(key)||next[key]===null||next[key]==='')continue;
+  if(parse(next[key])===null)reject('PERSON_DATE_INVALID',400);
+ }
+ if(changed('dateOfBirth')&&parse(next.dateOfBirth)!==null&&parse(next.dateOfBirth)!>Date.now())
+  reject('PERSON_DATE_INVALID',400);
+ const birth=parse(next.dateOfBirth),joining=parse(next.joiningDate);
+ if((changed('dateOfBirth')||changed('joiningDate'))&&birth!==null&&joining!==null&&joining<birth)
+  reject('PERSON_DATE_ORDER_INVALID',400);
+}
 export function validatePersonCandidate(input:PersonCandidate):void {
  const {schoolId,collection,id,operation,current,next,readPeers}=input;
  if(!personCollections.has(collection))reject('PERSON_COLLECTION_NOT_ADMITTED',412);
@@ -401,6 +427,7 @@ export function validatePersonCandidate(input:PersonCandidate):void {
   return;
  }
  if(next._syncDeleted===true)reject('PERSON_INVALID_WRITE',400);
+ validatePersonContactFields(collection,current,next);
  const oldGeneration=current?(generation(current)||id):null;
  if(collection==='students_directory'){
   if(typeof next.mobileStableId!=='string'||!/^p-[a-f0-9]{32,64}$/.test(next.mobileStableId))reject('PERSON_GENERATION_INVALID',400);
