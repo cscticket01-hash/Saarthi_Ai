@@ -17,7 +17,14 @@ test('management presence uses identity and registry, so a previously issued pre
  assert.equal(session.deviceManaged,true);assert.equal(session.deviceEnforced,false);
  assert.equal(session.offlineLease,undefined);assert.ok(session.presenceToken);
  assert.equal((await call(2,'managed/presence',{presenceToken:session.presenceToken})).success,true);
- await call(1,'managed/device/revoke',{targetDeviceIdentity:second.device.deviceIdentity});
+ const targetDeviceIdentity=second.device.deviceIdentity;
+ await assert.rejects(call(1,'managed/device/revoke',{targetDeviceIdentity}),{code:'ADMIN_APPROVAL_REQUIRED'});
+ const password='River-37';
+ await call(1,'managed/admin/security',{operation:'enroll',newPassword:password});
+ const grant=await call(1,'managed/admin/security',{
+  operation:'authorize',password,scope:'protected-settings',target:'device/'+targetDeviceIdentity,
+ });
+ await call(1,'managed/device/revoke',{targetDeviceIdentity,adminApprovalToken:grant.approvalToken});
  await assert.rejects(call(2,'managed/presence',{presenceToken:session.presenceToken}),{code:'DEVICE_AUTHORIZATION_REJECTED'});
  await assert.rejects(f.call({action:'managed/presence',schoolId:A,presenceToken:session.presenceToken}),{code:'DEVICE_PROOF_REQUIRED'});
  const list=await call(1,'managed/device/list');assert.equal(list.devices.filter(d=>d.current).length,1);
