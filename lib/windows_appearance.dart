@@ -70,16 +70,18 @@ class WindowsAppearance {
     final nextPreset = windowsThemePreset(
       value['presetId'] is String ? value['presetId'] : null,
     );
+    final nextColor = Color.fromARGB(255, value['red'], value['green'], value['blue']);
+    final changedVisuals = presetId != nextPreset?.id || brand.value != nextColor;
+    final changedRevision = brandRevision != value['revision'];
+    if (!changedVisuals && !changedRevision) return;
     presetId = nextPreset?.id;
-    mode.value = presetMode;
     brandRevision = value['revision'];
-    brand.value = Color.fromARGB(
-      255,
-      value['red'],
-      value['green'],
-      value['blue'],
-    );
-    changes.value++;
+    if (changedVisuals) {
+      _foregroundCache.clear();
+      brand.value = nextColor;
+      mode.value = presetMode;
+      changes.value++;
+    }
     if (persist) WindowsAppearance.persist().catchError((Object _) {});
   }
 
@@ -104,7 +106,18 @@ class WindowsAppearance {
     return (x > y ? x + .05 : y + .05) / (x > y ? y + .05 : x + .05);
   }
 
+  static final _foregroundCache = <(int, int, ThemeMode, String?), Color>{};
   static Color foreground(Color source) {
+    final key = (source.toARGB32(), brand.value.toARGB32(), mode.value, presetId);
+    final cached = _foregroundCache[key];
+    if (cached != null) return cached;
+    final result = _resolveForeground(source);
+    if (_foregroundCache.length >= 512) _foregroundCache.clear();
+    _foregroundCache[key] = result;
+    return result;
+  }
+
+  static Color _resolveForeground(Color source) {
     if (source.a == 0) return source;
     var color = resolve(source).withValues(alpha: 1);
     final scheme = theme(
