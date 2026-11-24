@@ -114,17 +114,19 @@ Future<void> _initializeMobileNotifications() async {
 class SaarthiMobileApp extends StatelessWidget {
   const SaarthiMobileApp({super.key});
   @override
-  Widget build(BuildContext context) => MaterialApp(
+  Widget build(BuildContext context) => ValueListenableBuilder<bool>(
+    valueListenable: SchoolSession.instance.auroraAppearance,
+    builder: (context, aurora, _) => MaterialApp(
     title: 'Vidya Saarthi',
     scaffoldMessengerKey: _messenger,
     debugShowCheckedModeBanner: false,
-    theme: mobileLiquidGlassTheme(),
+    theme: aurora ? ThemeData(useMaterial3: true, colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF436AE8)), scaffoldBackgroundColor: Colors.transparent, cardTheme: const CardThemeData(color: Color(0xF2F7FAFF))) : mobileLiquidGlassTheme(),
     builder: (context, child) =>
-        LiquidGlassBackdrop(child: child ?? const SizedBox.shrink()),
+        LiquidGlassBackdrop(aurora: aurora, child: child ?? const SizedBox.shrink()),
     home: SchoolSession.instance.loggedIn
         ? const _SchoolDashboard()
         : const _SchoolLogin(),
-  );
+  ));
 }
 
 class _QrScanner extends StatefulWidget {
