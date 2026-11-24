@@ -20,24 +20,32 @@ test('seeded payroll pair: verified Drive baseline, lost ACK, grouped peer repla
   const edge=createCloudflareSync({url:'https://worker.invalid',key,schools:['*'],fetchImpl:(url,opt)=>mf.dispatchFetch(String(url),opt)});
   const live=createLiveSync({edge,schools:[school]});
   const gs=storage({lifecycle:true,bundle:true});
-  const deliver=body=>gs.call(body);
+  // Capture the original exception only inside this isolated synthetic VM.
+  // Production signed responses continue to redact arbitrary error messages.
+  let lastScriptError='';
+  const originalWrite=gs.context.VS_managedRecordUnlocked;
+  gs.context.VS_managedRecordUnlocked=function(...args){
+   try{return originalWrite.apply(this,args);}
+   catch(error){lastScriptError=String(error.stack||error.message);throw error;}
+  };
+  const deliver=body=>{lastScriptError='';return gs.call(body);};
   const health=deliver({action:'managed_health'});
   assert.equal(health.payrollLedgerVersion,2);assert.equal(health.payrollLeaveVersion,1);assert.equal(health.payrollRecoveryBackupVersion,1);
   const teacherId='payroll-delivery-teacher',staffId='teacher:'+teacherId,
    salaryId='payroll-delivery-salary',advanceId='payroll_advance_'+createHash('sha256').update(staffId).digest('hex');
   const generation='p-'+'4'.repeat(64);
-  const write=(collection,id,data,op)=>gs.call({action:'managed_records',operation:'write',syncProtocol:2,collection,id,
+  const write=(collection,id,data,op)=>deliver({action:'managed_records',operation:'write',syncProtocol:2,collection,id,
    operationId:op,expectedRecordRevision:'',data:{schoolId:school,id,...data}});
   const parent=write('teachers_directory',teacherId,{name:'Synthetic payroll teacher',teacherId,mobileStableId:generation},'payroll-delivery-teacher-init');
-  assert.equal(parent.success,true,JSON.stringify(parent));
+  assert.equal(parent.success,true,JSON.stringify(parent)+' '+lastScriptError);
   const salary=write('teacher_salary',salaryId,{staffId,teacherId,employeeId:teacherId,personId:generation,month:'2026-11',
    basicPaise:2000000,allowancePaise:0,bonusPaise:0,overtimePaise:0,deductionPaise:0,
    netPaise:2000000,paidPaise:0,balancePaise:2000000,amount:20000,status:'Pending'},'payroll-delivery-salary-init');
-  assert.equal(salary.success,true,JSON.stringify(salary));
+  assert.equal(salary.success,true,JSON.stringify(salary)+' '+lastScriptError);
   const advance=write('school_settings',advanceId,{staffId,balancePaise:400000,events:[
    {id:'original-loan',type:'loan',amountPaise:400000,reference:'Synthetic loan',recordedAt:1795500000000}
   ]},'payroll-delivery-advance-init');
-  assert.equal(advance.success,true,JSON.stringify(advance));
+  assert.equal(advance.success,true,JSON.stringify(advance)+' '+lastScriptError);
   for(const collection of ['teachers_directory','teacher_salary','school_settings'])
    assert.equal((await live.prepare(school,collection,deliver)).state,'active');
   assert.equal((await live.command(school,{command:'read',collection:'teacher_salary',id:salaryId})).source,'drive');
