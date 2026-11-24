@@ -111,3 +111,30 @@ test('zero admission snapshot permits ordinary monthly payment without admission
  assert.throws(()=>run({...monthly,feeItems:{Tuition:90,Admission:10}}),
   e=>e.code==='DOMAIN_FEE_ONCE_NOT_AUTHORIZED');
 });
+
+test('record-only payment pair checks exact prior balance, owner and receipt identity',async()=>{
+ const {validateRecordOnlyFeePair}=await import('../src/domain-policy.ts');
+ const terms={schoolId:school,feeBillingPolicyVersion:1,studentId:'student',
+   personId:'generation-one',feeIdentity:'person:generation-one',month:'2026-05',
+   expectedAmount:125.5,feeItems:{Tuition:125.5},feeFrequencies:{Tuition:'monthly'}};
+ const payment={...terms,paymentId:'payment-one',installmentAmount:50,totalPaid:50,
+   balance:75.5,status:'PARTIAL'};
+ const ledger={...terms,lastPaymentId:'payment-one',totalPaid:50,balance:75.5,status:'PARTIAL'};
+ const input={schoolId:school,paymentId:'payment-one',payment,ledger,currentLedger:null};
+ assert.doesNotThrow(()=>validateRecordOnlyFeePair(input));
+ assert.throws(()=>validateRecordOnlyFeePair({...input,ledger:{...ledger,totalPaid:51}}),
+   e=>e.code==='DOMAIN_FEE_PAIR_MISMATCH');
+ assert.throws(()=>validateRecordOnlyFeePair({...input,ledger:{...ledger,personId:'other'}}),
+   e=>e.code==='DOMAIN_FEE_PAIR_MISMATCH');
+ assert.throws(()=>validateRecordOnlyFeePair({...input,payment:{...payment,receiptDocumentId:'file'}}),
+   e=>e.code==='DOMAIN_FEE_PAIR_INVALID');
+ const secondPayment={...payment,paymentId:'payment-two',installmentAmount:75.5,totalPaid:125.5,
+   balance:0,status:'PAID'};
+ const secondLedger={...ledger,lastPaymentId:'payment-two',totalPaid:125.5,balance:0,status:'PAID'};
+ const second={...input,paymentId:'payment-two',payment:secondPayment,ledger:secondLedger,currentLedger:ledger};
+ assert.doesNotThrow(()=>validateRecordOnlyFeePair(second));
+ assert.throws(()=>validateRecordOnlyFeePair({...second,currentLedger:{...ledger,totalPaid:55}}),
+   e=>e.code==='DOMAIN_FEE_PAIR_STALE_BALANCE');
+ assert.throws(()=>validateRecordOnlyFeePair({...second,currentLedger:{...ledger,feeIdentity:'different'}}),
+   e=>e.code==='DOMAIN_FEE_PAIR_LEDGER_CHANGED');
+});
