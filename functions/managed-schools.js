@@ -1067,9 +1067,9 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
       typeof b.eventId!=='string'||!b.eventId||b.eventId.length>200||typeof b.reference!=='string'||!b.reference.trim()||b.reference.length>500)
      fail(400,'Invalid payroll recovery proposal');
    for(const collection of ['teacher_salary','school_settings'])await liveMigration.assertActive(m.schoolId,collection);
-   const result=await liveSync.command(m.schoolId,{command:'payrollRecoveryPreview',bundleId:b.bundleId,
+   const result=await liveSync.payrollRecovery(m.schoolId,{command:'payrollRecoveryPreview',bundleId:b.bundleId,
     salaryId:b.salaryId,advanceId:b.advanceId,salaryOperationId:b.salaryOperationId,advanceOperationId:b.advanceOperationId,
-    amountPaise:b.amountPaise,eventId:b.eventId,reference:b.reference.trim()});
+    amountPaise:b.amountPaise,eventId:b.eventId,reference:b.reference.trim()},body=>signedRequest(m,body));
    if(result?.schoolId!==m.schoolId||result.bundleProtocol!==1||result.bundleId!==b.bundleId||result.preview!==true||
       !Array.isArray(result.operations)||result.operations.length!==2||
       !result.operations.every((op,i)=>op.collection===['teacher_salary','school_settings'][i]&&op.id===[b.salaryId,b.advanceId][i]&&
@@ -1112,7 +1112,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
     return {success:true,schoolId:m.schoolId,...result};
    }
    const result=await liveMigration.live(m.schoolId,'teacher_salary',
-     ()=>liveSync.command(m.schoolId,{command:'bundleCommit',...wire}),
+     ()=>liveSync.payrollRecovery(m.schoolId,{command:'bundleCommit',...wire},body=>signedRequest(m,body)),
      {action:'managed_records',operation:'write',collection:'teacher_salary',id:salary.id,
       operationId:salary.operationId,expectedRecordRevision:salary.expectedRevision,data:operations[0].data},
      ['school_settings']);
