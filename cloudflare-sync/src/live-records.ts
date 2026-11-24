@@ -411,6 +411,26 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
     ownerRole:(receipt.owner as Json)?.role,personId:(receipt.owner as Json)?.personId,
     ...(typeof found[0].fileId==='string'?{fileId:found[0].fileId}:{})};
  }
+ if(command==='payrollRecoveryPreview'){
+  demand(validId(b.salaryId)&&validId(b.advanceId)&&opId(b.bundleId)&&opId(b.salaryOperationId)&&
+   opId(b.advanceOperationId)&&b.salaryOperationId!==b.advanceOperationId&&
+   typeof b.amountPaise==='number'&&typeof b.reference==='string'&&typeof b.eventId==='string','Invalid payroll recovery proposal');
+  const read=(collection:string,id:string):Json=>{
+   const record=sql.exec<Row>('SELECT * FROM live_records WHERE collection=? AND id=?',collection,id).toArray()[0];
+   demand(record&&record.body,'Retained verified payroll baseline required',428);
+   return JSON.parse(record.body) as Json;
+  };
+  const salary=read('teacher_salary',String(b.salaryId)),advance=read('school_settings',String(b.advanceId));
+  demand(typeof salary.staffId==='string'&&b.advanceId==='payroll_advance_'+createHash('sha256').update(salary.staffId).digest('hex'),'Payroll recovery owner mismatch',409);
+  const pair=proposePayrollRecovery({schoolId:school,salaryId:String(b.salaryId),advanceId:String(b.advanceId),
+   salary,advance,amountPaise:b.amountPaise,eventId:b.eventId,reference:b.reference,at:now,
+   monthClosed:findOwner(storage,'school_settings','payroll_month_'+String(salary.month))?.closed===true});
+  return {schoolId:school,bundleProtocol:1,bundleId:b.bundleId,preview:true,
+   operations:[
+    {collection:'teacher_salary',id:b.salaryId,operation:'write',operationId:b.salaryOperationId,expectedRevision:salary._syncRevision,data:pair.salary},
+    {collection:'school_settings',id:b.advanceId,operation:'write',operationId:b.advanceOperationId,expectedRevision:advance._syncRevision,data:pair.advance}
+   ]};
+ }
  if(command==='bundleReceipt'){
   const payrollPair=Array.isArray(b.operations)&&b.operations.length===2&&b.operations[0]?.collection==='teacher_salary'&&
    b.operations[1]?.collection==='school_settings'&&String(b.operations[1]?.id||'').startsWith('payroll_advance_')&&
