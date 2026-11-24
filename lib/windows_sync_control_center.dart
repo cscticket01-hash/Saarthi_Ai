@@ -1358,8 +1358,10 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
             }
             // The flow determines the row height. Excess queue content scrolls inside its card.
             return Table(
-              columnWidths: const {
-                0: FlexColumnWidth(2), 1: FixedColumnWidth(18), 2: FlexColumnWidth(1),
+              columnWidths: {
+                0: const FlexColumnWidth(),
+                1: const FixedColumnWidth(12),
+                2: FixedColumnWidth((constraints.maxWidth - 24) / 3),
               },
               children: [TableRow(children: [
                 progress,
