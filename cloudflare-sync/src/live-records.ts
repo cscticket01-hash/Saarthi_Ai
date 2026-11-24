@@ -411,16 +411,23 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
     ownerRole:(receipt.owner as Json)?.role,personId:(receipt.owner as Json)?.personId,
     ...(typeof found[0].fileId==='string'?{fileId:found[0].fileId}:{})};
  }
+ // Retained bodies and signed Drive baselines share the same canonical hash.
+ const payrollBaseline=(collection:string,id:string,index:number,expected?:unknown):Json=>{
+  const stored=sql.exec<Row>('SELECT * FROM live_records WHERE collection=? AND id=?',collection,id).toArray()[0];
+  demand(stored&&(expected===undefined||stored.revision===expected),'Verified payroll revision required',428);
+  demand(sql.exec<{state:string}>('SELECT state FROM live_collections WHERE collection=?',collection).toArray()[0]?.state==='active','Verified payroll authority required',412);
+  if(stored.body)return JSON.parse(stored.body) as Json;
+  const candidate=Array.isArray(b.payrollBaselines)?b.payrollBaselines[index] as Json:undefined;
+  demand(candidate&&candidate.schoolId===school&&candidate._syncRevision===stored.drive_revision&&
+   (candidate.id===undefined||candidate.id===id)&&payloadHash(candidate)===stored.payload_hash,
+   'Signed Drive payroll baseline required',428);
+  return {...candidate,_syncRevision:stored.revision};
+ };
  if(command==='payrollRecoveryPreview'){
   demand(validId(b.salaryId)&&validId(b.advanceId)&&opId(b.bundleId)&&opId(b.salaryOperationId)&&
    opId(b.advanceOperationId)&&b.salaryOperationId!==b.advanceOperationId&&
    typeof b.amountPaise==='number'&&typeof b.reference==='string'&&typeof b.eventId==='string','Invalid payroll recovery proposal');
-  const read=(collection:string,id:string):Json=>{
-   const record=sql.exec<Row>('SELECT * FROM live_records WHERE collection=? AND id=?',collection,id).toArray()[0];
-   demand(record&&record.body,'Retained verified payroll baseline required',428);
-   return JSON.parse(record.body) as Json;
-  };
-  const salary=read('teacher_salary',String(b.salaryId)),advance=read('school_settings',String(b.advanceId));
+  const salary=payrollBaseline('teacher_salary',String(b.salaryId),0),advance=payrollBaseline('school_settings',String(b.advanceId),1);
   demand(typeof salary.staffId==='string'&&b.advanceId==='payroll_advance_'+createHash('sha256').update(salary.staffId).digest('hex'),'Payroll recovery owner mismatch',409);
   const pair=proposePayrollRecovery({schoolId:school,salaryId:String(b.salaryId),advanceId:String(b.advanceId),
    salary,advance,amountPaise:b.amountPaise,eventId:b.eventId,reference:b.reference,at:now,
@@ -454,6 +461,19 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    const backup=sql.exec<{state:string;drive_revision:string|null;verified_at:number}>(
      'SELECT state,drive_revision,verified_at FROM live_backup WHERE operation_id=? AND collection=? AND id=? ORDER BY seq DESC LIMIT 1',
      String(expected.operationId),String(expected.collection),String(expected.id)).toArray()[0];
+   if(!backup&&payrollPair){
+    // Compaction removes only verified jobs. Original immutable operation
+    // receipts survive; a bundle identity alone never certifies Drive.
+    const persisted=sql.exec<{receipt:string}>('SELECT receipt FROM live_operations WHERE operation_id=?',String(ack.operationId)).toArray()[0];
+    const proof=persisted?JSON.parse(persisted.receipt) as Json:null;
+    demand(proof&&proof.schoolId===school&&proof.operationId===ack.operationId&&proof.recordRevision===ack.recordRevision&&
+      proof.backupState==='verified'&&typeof proof.driveRevision==='string'&&proof.driveRevision.length>0&&
+      !/^(live-|cf-)/.test(proof.driveRevision)&&typeof proof.payloadHash==='string'&&/^[a-f0-9]{64}$/.test(proof.payloadHash),
+      'Compacted payroll receipt has no verified original backup',412);
+    return {operationId:expected.operationId,recordRevision:ack.recordRevision,collection:expected.collection,id:expected.id,
+     backupState:'verified',driveVerified:true,driveRevision:proof.driveRevision,
+     ...(typeof proof.verifiedAt==='number'?{verifiedAt:proof.verifiedAt}:{})};
+   }
    demand(backup,'Atomic operation has no durable backup job',412);
    return {operationId:expected.operationId,
      recordRevision:ack.recordRevision,collection:expected.collection,id:expected.id,
@@ -614,12 +634,8 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    if(payrollPair){
     const [salaryOp,advanceOp]=operations;
     demand(salaryOp.operation==='write'&&advanceOp.operation==='write','Payroll recovery requires two exact snapshots',409);
-    const original=(operation:Json):Json=>{
-     const stored=sql.exec<Row>('SELECT * FROM live_records WHERE collection=? AND id=?',String(operation.collection),String(operation.id)).toArray()[0];
-     demand(stored&&stored.body&&stored.revision===operation.expectedRevision,'Verified retained payroll baseline required',428);
-     return JSON.parse(stored.body) as Json;
-    };
-    const salary=original(salaryOp),advance=original(advanceOp);
+    const salary=payrollBaseline('teacher_salary',String(salaryOp.id),0,salaryOp.expectedRevision),
+     advance=payrollBaseline('school_settings',String(advanceOp.id),1,advanceOp.expectedRevision);
     demand(typeof salary.staffId==='string'&&advanceOp.id==='payroll_advance_'+createHash('sha256').update(salary.staffId).digest('hex'),'Payroll recovery owner mismatch',409);
     const proposedSalary=salaryOp.data as Json;
     const links=proposedSalary?.advanceRecoveries;
@@ -639,6 +655,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
     'An existing operation cannot be repackaged as an atomic bundle',409);
    const acknowledgements=(b.operations as Json[]).map((item,index)=>
     liveCommand(storage,school,{...item,command:'commit',
+     ...(payrollPair&&Array.isArray(b.payrollBaselines)&&b.payrollBaselines[index]?{baseline:b.payrollBaselines[index]}:{}),
      ...(verifiedMedia&&['students_directory','teachers_directory'].includes(String((b.operations as Json[])[0].collection))&&index===0&&archiveFiles.length===2?{
        data:{...(item.data as Json),atomicPortrait:{
          bundleId:b.bundleId,documentId:(b.operations as Json[])[1].id,
@@ -963,7 +980,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    const retainedUntil=Math.max(retentionStart+cloudflareVerifiedRetentionMs,now);
    const reference={...receipt,
     ...(b.archiveFiles!==undefined?{record:finalBody}:{}),
-    backupState:'verified',source:'cloudflare',driveRevision:b.driveRevision,
+    backupState:'verified',source:'cloudflare',driveRevision:b.driveRevision,verifiedAt:now,
     payloadHash:payloadHash(finalBody),reconcileRequired:true,
     retainedUntil};
    sql.exec('UPDATE live_events SET receipt=? WHERE seq=?',JSON.stringify(reference),job.seq);
@@ -973,7 +990,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
     sql.exec("UPDATE live_operations SET receipt=json_set(receipt,'$.record',json(?)) WHERE json_extract(receipt,'$.recordRevision')=?",
       canonical(finalBody),String(receipt.recordRevision));
    }
-   sql.exec("UPDATE live_operations SET receipt=json_set(receipt,'$.backupState','verified','$.driveRevision',?,'$.payloadHash',?,'$.retainedUntil',?,'$.reconcileRequired',json('true')) WHERE json_extract(receipt,'$.recordRevision')=?",String(b.driveRevision),String(reference.payloadHash),retainedUntil,String(receipt.recordRevision));
+   sql.exec("UPDATE live_operations SET receipt=json_set(receipt,'$.backupState','verified','$.driveRevision',?,'$.payloadHash',?,'$.retainedUntil',?,'$.verifiedAt',?,'$.reconcileRequired',json('true')) WHERE json_extract(receipt,'$.recordRevision')=?",String(b.driveRevision),String(reference.payloadHash),retainedUntil,now,String(receipt.recordRevision));
    const metadata=JSON.parse((job as Job&{request_metadata:string}).request_metadata||'{}');
    if(job.operation==='delete'&&metadata.deleteEverywhereVersion===1){
     // Explicit verified deletion overrides ordinary 24-hour cache retention.
