@@ -963,6 +963,9 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   if(result.attendancePolicy) result.attendanceStatus={version:result.attendancePolicy.scheduleVersion===1?1:0,day:result.attendancePolicy.day,recorded:result.attendancePolicy.recorded===true,schedule:result.attendancePolicy.schedule??null};
   if(!cardReaderEnforced&&edgeEnabled(b.schoolId)&&result.attendancePermit){const permit=JSON.parse(Buffer.from(result.attendancePermit.split('.')[0],'base64url').toString('utf8'));result.cloudflareLane=cloudflareSync.grant(permit);}
   delete result.attendancePolicy;
+  if(result.success===true&&['mobile_login','mobile_dashboard'].includes(b.request.action)){
+   try{result.publishedAppearance=await windowsTheme.read();}catch{/* Appearance must not deny school access. */}
+  }
   return {...result,...verifiedCard,policyExpiresAt:Math.min(e.expiresAt,now()+72*3600000)};
  }
  const m=await identity(req,b.schoolId);
