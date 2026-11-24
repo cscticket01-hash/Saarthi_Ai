@@ -47,6 +47,13 @@ class StaffPayroll {
   static void _sameSchool(String profile) {
     if (FirebaseFirestore.instance.activeProfileId != profile) throw StateError('School changed. Reopen the salary page.');
   }
+  static Future<void> _durable(String profile) async {
+    _sameSchool(profile);
+    await FirebaseFirestore.instance.ensureDurableSchoolRecords();
+    _sameSchool(profile);
+    if(!await FirebaseFirestore.instance.localPersistenceEnabled())throw StateError('Durable school storage is required before recording salary changes.');
+    _sameSchool(profile);
+  }
   static Future<void> requireAdmin(String profile, String? password) async {
     _sameSchool(profile);
     if (password == null || !await WindowsSectionLocks.verify(sectionKey: 'admin_section', password: password)) {
@@ -122,6 +129,7 @@ class StaffPayroll {
   }
   static Future<void> saveStructure(String profile,String staffId,{required int basic,required int allowance,required int deduction,required String adminPassword})=>_serial(()async{
     await requireAdmin(profile,adminPassword);
+    await _durable(profile);
     net(basic:basic,allowance:allowance,deduction:deduction);
     final people=await staff(profile);
     if(people.where((p)=>p['id']==staffId).length!=1)throw StateError('Active staff not found.');
@@ -139,6 +147,7 @@ class StaffPayroll {
       (person['teacherId']?.toString()??'').isNotEmpty && row['teacherId']==person['teacherId']);
   static Future<Map<String,int>> generateMonth(String profile,String month,{required String adminPassword})=>_serial(()async{
     await requireAdmin(profile,adminPassword);
+    await _durable(profile);
     final people=await staff(profile);
     final db=FirebaseFirestore.instance;
     final existing=(await db.collection('teacher_salary').where('month',isEqualTo:month).get()).docs.map((d)=>d.data()).toList();
@@ -171,7 +180,7 @@ class StaffPayroll {
   });
   static Future<Map<String, dynamic>> save(String profile, Map<String, dynamic> person, String month,
       {required int basic, int allowance = 0, int bonus = 0, int overtime = 0, int deduction = 0, String? adminPassword}) => _serial(() async {
-    _sameSchool(profile);
+    await _durable(profile);
     final people = await staff(profile);
     final current = people.where((s) => s['id'] == person['id']);
     if (current.length != 1) throw StateError('Staff record is no longer available. Reload the page.');
@@ -188,6 +197,7 @@ class StaffPayroll {
       if(sameMonth.docs.any((d)=>d.id!=id&&_matchesEmployee(d.data(),employee)))throw StateError('A historical salary row already exists for this staff and month. Review it before creating another.');
     }
     if (before != null) {
+      if(old['salaryLocked']==true)throw StateError('Salary is approved and locked. Reopen it with the Admin Password before editing.');
       final same = old['basicPaise']==basic && old['allowancePaise']==allowance && old['bonusPaise']==bonus && old['overtimePaise']==overtime && old['deductionPaise']==deduction;
       if (same) return old;
       await requireAdmin(profile, adminPassword);
@@ -210,7 +220,7 @@ class StaffPayroll {
   });
   static Future<void> recordPayment(String profile, String id, int amount, {required String paymentId,
       required DateTime date, required String mode, String reference = ''}) => _serial(() async {
-    _sameSchool(profile);
+    await _durable(profile);
     if (amount <= 0 || paymentId.isEmpty || !['Cash', 'Bank transfer', 'UPI', 'Cheque'].contains(mode)) throw ArgumentError('Enter a valid payment amount and method.');
     final ref = FirebaseFirestore.instance.collection('teacher_salary').doc(id);
     final row = (await ref.get()).data();
@@ -242,6 +252,63 @@ class StaffPayroll {
     await batch.commit();
   });
 
+  /// One guarded local transaction: all reviewed entries are saved together,
+  /// or none are. Cloud delivery remains independently acknowledged per row.
+  static Future<void> recordBulkPayments(String profile,List<Map<String,dynamic>> intents,
+      {required DateTime date,required String mode,String reference=''})=>_serial(()async{
+    await _durable(profile);
+    if(intents.isEmpty||intents.length>200||!['Cash','Bank transfer','UPI','Cheque'].contains(mode))throw ArgumentError('Select 1–200 staff and a payment method.');
+    await WindowsLocalSecurity.initialize();
+    _sameSchool(profile);
+    final db=FirebaseFirestore.instance,batch=db.batch();
+    final rowIds=<String>{},paymentIds=<String>{};
+    final timestamp=DateTime.now().millisecondsSinceEpoch;
+    int changed=0;
+    for(final intent in intents){
+      final id=intent['id'],paymentId=intent['paymentId'],amount=intent['amountPaise'];
+      if(id is! String||id.isEmpty||!rowIds.add(id)||paymentId is! String||paymentId.isEmpty||!paymentIds.add(paymentId)||amount is! int||amount<=0)throw ArgumentError('Invalid or repeated bulk payment entry.');
+      final ref=db.collection('teacher_salary').doc(id);
+      final row=(await ref.get()).data();
+      _sameSchool(profile);
+      if(row==null||row['netPaise'] is! num)throw StateError('A selected salary record is missing. No bulk payments saved.');
+      final payments=List<dynamic>.from(row['payments'] as List? ?? []);
+      if(payments.any((p)=>p is! Map))throw StateError('Payment history requires review.');
+      final prior=payments.where((p)=>p is Map&&p['id']==paymentId).toList();
+      if(prior.isNotEmpty){
+        if(prior.length!=1||prior.single['amountPaise']!=amount||prior.single['date']!=date.toIso8601String()||prior.single['mode']!=mode||prior.single['reference']!=reference.trim())throw StateError('Bulk payment identity conflict.');
+        continue;
+      }
+      final remaining=total(row)-paid(row);
+      if(remaining!=amount)throw StateError('A selected salary balance changed. Refresh and review all amounts. No bulk payments saved.');
+      final next=paid(row)+amount;
+      payments.add({'id':paymentId,'amountPaise':amount,'date':date.toIso8601String(),'mode':mode,'reference':reference.trim(),'timeRecorded':true,'recordedAt':timestamp,
+        if(WindowsLocalSecurity.configured)'recordedBy':WindowsLocalSecurity.adminId});
+      batch.requireUnchanged(ref,row);
+      batch.update(ref,{'payments':payments,'paidPaise':next,'balancePaise':total(row)-next,'status':'Paid','updatedAt':timestamp});
+      changed++;
+    }
+    _sameSchool(profile);
+    if(changed>0)await batch.commit();
+  });
+  /// Approval is attached to each salary row, not a separate unsynchronised UI flag.
+  static Future<void> setSalaryLocked(String profile,String id,{required bool locked,required String adminPassword})=>_serial(()async{
+    await requireAdmin(profile,adminPassword);
+    await _durable(profile);
+    final db=FirebaseFirestore.instance,ref=db.collection('teacher_salary').doc(id);
+    final old=(await ref.get()).data();
+    _sameSchool(profile);
+    if(old==null||old['netPaise'] is! num)throw StateError('Modern salary record required.');
+    if((old['salaryLocked']==true)==locked)return;
+    await WindowsLocalSecurity.initialize();
+    await requireAdmin(profile,adminPassword);
+    final history=List<dynamic>.from(old['salaryLockHistory'] as List? ?? []);
+    history.add({'id':SchoolPersonIdentity.newGeneration(),'locked':locked,'at':DateTime.now().millisecondsSinceEpoch,
+      if(WindowsLocalSecurity.configured)'recordedBy':WindowsLocalSecurity.adminId});
+    final batch=db.batch();
+    batch.requireUnchanged(ref,old);
+    batch.update(ref,{'salaryLocked':locked,'salaryLockHistory':history,'updatedAt':DateTime.now().millisecondsSinceEpoch});
+    await batch.commit();
+  });
   /// A payment correction is a new immutable event, not a rewrite of the
   /// original record. Every write re-reads the current row under the existing
   /// serialized school-local queue before checking its expected amount.
@@ -256,8 +323,8 @@ class StaffPayroll {
     required String adminPassword,
     bool reverse = false,
   }) => _serial(() async {
-    _sameSchool(profile);
     await requireAdmin(profile, adminPassword);
+    await _durable(profile);
     final explanation = SalaryPaymentCorrectionPolicy.validateNote(reason);
     if (correctedPaise < 0 || (reverse ? correctedPaise != 0 : correctedPaise == 0) || correctedPaise == expectedPaise ||
         expectedPaise <= 0 || correctionId.trim().isEmpty) {
@@ -271,6 +338,7 @@ class StaffPayroll {
             row['schoolId'] != FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'])) {
       throw StateError('Salary record or school changed. Reopen Staff Salary.');
     }
+    if(row['salaryLocked']==true)throw StateError('Salary is approved and locked. Reopen it before correcting a payment.');
     final payments = List<dynamic>.from(row['payments'] as List? ?? []);
     final matched = payments.where((v) => v is Map && v['id'] == paymentId).toList();
     if (matched.length != 1) throw StateError(
@@ -663,6 +731,15 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     }catch(e){if(mounted)setState(()=>_error='$e');}
     finally{if(mounted)setState(()=>_working=false);}
   }
+  Future<void> _toggleSalaryLock(Map<String,dynamic> row) async {
+    try{
+      final locked=row['salaryLocked']!=true;
+      final password=await _adminAuthorization(locked?'Approve & Lock Salary':'Reopen Salary');
+      if(password==null||!mounted)return;
+      await StaffPayroll.setSalaryLocked(_profile,row['id'].toString(),locked:locked,adminPassword:password);
+      if(mounted)await _load();
+    }catch(e){if(mounted)setState(()=>_error='$e');}
+  }
   Future<void> _calculatePayroll() async {
     final person = await showDialog<Map<String,dynamic>>(context:context,builder:(ctx){ WindowsAppearance.watch(ctx); return SimpleDialog(title:Text('Select staff to calculate salary'),children:[for(final person in _staff) SimpleDialogOption(onPressed:()=>Navigator.pop(ctx,person),child:Text('${person['name']} • ${person['employeeId']??person['teacherId']??person['id']} • ${person['role']}'))]); });
     if(person != null && mounted) await _salary(person,_monthRows.where((r)=>r['staffId']==person['id']).firstOrNull);
@@ -670,8 +747,25 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
   Future<void> _paySelected() async {
     final rows = _monthRows.where((r) => _selected.contains(r['staffId']) && StaffPayroll.paid(r)<StaffPayroll.total(r)).toList();
     if(rows.isEmpty) { setState(() => _error='Select staff with an unpaid salary record first.'); return; }
-    // Every payment retains its existing amount/method/date confirmation.
-    for(final row in rows) { if(!mounted) return; await _payment(row); }
+    if(_working)return;
+    final intents=[for(final row in rows) {'id':row['id'],'paymentId':'payment:${SchoolPersonIdentity.newGeneration()}','amountPaise':StaffPayroll.total(row)-StaffPayroll.paid(row)}];
+    final total=intents.fold<int>(0,(n,p)=>n+(p['amountPaise'] as int));
+    var mode='Cash';
+    final date=DateTime.now(),reference=TextEditingController();
+    try{
+      await _editor('Record Selected Payments • ${rows.length} staff',(setD)=>[
+        const Text('Confirm only payments already made. All selected balances will be paid in full. The local save is atomic; cloud backup is verified separately.'),
+        for(final row in rows)Text('${row['name']} • ₹${StaffPayroll.format(StaffPayroll.total(row)-StaffPayroll.paid(row))}'),
+        Text('Total: ₹${StaffPayroll.format(total)}'),
+        DropdownButtonFormField<String>(initialValue:mode,items:['Cash','Bank transfer','UPI','Cheque'].map((m)=>DropdownMenuItem(value:m,child:Text(m))).toList(),onChanged:(v)=>setD(()=>mode=v!)),
+        Text('Recorded payment date and time: ${salaryPaymentDate(date)} ${salaryPaymentTime(date)}'),
+        TextField(controller:reference,decoration:const InputDecoration(labelText:'Shared payment reference / note')),
+      ],() => StaffPayroll.recordBulkPayments(_profile,intents,date:date,mode:mode,reference:reference.text),
+        paymentName:'${rows.length} selected staff',paymentAmount:()=> '₹${StaffPayroll.format(total)}');
+    }finally{
+      await Future<void>.delayed(const Duration(milliseconds:250));
+      reference.dispose();
+    }
   }
   static const _months=['January','February','March','April','May','June','July','August','September','October','November','December'];
   String get _monthLabel => '${_months[_month.month-1]} ${_month.year}';
@@ -713,7 +807,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
             _metric('Paid','₹${StaffPayroll.format(paid)}',Colors.green,Icons.check_circle_outline,'$paidCount staff paid'),
             _metric('Pending','₹${StaffPayroll.format(net-paid)}',Colors.orange,Icons.hourglass_empty,'Remaining balance'),
           ]),SizedBox(height:18),
-          if(!_local) Padding(padding:EdgeInsets.all(12),child:Text('Local Data is OFF. Unsynced salary changes stay in this session only. Enable Local Data to keep them on this computer.')),
+          if(!_local) Padding(padding:EdgeInsets.all(12),child:Text('Salary changes require durable school storage. The app will enable protected storage for this school before saving; if that fails no payment is recorded.')),
            Text('Records belong to the active school. Teacher salary appears in the teacher app after school sync.',style:TextStyle(fontFamily: 'Segoe UI', color:WindowsAppearance.foreground(Colors.white54),fontSize:12)),
           if(_error!=null) Padding(padding:const EdgeInsets.all(12),child:Text(_error!,style:TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.redAccent)))),
           SizedBox(height:16),
@@ -762,13 +856,14 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
       DataCell(Column(mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.start,children:[Text(StaffPayroll.displayCategory(person)),Text(OtherStaffDirectory.suggestedDesignation(person),style: TextStyle(fontFamily: 'Segoe UI', fontSize:11,color:WindowsAppearance.foreground(Colors.white54)))])),
       DataCell(Tooltip(message:'Attendance does not change salary automatically. Configure deductions in the salary editor.',child:Text(row?['attendanceSummary']?.toString()??'—'))),
       DataCell(Text(amount('basicPaise'))),DataCell(Text(amount('allowancePaise'))),DataCell(Text(amount('deductionPaise'))),DataCell(Text(row==null?'—':'₹${StaffPayroll.format(StaffPayroll.total(row))}')),
-      DataCell(Chip(label:Text(status),backgroundColor:color.withValues(alpha:.2))),
+      DataCell(Chip(label:Text(row?['salaryLocked']==true?'$status • Locked':status),backgroundColor:color.withValues(alpha:.2))),
       DataCell(Row(children:[
         if(row==null)TextButton(onPressed:()=>_salary(person,null),child:Text('Set salary'))
         else FilledButton.tonal(onPressed:_working?null:()=>_output(row:row),child:Text('View Payslip')),
         PopupMenuButton<String>(tooltip:'Salary actions',onSelected:(action){
           if(action=='edit')_salary(person,row);
           if(action=='structure')_editStructure(person);
+          if(action=='lock'&&row!=null)_toggleSalaryLock(row);
           if(action=='pay'&&row!=null)_payment(row);
           if(action=='correct'&&row!=null)_correctPayment(row);
           if(action=='reverse'&&row!=null)_correctPayment(row,reverse:true);
@@ -776,6 +871,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
         },itemBuilder:(_)=>[
           PopupMenuItem(value:'edit',child:Text(row==null?'Set salary':'Edit salary')),
           const PopupMenuItem(value:'structure',child:Text('Salary Structure • Admin Password')),
+          if(row!=null)PopupMenuItem(value:'lock',child:Text(row['salaryLocked']==true?'Reopen Salary • Admin Password':'Approve & Lock Salary')),
           if(row!=null&&StaffPayroll.paid(row)<StaffPayroll.total(row))const PopupMenuItem(value:'pay',child:Text('Record payment')),
           if(row!=null&&StaffPayroll.paid(row)>0)const PopupMenuItem(value:'correct',child:Text('Modify Payment • Admin Password')),
           if(row!=null&&StaffPayroll.paid(row)>0)const PopupMenuItem(value:'reverse',child:Text('Reverse Payment • Admin Password')),
