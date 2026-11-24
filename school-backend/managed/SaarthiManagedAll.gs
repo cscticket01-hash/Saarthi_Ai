@@ -7083,6 +7083,59 @@ function VS_validateScanQuota(store,b,existing,school) {
   if(pages>8||bytes>500*1024)
     throw new Error('Student scan inventory limit exceeded');
 }
+// The signed Script owner applies the same exact-paise and append-only ledger
+// checks as the native live-record owner. Legacy amount-only rows are retained.
+function VS_validateSalaryLedger(current,next,operation){
+  const fail=code=>{throw new Error(code);};
+  const paise=v=>{if(!Number.isSafeInteger(v)||v<0)fail('SALARY_INVALID_AMOUNT');return v;};
+  const events=v=>{if(v===undefined||v===null)return [];if(!Array.isArray(v)||v.some(e=>!e||typeof e!=='object'||Array.isArray(e)))fail('SALARY_INVALID_HISTORY');return v;};
+  const canon=v=>Array.isArray(v)?'['+v.map(canon).join(',')+']':v&&typeof v==='object'?'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canon(v[k])).join(',')+'}':JSON.stringify(v)??'null';
+  const append=(old,next)=>{if(next.length<old.length||old.some((e,i)=>canon(e)!==canon(next[i])))fail('SALARY_HISTORY_IMMUTABLE');};
+  const validId=v=>typeof v==='string'&&v.length>0&&v.length<=200;
+  const sum=row=>{
+    const effective=new Map(),original=new Map(),ids=new Set();
+    for(const p of events(row.payments)){
+      if(!validId(p.id)||ids.has(p.id))fail('SALARY_DUPLICATE_EVENT');
+      const n=paise(p.amountPaise);if(!n)fail('SALARY_INVALID_AMOUNT');
+      ids.add(p.id);effective.set(p.id,n);original.set(p.id,n);
+    }
+    for(const c of events(row.paymentCorrections)){
+      if(!validId(c.id)||ids.has(c.id)||!validId(c.paymentId)||!effective.has(c.paymentId))fail('SALARY_INVALID_CORRECTION');
+      const before=paise(c.previousPaise),after=paise(c.correctedPaise);
+      if(before!==effective.get(c.paymentId)||before===after||c.originalPaise!==original.get(c.paymentId)||c.differencePaise!==after-before)fail('SALARY_INVALID_CORRECTION');
+      ids.add(c.id);effective.set(c.paymentId,after);
+    }
+    return paise([...effective.values()].reduce((a,b)=>a+b,0));
+  };
+  const prior=current&&!current._syncDeleted?current:null;
+  if(operation==='delete'){
+    if(prior&&prior.netPaise!==undefined&&(Number(prior.paidPaise??0)>0||prior.salaryLocked===true||events(prior.salaryLockHistory).length||events(prior.payments).length||events(prior.paymentCorrections).length))fail('SALARY_HISTORY_IMMUTABLE');
+    return;
+  }
+  if(next.netPaise===undefined){if(prior&&prior.netPaise!==undefined)fail('SALARY_SCHEMA_DOWNGRADE');return;}
+  const net=paise(next.netPaise),paid=paise(next.paidPaise),balance=paise(next.balancePaise);
+  if(paid>net||balance!==net-paid)fail('SALARY_BALANCE_MISMATCH');
+  if(next.status!==(paid===net?'Paid':paid===0?'Pending':'Part paid'))fail('SALARY_STATUS_MISMATCH');
+  if(next.amount!==undefined&&(typeof next.amount!=='number'||Math.round(next.amount*100)!==net))fail('SALARY_NET_MISMATCH');
+  const keys=['basicPaise','allowancePaise','bonusPaise','overtimePaise','deductionPaise'];
+  if(keys.some(k=>next[k]!==undefined)){const a=keys.map(k=>paise(next[k]??0));if(a[0]+a[1]+a[2]+a[3]-a[4]!==net)fail('SALARY_NET_MISMATCH');}
+  if(prior&&prior.month!==undefined&&prior.month!==next.month)fail('SALARY_MONTH_IMMUTABLE');
+  append(events(prior&&prior.payments),events(next.payments));
+  append(events(prior&&prior.paymentCorrections),events(next.paymentCorrections));
+  const oldLocks=events(prior&&prior.salaryLockHistory),newLocks=events(next.salaryLockHistory);
+  append(oldLocks,newLocks);
+  let locked=!!(prior&&prior.salaryLocked===true);
+  for(const entry of newLocks.slice(oldLocks.length)){
+    if(!validId(entry.id)||typeof entry.locked!=='boolean'||entry.locked===locked||!Number.isSafeInteger(entry.at))fail('SALARY_LOCK_HISTORY_INVALID');
+    locked=entry.locked;
+  }
+  if(locked!==(next.salaryLocked===true))fail('SALARY_LOCK_HISTORY_INVALID');
+  if(prior&&prior.salaryLocked===true&&(keys.concat(['netPaise','amount']).some(k=>prior[k]!==next[k])||canon(prior.paymentCorrections??[])!==canon(next.paymentCorrections??[])))fail('SALARY_LOCKED');
+  let opening=0;
+  if(prior){const priorPaid=prior.paidPaise!==undefined?paise(prior.paidPaise):String(prior.status).toLowerCase()==='paid'?paise(prior.netPaise??Math.round(Number(prior.amount??0)*100)):0;opening=priorPaid-sum(prior);}
+  if(opening<0||paid!==opening+sum(next))fail('SALARY_PAYMENT_TOTAL_MISMATCH');
+}
+
 function VS_managedRecordUnlocked(b,readContext) {
   if(b.operation==='read'&&b.knownRecordRevisions!==undefined)return VS_managedIncrementalRecords(b,readContext);
   const store=VS_managedSheet(b.collection,readContext), school=PropertiesService.getScriptProperties().getProperty('VS_MANAGED_SCHOOL_ID');
@@ -7175,6 +7228,7 @@ function VS_managedRecordUnlocked(b,readContext) {
     } else if(revision) throw new Error('Versioned document requires a matching revision');
   }
   if(b.operation==='write' && existing && existing.data._syncDeleted && !VS_reusableStudentChild(b,existing) && !(b.syncProtocol===2&&b.expectedRecordRevision===existing.data._syncRevision&&b.data&&(b.data._syncRecreatesDeletedRevision===existing.data._syncRevision||b.data._syncRecreatesDeletedOperationId&&b.data._syncRecreatesDeletedOperationId===existing.data._syncOperationId)&&b.collection!=='students_directory') && !(VS_sheetLifecycleEnabled()&&b.collection==='students_directory'&&b.syncProtocol===2&&/^p-[a-f0-9]{32,64}$/.test(b.data&&b.data.mobileStableId||'')&&b.data.mobileStableId!==existing.data._syncDeletedOwner&&(b.expectedRecordRevision===existing.data._syncRevision||b.data.replacesStudentGeneration===existing.data._syncDeletedOwner)))throw new Error('Record revision conflict');
+  if(b.collection==='teacher_salary'&&(b.operation==='write'||b.operation==='delete'))VS_validateSalaryLedger(existing&&existing.data,b.data||{},b.operation);
   if(b.operation==='delete'){
     if(VS_recycleEnabled()&&b.syncProtocol!==2)throw new Error('Invalid sync operation');
     if(existing&&existing.data._syncDeleted){VS_saveRecordHead(store,existing);if(existing.row){VS_refreshStudentReadable(store,existing,existing.row);VS_refreshRecordReadable(store,existing,existing.row);}VS_recordJsonBackup(store,existing);return {recordRevision:existing.data._syncRevision,syncProtocol:2,...(b.operation==='write'?{record:Object.assign({id:b.id},existing.data)}:{}),fileCleanup:VS_managedDeletedFile(store,b.id,existing.data)};}
