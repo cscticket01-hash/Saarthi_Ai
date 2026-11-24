@@ -21,6 +21,8 @@ test('seeded payroll pair: verified Drive baseline, lost ACK, grouped peer repla
   const live=createLiveSync({edge,schools:[school]});
   const gs=storage({lifecycle:true,bundle:true});
   const deliver=body=>gs.call(body);
+  const health=deliver({action:'managed_health'});
+  assert.equal(health.payrollLedgerVersion,2);assert.equal(health.payrollLeaveVersion,1);assert.equal(health.payrollRecoveryBackupVersion,1);
   const teacherId='payroll-delivery-teacher',staffId='teacher:'+teacherId,
    salaryId='payroll-delivery-salary',advanceId='payroll_advance_'+createHash('sha256').update(staffId).digest('hex');
   const generation='p-'+'4'.repeat(64);
@@ -50,6 +52,11 @@ test('seeded payroll pair: verified Drive baseline, lost ACK, grouped peer repla
   const wire={bundleId:request.bundleId,operations:preview.operations};
   assert.equal((await live.command(school,{command:'bundleReceipt',...wire})).found,false);
   const commit={command:'bundleCommit',...wire};
+  for(const op of wire.operations){
+   const direct=deliver({action:'managed_records',collection:op.collection,id:op.id,operation:'write',syncProtocol:2,
+    operationId:op.operationId+'-direct',expectedRecordRevision:op.expectedRevision,data:op.data});
+   assert.equal(direct.success,false,'Independent signed write must not invent linked recovery');
+  }
   // A wrong readback must fail before publishing either half.
   await assert.rejects(live.payrollRecovery(school,commit,body=>{
    const result=deliver(body);
