@@ -124,7 +124,9 @@ export function validateDomainCandidate(input:DomainCandidate):void {
    const frequency=frequencies[head];
    if(!['monthly','annual','once'].includes(String(frequency)))
     reject('DOMAIN_FEE_BILLING_FREQUENCY_INVALID',400);
-   if(frequency==='once'){
+   // Zero-value heads are descriptive snapshots, not admission charges.
+   // A positive once-only amount must still match the authoritative owner.
+   if(frequency==='once'&&amount>0){
     const parent=owned(schoolId,readOwner('students_directory',next.studentId));
     const ownerGeneration=generation(parent);
     if(parent.feeAdmissionPersonId!==ownerGeneration||
