@@ -1059,7 +1059,6 @@ class _AppLockRecoveryDialog extends StatefulWidget {
 
 class _AppLockRecoveryDialogState extends State<_AppLockRecoveryDialog> {
   final _school = TextEditingController();
-  final _admin = TextEditingController();
   final _new = TextEditingController();
   final _confirm = TextEditingController();
   bool _busy = false, _verified = false;
@@ -1069,7 +1068,6 @@ class _AppLockRecoveryDialogState extends State<_AppLockRecoveryDialog> {
   void dispose() {
     WindowsLocalSecurity.cancelAppLockRecovery();
     _school.dispose();
-    _admin.dispose();
     _new.dispose();
     _confirm.dispose();
     super.dispose();
@@ -1079,9 +1077,8 @@ class _AppLockRecoveryDialogState extends State<_AppLockRecoveryDialog> {
     setState(() { _busy = true; _verified = false; _message = null; });
     try {
       await WindowsLocalSecurity.verifySchoolForAppLockRecovery(
-        schoolId: _school.text, adminPassword: _admin.text);
+        schoolId: _school.text);
       if (!mounted) return;
-      _admin.clear();
       setState(() {
         _verified = true;
         _message = 'School verified. Set your new App Lock password within 2 minutes.';
@@ -1095,7 +1092,6 @@ class _AppLockRecoveryDialogState extends State<_AppLockRecoveryDialog> {
 
   void _verifyAgain() {
     WindowsLocalSecurity.cancelAppLockRecovery();
-    _admin.clear();
     _new.clear();
     _confirm.clear();
     setState(() { _verified = false; _message = null; });
@@ -1128,30 +1124,29 @@ class _AppLockRecoveryDialogState extends State<_AppLockRecoveryDialog> {
     content: SizedBox(width: 400, child: SingleChildScrollView(child: Column(
       mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Text('Enter the registered School ID and separate Admin Password. Internet is required for verification; Google Drive is not required.'),
+        const Text('Enter the registered School ID. Internet is required for verification; Google Drive is not required.'),
         const SizedBox(height: 16),
         TextField(controller: _school, enabled: !_busy && !_verified,
           autocorrect: false, decoration: const InputDecoration(labelText: 'School ID')),
-        const SizedBox(height: 8),
-        TextField(controller: _admin, enabled: !_busy && !_verified,
-          obscureText: true, decoration: const InputDecoration(labelText: 'Admin Password')),
         const SizedBox(height: 12),
         OutlinedButton(onPressed: _busy ? null : _verified ? _verifyAgain : _verify,
           child: Text(_verified ? 'Verify again' : 'Verify School')),
-        const Divider(),
-        Text(_verified ? 'School verified' : 'Verify school to unlock the password fields.'),
-        TextField(controller: _new, enabled: !_busy && _verified, obscureText: true,
-          decoration: const InputDecoration(labelText: 'New App Lock Password')),
-        const SizedBox(height: 8),
-        TextField(controller: _confirm, enabled: !_busy && _verified, obscureText: true,
-          decoration: const InputDecoration(labelText: 'Confirm App Lock Password')),
+        if (_verified) ...[
+          const Divider(),
+          const Text('School verified'),
+          TextField(controller: _new, enabled: !_busy, obscureText: true,
+            decoration: const InputDecoration(labelText: 'New App Lock Password')),
+          const SizedBox(height: 8),
+          TextField(controller: _confirm, enabled: !_busy, obscureText: true,
+            decoration: const InputDecoration(labelText: 'Confirm App Lock Password')),
+        ],
         if (_busy) const LinearProgressIndicator(),
         if (_message != null) Padding(padding: const EdgeInsets.only(top: 12), child: Text(_message!)),
       ]))),
     actions: [
       TextButton(onPressed: _busy ? null : () => Navigator.of(context).pop(false),
         child: const Text('Cancel')),
-      FilledButton(onPressed: _busy || !_verified ? null : _reset,
+      if (_verified) FilledButton(onPressed: _busy ? null : _reset,
         child: const Text('Reset Password')),
     ],
   );
