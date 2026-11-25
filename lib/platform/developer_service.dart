@@ -203,6 +203,7 @@ class DeveloperService {
               ? (data['resolvedAt'] ?? FieldValue.serverTimestamp())
               : null,
           'developerNote': note,
+          'developerUpdatedAt': FieldValue.serverTimestamp(),
           'supportHistoryVersion': 1,
           'updatedAt': FieldValue.serverTimestamp(),
         });

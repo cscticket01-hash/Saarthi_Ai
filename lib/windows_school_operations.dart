@@ -385,36 +385,47 @@ class _SchoolAttendanceOverviewState extends State<SchoolAttendanceOverview> {
 }
 
 class WindowsSupportScreen extends StatefulWidget {
-  const WindowsSupportScreen({super.key});
+  const WindowsSupportScreen({super.key, this.inbox});
+  final DeveloperInbox? inbox;
   @override
   State<WindowsSupportScreen> createState() => _WindowsSupportScreenState();
 }
 
 class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
   final _message = TextEditingController();
+  final _subject = TextEditingController();
+  String _category = 'General';
   final _support = SchoolSupportClient();
-  final _inbox = DeveloperInbox();
+  late final DeveloperInbox _inbox = widget.inbox ?? DeveloperInbox();
+  bool get _ownsInbox => widget.inbox == null;
   Timer? _inboxTimer;
   @override
   void initState() {
     super.initState();
-    unawaited(_inbox.initialize());
-    _inboxTimer = Timer.periodic(const Duration(minutes: 1), (_) => _inbox.refresh());
+    if (_ownsInbox) {
+      unawaited(_inbox.initialize());
+      _inboxTimer = Timer.periodic(const Duration(minutes: 1), (_) => unawaited(_inbox.tick()));
+      unawaited(_inbox.flushSupport());
+    }
   }
   bool _busy = false;
   String? _error;
   @override
   void dispose() {
     _inboxTimer?.cancel();
-    _inbox.dispose();
+    if (_ownsInbox) _inbox.dispose();
+    _subject.dispose();
     _message.dispose();
     super.dispose();
   }
 
   Future<void> _send() async {
-    if (_message.text.trim().length < 10) {
+    if (_busy) return;
+    final body = _message.text.trim();
+    final subject = _subject.text.trim();
+    if (subject.isEmpty || body.length < 10) {
       setState(
-        () => _error = 'Describe the problem in at least 10 characters.',
+        () => _error = 'Enter a subject and describe the problem in at least 10 characters.',
       );
       return;
     }
@@ -424,16 +435,21 @@ class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
     });
     try {
       final account = await CentralSchoolCloud.saved();
+      final text = 'Subject: $subject\nCategory: $_category\n\n$body';
+      if (text.length > 3000) throw StateError('Total complaint is too long.');
+      bool sent = true;
       if (account['managed'] == true) {
-        await _support.send(_message.text.trim(), WindowsPlatformClient.version);
+        sent = await _support.send(text, WindowsPlatformClient.version);
       } else {
-        await WindowsPlatformClient.instance.complaint(_message.text.trim());
+        await WindowsPlatformClient.instance.complaint(text);
       }
+      if (!mounted) return;
       _message.clear();
-      if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Complaint sent to the developer.')),
-        );
+      _subject.clear();
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(sent
+          ? 'Complaint sent to the developer.'
+          : 'Complaint saved locally. Delivery pending — see Complaint history.')));
+      unawaited(_inbox.refresh());
     } catch (e) {
       if (mounted)
         setState(() => _error = e.toString().replaceFirst('Bad state: ', ''));
@@ -444,7 +460,7 @@ class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
 
   @override
   Widget build(BuildContext context) { WindowsAppearance.watch(context); return  Scaffold(
-    appBar: AppBar(title: const Text('Report app problem'), actions: [TextButton.icon(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const WindowsComplaintHistory())), icon: const Icon(Icons.history), label: const Text('Complaint history'))]),
+    appBar: AppBar(title: const Text('App Support'), actions: [TextButton.icon(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const WindowsComplaintHistory())), icon: const Icon(Icons.history), label: const Text('Complaint history'))]),
     body: Stack(children: [SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(28, 28, 92, 28),
       child: Align(
@@ -463,11 +479,22 @@ class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
                 'Tell us which screen had a problem and what happened.',
               ),
               const SizedBox(height: 22),
+              TextField(controller: _subject, enabled: !_busy, maxLength: 120,
+                decoration: const InputDecoration(labelText: 'Subject')),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                value: _category,
+                decoration: const InputDecoration(labelText: 'Category'),
+                items: [for (final c in ['General','Sync Engine','Student Records','Fees','Exam Center','Attendance','Staff salary','App update','Other'])
+                  DropdownMenuItem(value: c, child: Text(c))],
+                onChanged: _busy ? null : (v) => setState(() => _category = v ?? 'General')),
+              const SizedBox(height: 12),
               TextField(
                 controller: _message,
+                enabled: !_busy,
                 minLines: 7,
                 maxLines: 12,
-                maxLength: 3000,
+                maxLength: 2800,
                 decoration: const InputDecoration(
                   labelText: 'Your complaint',
                   hintText: 'Describe the issue. Do not include passwords.',

@@ -1,4 +1,5 @@
 import 'complaint_retention.dart';
+import 'notice_time.dart';
 import 'windows_support_history.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -23,9 +24,22 @@ class DeveloperInbox extends ChangeNotifier {
   bool busy = false, _disposed = false, _loaded = false;
   String? error;
   int get unread =>
-      !current ? 0 : messages.where((m) => !_read.contains(m['key'])).length;
+      !current ? 0 : messages.where((m) => !isRead(m) && !complaintExpired(m)).length;
   bool get hasMore => _cursors.values.any((v) => v != null);
   bool isRead(Map m) => _read.contains(m['key']);
+  static String kind(Map row) => row['kind'] == 'support' ? 'support' :
+      row['complaintId'] != null ? 'student' : 'announcement';
+  int unreadFor(String type) => !current ? 0 : messages.where((m) =>
+      kind(m) == type && !isRead(m) && !complaintExpired(m)).length;
+
+  Future<void> flushSupport() async {
+    if (_disposed) return;
+    try { await SchoolSupportClient().flushPending(); } catch (_) {}
+  }
+  Future<void> tick() async {
+    if (_disposed || !current) return;
+    await Future.wait([refresh(), flushSupport()]);
+  }
   bool get current =>
       _profile == _db.activeProfileId &&
       _school == _db.activeProfileIdentity['schoolSyncId'];
@@ -201,7 +215,26 @@ class DeveloperInbox extends ChangeNotifier {
             final row = Map<String, dynamic>.from(raw as Map);
             if (row['schoolId'] != _school)
               throw StateError('Complaint school mismatch.');
-            if (row['audience'] != 'school' || complaintExpired(row)) continue;
+            if (complaintExpired(row)) continue;
+            if (row['audience'] != 'school') {
+              final note = row['developerNote']?.toString().trim() ?? '';
+              final status = row['status']?.toString() ?? 'open';
+              if (note.isEmpty && status == 'open') continue;
+              updates.add({
+                ...row,
+                'key': 'support--${row['id']}',
+                'complaintId': row['id'],
+                'kind': 'support',
+                'title': 'Support • $status',
+                'message': note.isNotEmpty ? note : 'Ticket status: $status',
+                'ticketMessage': row['message'],
+                'createdAt': complaintMillis(row['developerUpdatedAt']) > 0
+                  ? complaintMillis(row['developerUpdatedAt'])
+                  : complaintMillis(row['updatedAt']) > 0
+                    ? complaintMillis(row['updatedAt']) : complaintMillis(row['createdAt']),
+              });
+              continue;
+            }
             updates.add({
               ...row,
               'key': 'complaint--${row['id']}',
@@ -254,6 +287,19 @@ class DeveloperInbox extends ChangeNotifier {
           );
         }
         await batch.commit();
+        if (!current || _disposed) return;
+        for (final m in changed) {
+          final previous = existing[m['key']];
+          if (previous == null || m['complaintId'] == null) continue;
+          final changedContent = previous['message'] != m['message'] ||
+              previous['status'] != m['status'] ||
+              (kind(m) == 'support' && previous['developerUpdatedAt'] != m['developerUpdatedAt']);
+          if (changedContent && _read.contains(m['key'])) {
+            if (!current || _disposed) return;
+            await _db.collection('_windows_developer_inbox_read').doc(m['key'] as String).delete();
+            _read.remove(m['key']);
+          }
+        }
       }
       if (!current || _disposed) return;
       final merged = {
@@ -304,13 +350,22 @@ class DeveloperInbox extends ChangeNotifier {
   }
 }
 
-class DeveloperInboxScreen extends StatelessWidget {
+class DeveloperInboxScreen extends StatefulWidget {
   const DeveloperInboxScreen({super.key, required this.inbox});
   final DeveloperInbox inbox;
   @override
+  State<DeveloperInboxScreen> createState() => _DeveloperInboxScreenState();
+}
+
+class _DeveloperInboxScreenState extends State<DeveloperInboxScreen> {
+  String _tab = 'announcement';
+  DeveloperInbox get inbox => widget.inbox;
+  @override
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: inbox,
-    builder: (context, _) => Scaffold(
+    builder: (context, _) {
+      final visible = inbox.messages.where((m) => DeveloperInbox.kind(m) == _tab && !complaintExpired(m)).toList();
+      return Scaffold(
       appBar: AppBar(
         title: const Text('Notifications'),
         actions: [
@@ -325,6 +380,12 @@ class DeveloperInboxScreen extends StatelessWidget {
           ? const Center(child: Text('School changed. Reopen this page.'))
           : Column(
               children: [
+                Padding(padding: const EdgeInsets.all(12), child: Wrap(spacing: 8, runSpacing: 6, children: [
+                  for (final tab in ['announcement','support','student'])
+                    ChoiceChip(selected: _tab == tab,
+                      label: Text('${tab == 'announcement' ? 'Announcements' : tab == 'support' ? 'Support Replies' : 'Student Complaints'} (${inbox.unreadFor(tab)})'),
+                      onSelected: (_) => setState(() => _tab = tab)),
+                ])),
                 if (inbox.busy) const LinearProgressIndicator(),
                 if (inbox.error != null)
                   Padding(
@@ -332,7 +393,7 @@ class DeveloperInboxScreen extends StatelessWidget {
                     child: Text(inbox.error!),
                   ),
                 Expanded(
-                  child: inbox.messages.isEmpty
+                  child: visible.isEmpty && !(inbox.hasMore && _tab == 'announcement')
                       ? Center(
                           child: Text(
                             inbox.busy
@@ -342,9 +403,9 @@ class DeveloperInboxScreen extends StatelessWidget {
                         )
                       : ListView.builder(
                           padding: const EdgeInsets.all(20),
-                          itemCount: inbox.messages.length + 1,
+                          itemCount: visible.length + 1,
                           itemBuilder: (context, index) {
-                            if (index == inbox.messages.length)
+                            if (index == visible.length)
                               return inbox.hasMore
                                   ? TextButton(
                                       onPressed: inbox.busy
@@ -355,8 +416,7 @@ class DeveloperInboxScreen extends StatelessWidget {
                                       ),
                                     )
                                   : const SizedBox(height: 20);
-                            final m = inbox.messages[index],
-                                read = inbox.isRead(inbox.messages[index]);
+                            final m = visible[index], read = inbox.isRead(visible[index]);
                             return Card(
                               child: ListTile(
                                 leading: Icon(
@@ -373,10 +433,18 @@ class DeveloperInboxScreen extends StatelessWidget {
                                   ),
                                 ),
                                 subtitle: Text(
-                                  '${DateTime.fromMillisecondsSinceEpoch(m['createdAt'] as int).toLocal()} • ${m['complaintId'] != null ? 'School complaint' : 'Developer'}',
+                                  '${formatNoticeIst(noticeMillis(m['createdAt']))} • ${DeveloperInbox.kind(m) == 'student' ? 'School complaint' : 'Developer'}',
                                 ),
                                 trailing: read ? null : const Badge(),
                                 onTap: () async {
+                                  if (DeveloperInbox.kind(m) == 'support') {
+                                    await Navigator.of(context).push(MaterialPageRoute(builder: (_) =>
+                                      WindowsComplaintThread(client: SchoolSupportClient(), complaint: {
+                                        ...m, 'id': m['complaintId'], 'message': m['ticketMessage'],
+                                      })));
+                                    await inbox.markRead(m);
+                                    return;
+                                  }
                                   if (m['complaintId'] != null) {
                                     final reply = TextEditingController(
                                       text: m['schoolReply']?.toString() ?? '',
@@ -510,6 +578,6 @@ class DeveloperInboxScreen extends StatelessWidget {
                 ),
               ],
             ),
-    ),
+    ); },
   );
 }

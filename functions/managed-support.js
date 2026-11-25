@@ -4,7 +4,7 @@ function createManagedSupport({db,now,fail}) {
  const text=(value)=>{const s=String(value||'').trim();if(s.length<3||s.length>3000)fail(400,'Use 3–3000 characters');return s;};
  const id=(value)=>{if(typeof value!=='string'||!/^[-_a-zA-Z0-9]{1,120}$/.test(value))fail(400,'Invalid complaint identity');return value;};
  const millis=v=>v?.toMillis?.()??v?.getTime?.()??(typeof v==='number'?v:0);
- const plain=(d)=>{const v=d.data();return {id:d.id,...v,createdAt:millis(v.createdAt),resolvedAt:millis(v.resolvedAt),...(v.updatedAt!==undefined?{updatedAt:millis(v.updatedAt)}:{})};};
+ const plain=(d)=>{const v=d.data();return {id:d.id,...v,createdAt:millis(v.createdAt),resolvedAt:millis(v.resolvedAt),...(v.updatedAt!==undefined?{updatedAt:millis(v.updatedAt)}:{}),...(v.developerUpdatedAt!==undefined?{developerUpdatedAt:millis(v.developerUpdatedAt)}:{})};};
  async function page(query,cursor){if(cursor!==undefined)query=query.startAfter(id(cursor));const rows=(await query.limit(51).get()).docs;return {rows:rows.slice(0,50).map(plain),cursor:rows.length>50?rows[49].id:null};}
  return async (action,b,m)=>{
   const schoolId=m.schoolId;
@@ -37,6 +37,7 @@ function createManagedSupport({db,now,fail}) {
    });return {success:true,schoolId,complaintId};
   }
   if(action==='managed/support/thread'){
+    if(parent.data().audience==='school')fail(404,'Use school complaint management for this ticket');
    const p=await page(db.collection('platform_complaints/'+complaintId+'/messages').orderBy('__name__'),b.cursor);
    if(p.rows.some(r=>r.schoolId!==schoolId))fail(502,'Complaint message school identity mismatch');
    return {success:true,schoolId,complaint:plain(parent),messages:p.rows,cursor:p.cursor};
@@ -44,11 +45,13 @@ function createManagedSupport({db,now,fail}) {
   if(action==='managed/support/reply'){
    const message=text(b.message),messageId=id(b.messageId);
    if(!/^[0-9]{13}_[a-f0-9]{32}$/.test(messageId))fail(400,'Invalid reply identity');
-   const messageRef=db.doc('platform_complaints/'+complaintId+'/messages/'+messageId);
+   const messageRef=db.doc('platform_complaints/'+complaintId+'/messages/'+messageId),limit=db.doc('platform_support_limits/reply_'+schoolId);
    await db.runTransaction(async tx=>{
-    const current=await tx.get(ref),old=await tx.get(messageRef);
-    if(!current.exists||current.data().schoolId!==schoolId||current.data().purging||expired(current.data(),now()))fail(404,'Complaint not found for this school');
+    const current=await tx.get(ref),old=await tx.get(messageRef),rate=await tx.get(limit);
+    if(!current.exists||current.data().schoolId!==schoolId||current.data().audience==='school'||current.data().purging||expired(current.data(),now()))fail(404,'Complaint not found for this school');
     if(old.exists){if(old.data().schoolId!==schoolId||old.data().role!=='school'||old.data().message!==message)fail(409,'Reply identity already used');return;}
+    if(rate.exists&&now()-millis(rate.data().lastSentAt)<3000)fail(429,'Wait 3 seconds before another reply');
+    tx.set(limit,{lastSentAt:new Date(now())});
     tx.set(messageRef,{schoolId,role:'school',message,createdAt:new Date(now())});tx.set(ref,{status:'open',resolvedAt:null,updatedAt:new Date(now())},{merge:true});
    });return {success:true,schoolId,complaintId,messageId};
   }

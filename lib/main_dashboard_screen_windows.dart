@@ -50,6 +50,7 @@ import 'windows_exam_history_screen.dart';
 import 'windows_ui_localization.dart';
 import 'windows_preferences_reset.dart';
 import 'windows_school_operations.dart';
+import 'windows_developer_notifications.dart';
 import 'windows_staff_payroll.dart';
 import 'windows_school_identity.dart';
 import 'windows_document_templates.dart';
@@ -4782,6 +4783,8 @@ class AdminDashboardScreen extends StatefulWidget {
 
 class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   final GlobalKey<ScaffoldState> _adminScaffoldKey = GlobalKey<ScaffoldState>();
+  final _developerInbox = DeveloperInbox();
+  Timer? _supportPoll;
 
 int _loginBackPressCount = 0;
 int _loginBackResetToken = 0;
@@ -4920,6 +4923,9 @@ void _handleLoginBack(bool didPop) {
   void initState() {
     super.initState();
     _startPortalInactivityTimer();
+    unawaited(_developerInbox.initialize());
+    unawaited(_developerInbox.flushSupport());
+    _supportPoll = Timer.periodic(const Duration(minutes: 1), (_) => unawaited(_developerInbox.tick()));
 
     // Preload heavy/remote Admin data while dashboard is already visible.
     // Exam Center then opens immediately with warm data.
@@ -4938,6 +4944,8 @@ void _handleLoginBack(bool didPop) {
 
   @override
   void dispose() {
+    _supportPoll?.cancel();
+    _developerInbox.dispose();
     _idleLock.dispose();
     _sessionTimer?.cancel();
     _sessionClickSubscription?.cancel();
@@ -5519,7 +5527,8 @@ Future<void> _printIdCard() async {
         await _openAdminModule(_windowsAdminModule(selection),
           sectionKey: lock, sectionTitle: _windowsAdminModuleTitle(selection));
       } else {
-        final module = _windowsAdminModule(selection);
+        final module = selection == WindowsAdminPage.support
+            ? WindowsSupportScreen(inbox: _developerInbox) : _windowsAdminModule(selection);
         await Navigator.of(context).push(MaterialPageRoute<void>(
           builder: (appearanceContext) {
             WindowsAppearance.watch(appearanceContext);
@@ -5601,6 +5610,13 @@ Future<void> _printIdCard() async {
           _buildPortalSessionTimer(_sessionSecondsRemaining),
           const SizedBox(width: 8),
 
+          AnimatedBuilder(animation: _developerInbox, builder: (context, _) => IconButton(
+            tooltip: WindowsUiLanguage.translate('Notifications'),
+            icon: Badge(isLabelVisible: _developerInbox.unread > 0,
+              label: Text('${_developerInbox.unread}'), child: const Icon(Icons.notifications_outlined)),
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
+              builder: (_) => DeveloperInboxScreen(inbox: _developerInbox))),
+          )),
           // Settings icon opens the Settings screen directly.
           IconButton(
             tooltip: WindowsUiLanguage.translate('Settings'),
