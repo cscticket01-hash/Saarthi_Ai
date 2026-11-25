@@ -493,12 +493,12 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
       final saved = await CentralSchoolCloud.saved();
       final schoolId = saved['schoolId']?.toString();
       if (saved['managed'] != true || schoolId == null || schoolId.isEmpty) {
-        throw StateError('Online managed school account required.');
+        throw StateError('Recovery requires the registered school account.');
       }
       if (!mounted) return;
       final reset = await showDialog<bool>(
         context: context, barrierDismissible: false,
-        builder: (_) => _AppLockRecoveryDialog(schoolId: schoolId),
+        builder: (_) => const _AppLockRecoveryDialog(),
       );
       if (mounted && reset == true) {
         _password.clear();
@@ -1052,53 +1052,107 @@ class _LocalAuthShell extends StatelessWidget {
 }
 
 class _AppLockRecoveryDialog extends StatefulWidget {
-  const _AppLockRecoveryDialog({required this.schoolId});
-  final String schoolId;
+  const _AppLockRecoveryDialog();
   @override
   State<_AppLockRecoveryDialog> createState() => _AppLockRecoveryDialogState();
 }
+
 class _AppLockRecoveryDialogState extends State<_AppLockRecoveryDialog> {
-  final _otp = TextEditingController(), _new = TextEditingController(), _confirm = TextEditingController();
-  bool _busy = false, _sent = false;
+  final _school = TextEditingController();
+  final _admin = TextEditingController();
+  final _new = TextEditingController();
+  final _confirm = TextEditingController();
+  bool _busy = false, _verified = false;
   String? _message;
+
   @override
-  void dispose() { _otp.dispose(); _new.dispose(); _confirm.dispose(); super.dispose(); }
-  Future<void> _send() async {
-    setState(() { _busy = true; _message = null; });
-    try {
-      final r = await ManagedSchoolSession.callForSchool(widget.schoolId, 'managed/app-lock/otp/send', {});
-      if (r['success'] != true || r['schoolId'] != widget.schoolId) throw StateError('Email delivery not confirmed.');
-      if (mounted) setState(() { _sent = true; _message = 'Code sent to the verified school email. Valid for 5 minutes.'; });
-    } catch (e) { if (mounted) setState(() => _message = e.toString()); }
-    finally { if (mounted) setState(() => _busy = false); }
+  void dispose() {
+    WindowsLocalSecurity.cancelAppLockRecovery();
+    _school.dispose();
+    _admin.dispose();
+    _new.dispose();
+    _confirm.dispose();
+    super.dispose();
   }
+
+  Future<void> _verify() async {
+    setState(() { _busy = true; _verified = false; _message = null; });
+    try {
+      await WindowsLocalSecurity.verifySchoolForAppLockRecovery(
+        schoolId: _school.text, adminPassword: _admin.text);
+      if (!mounted) return;
+      _admin.clear();
+      setState(() {
+        _verified = true;
+        _message = 'School verified. Set your new App Lock password within 2 minutes.';
+      });
+    } catch (e) {
+      if (mounted) setState(() => _message = e.toString());
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  void _verifyAgain() {
+    WindowsLocalSecurity.cancelAppLockRecovery();
+    _admin.clear();
+    _new.clear();
+    _confirm.clear();
+    setState(() { _verified = false; _message = null; });
+  }
+
   Future<void> _reset() async {
-    if (_new.text != _confirm.text || _new.text.length < 6 || _new.text.length > 128 || _otp.text.length != 6) {
-      setState(() => _message = 'Enter six-digit code and matching password (6–128 characters).'); return;
+    if (_new.text != _confirm.text || _new.text.length < 6 ||
+        _new.text.length > 128) {
+      setState(() => _message = 'Enter matching App Lock passwords (6–128 characters).');
+      return;
     }
     setState(() { _busy = true; _message = null; });
     try {
-      await WindowsLocalSecurity.recoverWithEmailOtp(schoolId: widget.schoolId, otp: _otp.text, newPassword: _new.text);
+      await WindowsLocalSecurity.recoverWithSchoolApproval(
+        newPassword: _new.text, confirmPassword: _confirm.text);
       if (mounted) Navigator.of(context).pop(true);
-    } catch (e) { if (mounted) setState(() => _message = e.toString()); }
-    finally { if (mounted) setState(() => _busy = false); }
+    } catch (e) {
+      if (mounted) {
+        _verifyAgain();
+        setState(() => _message = e.toString());
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
+
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Recover App Lock'),
-    content: SizedBox(width: 380, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
-      const Text('The code is sent only to the verified registered school email. School data stays unchanged.'),
-      TextButton(onPressed: _busy ? null : _send, child: Text(_sent ? 'Resend code' : 'Send email code')),
-      if (_sent) ...[
-        TextField(controller: _otp, enabled: !_busy, keyboardType: TextInputType.number, inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(6)], decoration: const InputDecoration(labelText: 'Email code')),
-        TextField(controller: _new, enabled: !_busy, obscureText: true, decoration: const InputDecoration(labelText: 'New App Lock password')),
-        TextField(controller: _confirm, enabled: !_busy, obscureText: true, decoration: const InputDecoration(labelText: 'Confirm password')),
-      ],
-      if (_message != null) Text(_message!),
-    ]))),
+    title: const Text('Reset App Lock Password'),
+    content: SizedBox(width: 400, child: SingleChildScrollView(child: Column(
+      mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text('Enter the registered School ID and separate Admin Password. Internet is required for verification; Google Drive is not required.'),
+        const SizedBox(height: 16),
+        TextField(controller: _school, enabled: !_busy && !_verified,
+          autocorrect: false, decoration: const InputDecoration(labelText: 'School ID')),
+        const SizedBox(height: 8),
+        TextField(controller: _admin, enabled: !_busy && !_verified,
+          obscureText: true, decoration: const InputDecoration(labelText: 'Admin Password')),
+        const SizedBox(height: 12),
+        OutlinedButton(onPressed: _busy ? null : _verified ? _verifyAgain : _verify,
+          child: Text(_verified ? 'Verify again' : 'Verify School')),
+        const Divider(),
+        Text(_verified ? 'School verified' : 'Verify school to unlock the password fields.'),
+        TextField(controller: _new, enabled: !_busy && _verified, obscureText: true,
+          decoration: const InputDecoration(labelText: 'New App Lock Password')),
+        const SizedBox(height: 8),
+        TextField(controller: _confirm, enabled: !_busy && _verified, obscureText: true,
+          decoration: const InputDecoration(labelText: 'Confirm App Lock Password')),
+        if (_busy) const LinearProgressIndicator(),
+        if (_message != null) Padding(padding: const EdgeInsets.only(top: 12), child: Text(_message!)),
+      ]))),
     actions: [
-      TextButton(onPressed: _busy ? null : () => Navigator.of(context).pop(false), child: const Text('Cancel')),
-      FilledButton(onPressed: _busy || !_sent ? null : _reset, child: const Text('Reset password')),
+      TextButton(onPressed: _busy ? null : () => Navigator.of(context).pop(false),
+        child: const Text('Cancel')),
+      FilledButton(onPressed: _busy || !_verified ? null : _reset,
+        child: const Text('Reset Password')),
     ],
   );
 }
