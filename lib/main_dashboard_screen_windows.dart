@@ -7283,7 +7283,8 @@ class _AdminAnalyticsData {
 }
 
 class AdminAnalyticsScreen extends StatefulWidget {
-  const AdminAnalyticsScreen({super.key});
+  const AdminAnalyticsScreen({super.key, this.clock});
+  final DateTime Function()? clock;
 
   @override
   State<AdminAnalyticsScreen> createState() => _AdminAnalyticsScreenState();
@@ -7314,11 +7315,36 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
   ];
 
   // The rollover month is selected in Admin Settings.
-  final List<int> _availableYears = <int>[
-    DateTime.now().year,
-    DateTime.now().year - 1,
-    DateTime.now().year - 2,
-  ];
+  DateTime _now() => widget.clock?.call() ?? DateTime.now();
+  late DateTime _observedMonth;
+  late int _selectedMonth;
+  Timer? _periodTimer;
+  bool _periodReady = false;
+  int get _currentAcademicYear => WindowsAcademicYearSettings.startYear(_observedMonth, _academicYearRolloverMonth);
+  List<int> get _availableYears => List.generate(3, (i) => _currentAcademicYear - i);
+  String _periodLabel(int month) => '${WindowsUiLanguage.translate(_monthLabels[month])} ${month + 1 < _academicYearRolloverMonth ? _selectedYear + 1 : _selectedYear}';
+  int _chartMonth(String chart) => _chartMonths[chart] ?? _selectedMonth;
+
+  void _checkPeriodRollover() {
+    if (!mounted || !_periodReady || FirebaseFirestore.instance.activeProfileId != _analyticsProfile) return;
+    final now = _now();
+    if (now.year == _observedMonth.year && now.month == _observedMonth.month) return;
+    setState(() {
+      _observedMonth = now;
+      _selectedYear = _currentAcademicYear;
+      _selectedMonth = now.month - 1;
+      _chartMonths.clear();
+      _data = null;
+    });
+    unawaited(_loadAnalytics());
+  }
+
+  @override
+  void dispose() {
+    _periodTimer?.cancel();
+    _loadGeneration++;
+    super.dispose();
+  }
 
   final Map<String, int> _chartMonths = {};
   late int _selectedYear;
@@ -7331,8 +7357,11 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
   void initState() {
     super.initState();
     _analyticsProfile = FirebaseFirestore.instance.activeProfileId;
+    _observedMonth = _now();
+    _selectedMonth = _observedMonth.month - 1;
     _selectedYear = _availableYears.first;
     _loadAcademicYearSettingsAndAnalytics();
+    _periodTimer = Timer.periodic(const Duration(seconds: 15), (_) => _checkPeriodRollover());
   }
 
   Future<void> _loadAcademicYearSettingsAndAnalytics() async {
@@ -7344,10 +7373,12 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
     }
     setState(() {
       _academicYearRolloverMonth = month;
-      _selectedYear = WindowsAcademicYearSettings.startYear(
-        DateTime.now(),
-        month,
-      );
+      _observedMonth = _now();
+      _selectedYear = _currentAcademicYear;
+      _selectedMonth = _observedMonth.month - 1;
+      _chartMonths.clear();
+      _data = null;
+      _periodReady = true;
     });
     await _loadAnalytics();
   }
@@ -7444,7 +7475,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
     if (yearMonth != null) {
       final year = int.tryParse(yearMonth.group(1) ?? '');
       final month = int.tryParse(yearMonth.group(2) ?? '');
-      if (year == _selectedYear && month != null && month >= 1 && month <= 12) {
+      if (year != null && month != null && month >= 1 && month <= 12 && WindowsAcademicYearSettings.startYear(DateTime(year, month), _academicYearRolloverMonth) == _selectedYear) {
         return month - 1;
       }
       return null;
@@ -7486,10 +7517,12 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
       if (value == null) continue;
 
       final tokenMonth = _analyticsMonthToken(value.toString());
-      if (tokenMonth != null && value is String && value.length <= 7) {
+      if (tokenMonth != null && RegExp(r'^\d{4}[-/]\d{1,2}$').hasMatch(value.toString().trim())) {
         return tokenMonth;
       }
-      if (tokenMonth != null && value is num && value >= 1 && value <= 12) {
+      final year = int.tryParse(data['year']?.toString() ?? '');
+      if (tokenMonth != null && year != null && !RegExp(r'^\d{4}[-/]').hasMatch(value.toString()) &&
+          WindowsAcademicYearSettings.startYear(DateTime(year, tokenMonth + 1), _academicYearRolloverMonth) == _selectedYear) {
         return tokenMonth;
       }
 
@@ -7541,6 +7574,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
       if (history is! Map) continue;
 
       for (final entry in history.entries) {
+        if (!RegExp(r'^\d{4}[-/]\d{1,2}').hasMatch(entry.key.toString())) continue;
         final month = _analyticsMonthToken(entry.key.toString());
         final value = _analyticsNumber(entry.value);
         if (month == null || value <= 0) continue;
@@ -7627,7 +7661,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
       }
 
       final feesByMonth = List<double>.filled(12, 0);
-      var totalFees = 0.0;
+      
       for (final record in feeRecords) {
         final amount = _analyticsAmount(
           record,
@@ -7639,22 +7673,22 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
             'paid',
           ],
         );
-        totalFees += amount;
+        
         final month = _analyticsMonth(record);
         if (month != null) feesByMonth[month] += amount;
       }
 
       final expensesByMonth = List<double>.filled(12, 0);
-      var totalExpenses = 0.0;
+      
       for (final record in expenses) {
         final amount = _analyticsAmount(record, const ['amount', 'value']);
-        totalExpenses += amount;
+        
         final month = _analyticsMonth(record);
         if (month != null) expensesByMonth[month] += amount;
       }
 
-      var passStudents = 0;
-      var failStudents = 0;
+      
+      
       final passFailByMonth = List<_AdminAnalyticsPair>.generate(
         12,
         (_) => const _AdminAnalyticsPair(),
@@ -7665,8 +7699,8 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
         final status = _analyticsStatus(result);
         final passed = status == 'PASS';
         final failed = status == 'FAIL';
-        if (passed) passStudents++;
-        if (failed) failStudents++;
+        
+        
         final month = _analyticsMonth(result);
         if (month != null) {
           final old = passFailByMonth[month];
@@ -7674,16 +7708,6 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
             pass: old.pass + (passed ? 1 : 0),
             fail: old.fail + (failed ? 1 : 0),
           );
-        }
-      }
-
-      // If Exam Center has not produced results yet, use the latest result
-      // fields already mirrored in the student records when available.
-      if (passStudents == 0 && failStudents == 0) {
-        for (final student in students) {
-          final status = _analyticsStatus(student);
-          if (status == 'PASS') passStudents++;
-          if (status == 'FAIL') failStudents++;
         }
       }
 
@@ -7741,19 +7765,27 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
       final calendar = snapshots[5]?.docs.map((d) => {'date': d.id, ...d.data()}).toList() ?? <Map<String, dynamic>>[];
       final monthlyAttendance = windowsMonthlyAttendance(records: attendanceRecords, calendar: calendar,
         role: 'student', people: students.length, startYear: _selectedYear,
-        rolloverMonth: _academicYearRolloverMonth, today: DateTime.now());
+        rolloverMonth: _academicYearRolloverMonth, today: _now());
 
+      final studentMonths = attendanceRecords.any((row) => row['role'] == 'student')
+          ? monthlyAttendance : _analyticsAttendanceTrend(students, studentAttendance,
+              const ['attendanceHistory', 'monthlyAttendance', 'attendanceByMonth']);
+      final teacherMonths = attendanceRecords.any((row) => row['role'] == 'teacher')
+          ? windowsMonthlyAttendance(records: attendanceRecords, calendar: calendar,
+              role: 'teacher', people: teachers.length, startYear: _selectedYear,
+              rolloverMonth: _academicYearRolloverMonth, today: _now())
+          : _analyticsAttendanceTrend(teachers, teacherAttendance,
+              const ['attendanceHistory', 'monthlyAttendance', 'attendanceByMonth']);
       final result = _AdminAnalyticsData(
         totalStudents: students.length,
         totalTeachers: teachers.length,
-        totalFees: totalFees,
-        totalExpenses: totalExpenses,
-        passStudents: passStudents,
-        failStudents: failStudents,
-        studentAttendance: studentAttendance,
-        teacherAttendance: teacherAttendance,
-        attendanceTrend: attendanceRecords.isNotEmpty ? monthlyAttendance : _analyticsAttendanceTrend(
-          students, studentAttendance, const ['attendanceHistory', 'monthlyAttendance', 'attendanceByMonth']),
+        totalFees: feesByMonth[_selectedMonth],
+        totalExpenses: expensesByMonth[_selectedMonth],
+        passStudents: passFailByMonth[_selectedMonth].pass.toInt(),
+        failStudents: passFailByMonth[_selectedMonth].fail.toInt(),
+        studentAttendance: studentMonths[_selectedMonth],
+        teacherAttendance: teacherMonths[_selectedMonth],
+        attendanceTrend: studentMonths,
         feesByMonth: feesByMonth,
         expensesByMonth: expensesByMonth,
         passFailByMonth: passFailByMonth,
@@ -7791,11 +7823,10 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
   }
 
   String _trend(List<double> values, {bool percentage = false}) {
-    final nonZero = values.where((value) => value > 0).toList();
-    if (nonZero.length < 2) return '—';
-    final first = nonZero.first;
-    final last = nonZero.last;
-    if (first == 0) return '—';
+    if (_selectedMonth == _academicYearRolloverMonth - 1) return '—';
+    final first = values[(_selectedMonth + 11) % 12];
+    final last = values[_selectedMonth];
+    if (first <= 0) return '—';
     final change = ((last - first) / first) * 100;
     final prefix = change >= 0 ? '▲ +' : '▼ ';
     return '$prefix${change.abs().toStringAsFixed(1)}%';
@@ -7980,8 +8011,8 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
           ),
           const SizedBox(height: 8),
           SizedBox(height: 190, child: chart),
-          if ((_chartMonths[title] ?? -1) >= 0 && _data != null)
-            Text(_chartMonthSummary(title, _chartMonths[title]!), key: ValueKey('monthly-value-$title'),
+          if (_chartMonth(title) >= 0 && _data != null)
+            Text(_chartMonthSummary(title, _chartMonth(title)), key: ValueKey('monthly-value-$title'),
               style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white70), fontWeight: FontWeight.w700)),
           if (footer != null) ...[
             const SizedBox(height: 2),
@@ -8007,7 +8038,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
 
   Widget _analyticsDropdownPill(String chart) => PopupMenuButton<int>(
     tooltip: WindowsUiLanguage.translate('Select month'),
-    initialValue: _chartMonths[chart] ?? -1,
+    initialValue: _chartMonth(chart),
     onSelected: (month) => setState(() => _chartMonths[chart] = month),
     itemBuilder: (_) => [
       const PopupMenuItem(value: -1, child: Text('All months')),
@@ -8016,11 +8047,11 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
     child: Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
       decoration: BoxDecoration(color: WindowsAppearance.background(const Color(0xFF12313A)), borderRadius: BorderRadius.circular(8)),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Text((_chartMonths[chart] ?? -1) == -1 ? 'Monthly' : _monthLabels[_chartMonths[chart]!], style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white70), fontSize: 10)),
+        Text(_chartMonth(chart) == -1 ? 'All months' : _periodLabel(_chartMonth(chart)), style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white70), fontSize: 10)),
         const Icon(Icons.keyboard_arrow_down_rounded, size: 16),
       ])));
   List<T> _chartValues<T>(String chart, List<T> values) {
-    final month = _chartMonths[chart] ?? -1;
+    final month = _chartMonth(chart);
     return month == -1 ? values : [values[month]];
   }
   List<String> _chartLabels(String chart) => _chartValues(chart, _monthLabels);
@@ -8210,6 +8241,24 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                               ),
                               DropdownButtonHideUnderline(
                                 child: DropdownButton<int>(
+                                  key: const ValueKey('analytics-month'),
+                                  value: _selectedMonth,
+                                  dropdownColor: WindowsAppearance.resolve(const Color(0xFF12272F)),
+                                  style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 11),
+                                  items: [
+                                    for (var m = 0; m < 12; m++)
+                                      DropdownMenuItem<int>(value: m, child: Text(_periodLabel(m), translate: false)),
+                                  ],
+                                  onChanged: (month) {
+                                    if (month == null || month == _selectedMonth) return;
+                                    setState(() { _selectedMonth = month; _chartMonths.clear(); _data = null; });
+                                    _loadAnalytics();
+                                  },
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              DropdownButtonHideUnderline(
+                                child: DropdownButton<int>(
                                   value: _selectedYear,
                                   dropdownColor: WindowsAppearance.resolve(const Color(0xFF12272F)),
                                   icon: Icon(
@@ -8233,7 +8282,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                                     if (value == null || value == _selectedYear) {
                                       return;
                                     }
-                                    setState(() => _selectedYear = value);
+                                    setState(() { _selectedYear = value; _chartMonths.clear(); _data = null; });
                                     _loadAnalytics();
                                   },
                                 ),
@@ -8358,7 +8407,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
               width: width,
               title: 'Total Student Fees Collection',
               value: _money(data.totalFees),
-              subtitle: 'Fee payments recorded',
+              subtitle: _periodLabel(_selectedMonth),
               trend: _trend(data.feesByMonth),
               icon: Icons.account_balance_wallet_rounded,
               color: WindowsAppearance.foreground(Colors.greenAccent),
@@ -8367,7 +8416,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
               width: width,
               title: 'Total School Expenses',
               value: _money(data.totalExpenses),
-              subtitle: 'Expense entries recorded',
+              subtitle: _periodLabel(_selectedMonth),
               trend: _trend(data.expensesByMonth),
               icon: Icons.monetization_on_rounded,
               color: WindowsAppearance.foreground(Colors.amberAccent),
@@ -8376,7 +8425,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
               width: width,
               title: 'Total Students Pass',
               value: '${data.passStudents}',
-              subtitle: 'Exam results',
+              subtitle: _periodLabel(_selectedMonth),
               trend: _trend(data.passFailByMonth.map((e) => e.pass).toList()),
               icon: Icons.school_rounded,
               color: WindowsAppearance.foreground(const Color(0xFF00D9A5)),
@@ -8385,7 +8434,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
               width: width,
               title: 'Total Students Fail',
               value: '${data.failStudents}',
-              subtitle: 'Exam results',
+              subtitle: _periodLabel(_selectedMonth),
               trend: _trend(data.passFailByMonth.map((e) => e.fail).toList()),
               icon: Icons.school_outlined,
               color: WindowsAppearance.foreground(Colors.redAccent),
@@ -8394,7 +8443,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
               width: width,
               title: 'Total Student Attendance',
               value: '${data.studentAttendance.toStringAsFixed(1)}%',
-              subtitle: 'Attendance records',
+              subtitle: _periodLabel(_selectedMonth),
               trend: _trend(data.attendanceTrend),
               icon: Icons.person_pin_circle_rounded,
               color: WindowsAppearance.foreground(const Color(0xFF69C2FF)),
@@ -8403,7 +8452,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
               width: width,
               title: 'Total Teacher Attendance',
               value: '${data.teacherAttendance.toStringAsFixed(1)}%',
-              subtitle: 'Attendance records',
+              subtitle: _periodLabel(_selectedMonth),
               trend: '—',
               icon: Icons.groups_rounded,
               color: WindowsAppearance.foreground(const Color(0xFF4D86FF)),
