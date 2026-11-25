@@ -73,7 +73,8 @@ void main() {
     testWidgets('single navigation and honest state at width $width', (
       tester,
     ) async {
-      tester.view.physicalSize = Size(width, 1100);
+      // A narrow dashboard can require more height without global scaling.
+      tester.view.physicalSize = Size(width, width < 960 ? 1900 : 1100);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
@@ -112,6 +113,34 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     });
   }
+  testWidgets('overview clips at short window height without scaling and reveals content again', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1440, 1100);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(MaterialApp(home: page()));
+    await tester.pumpAndSettle();
+    final viewport = find.byKey(const ValueKey('sync-overview-viewport'));
+    final header = find.text('Live Sync');
+    final before = tester.getSize(header);
+    expect(find.text('View full queue').hitTestable(), findsOneWidget);
+    tester.view.physicalSize = const Size(720, 420);
+    await tester.pumpAndSettle();
+    expect(viewport, findsOneWidget);
+    expect(tester.getSize(header).height, before.height);
+    final box = tester.renderObject<RenderBox>(header);
+    expect(box.getTransformTo(null).getMaxScaleOnAxis(), closeTo(1, .001));
+    expect(find.text('View full queue').hitTestable(), findsNothing);
+    expect(tester.state<ScrollableState>(find.byType(Scrollable).first)
+        .position.maxScrollExtent, 0);
+    expect(tester.takeException(), isNull);
+    tester.view.physicalSize = const Size(1440, 1100);
+    await tester.pumpAndSettle();
+    expect(find.text('View full queue').hitTestable(), findsOneWidget);
+    expect(tester.getSize(header).height, before.height);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('only latest verified sync shows for five seconds, never replays, and remains in history', (tester) async {
     tester.view.physicalSize = const Size(1440, 1100);
     tester.view.devicePixelRatio = 1;

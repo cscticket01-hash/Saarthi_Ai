@@ -664,6 +664,8 @@ void main(){
  });
 
  testWidgets('Settings Sync reflects durable pending, conflict, running and acknowledged states',(tester)async{
+  await tester.binding.setSurfaceSize(const Size(1440, 1100));
+  addTearDown(() => tester.binding.setSurfaceSize(null));
   final engine=WindowsSyncEngine.instance;
   await tester.runAsync(()async{await db.collection('teachers_directory').doc('status-teacher').set({'name':'Pending teacher'});await engine.refreshDetails();});engine.state.value=SchoolCloudState.localReady;
   await tester.pumpWidget(const MaterialApp(home:Scaffold(body:SingleChildScrollView(child:WindowsSyncStatusCard()))));

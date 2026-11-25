@@ -2408,11 +2408,15 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                         ? [
                             SizedBox(
                               height: (constraints.maxHeight - 2 * inset).clamp(0.0, double.infinity).toDouble(),
-                              child: FittedBox(
-                                alignment: Alignment.topCenter,
-                                fit: BoxFit.scaleDown,
-                                child: SizedBox(
-                                  width: (constraints.maxWidth - 2 * inset).clamp(0.0, double.infinity).toDouble(),
+                              // Keep the dashboard at its natural font/icon scale.
+                              // At short heights, paint only the visible viewport;
+                              // widening or growing the window reveals the same UI.
+                              child: ClipRect(
+                                key: const ValueKey('sync-overview-viewport'),
+                                child: OverflowBox(
+                                  alignment: Alignment.topCenter,
+                                  minHeight: 0,
+                                  maxHeight: double.infinity,
                                   child: Column(
                                     mainAxisSize: MainAxisSize.min,
                                     crossAxisAlignment: CrossAxisAlignment.stretch,
