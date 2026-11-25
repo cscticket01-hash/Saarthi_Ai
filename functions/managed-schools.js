@@ -32,7 +32,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
  const mobileAppearanceCache=new Map();
  const developerPasswordOtp=createDeveloperPasswordOtp({auth,db,now,fetchImpl});
  const schoolAdminSecurity=createSchoolAdminSecurity({auth,db,now});
- const schoolAppLockRecovery=createSchoolAppLockRecovery({adminSecurity:schoolAdminSecurity});
+ const schoolAppLockRecovery=createSchoolAppLockRecovery({db,now});
  const repairKnowledge=createRepairKnowledge({...repairKnowledgeOptions,db,now});
  const deviceAccess=createManagedDeviceAccess({
   authorizeRevoke:async(identity,body)=>{
