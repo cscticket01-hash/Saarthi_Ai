@@ -314,17 +314,18 @@ void main() {
     // The analytics screen uses a CircularProgressIndicator while it loads.
     // Waiting for a LinearProgressIndicator exits too early, and pumpAndSettle
     // cannot complete while the indeterminate loading animation is active.
-    // Wait for the five real chart controls, allowing local async reads to finish.
+    // Wait for the five real chart month-grid controls.
+    final menus = find.byWidgetPredicate((w) => w.key is ValueKey<String> &&
+      (w.key as ValueKey<String>).value.startsWith('analytics-chart-month-'));
     for (var i = 0; i < 120; i++) {
       await tester.runAsync(
         () => Future<void>.delayed(const Duration(milliseconds: 50)),
       );
       await tester.pump(const Duration(milliseconds: 50));
-      if (find.byType(PopupMenuButton<int>).evaluate().length == 5) break;
+      if (menus.evaluate().length == 5) break;
     }
-    final menus=find.byType(PopupMenuButton<int>);
-    for (final menu in tester.widgetList<PopupMenuButton<int>>(menus)) {
-      expect(menu.initialValue, DateTime.now().month - 1);
+    for (final element in menus.evaluate()) {
+      expect(find.descendant(of: find.byWidget(element.widget), matching: find.textContaining('${DateTime.now().year}')), findsOneWidget);
     }
     expect(find.byKey(const ValueKey('analytics-month')), findsOneWidget);
     expect(menus, findsNWidgets(5), reason: 'Analytics did not finish loading its five charts.');
@@ -342,11 +343,14 @@ void main() {
     await tester.tapAt(const Offset(1500, 100));
     await tester.pumpAndSettle();
     expect(find.byType(WindowsAdminSidebar), findsNothing);
-    await tester.tap(menus.at(1)); await tester.pumpAndSettle();
-    await tester.tap(find.text('Jan ${DateTime.now().year}')); await tester.pumpAndSettle();
+    final feeMenu = find.byKey(const ValueKey('analytics-chart-month-Monthly Fees Collection'));
+    await tester.tap(feeMenu); await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('analytics-picker-all-months')), findsOneWidget);
+    expect(find.byWidgetPredicate((w) => w.key is ValueKey<String> && (w.key as ValueKey<String>).value.startsWith('analytics-picker-month-')), findsNWidgets(12));
+    await tester.tap(find.byKey(const ValueKey('analytics-picker-month-0'))); await tester.pumpAndSettle();
     expect(find.text('Jan: ₹500'),findsOneWidget);
-    await tester.tap(menus.at(1)); await tester.pumpAndSettle();
-    await tester.tap(find.text('Feb ${DateTime.now().year}')); await tester.pumpAndSettle();
+    await tester.tap(feeMenu); await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('analytics-picker-month-1'))); await tester.pumpAndSettle();
     expect(find.text('Feb: ₹900'),findsOneWidget);
     expect(tester.takeException(),isNull);
   });

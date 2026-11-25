@@ -70,6 +70,41 @@ void main() {
       cached.dispose();
     },
   );
+  test('Warm Bell plays only for new unread revisions after startup, not refresh, paging or restart', () async {
+    var newest = false, sounds = 0;
+    final inbox = DeveloperInbox(
+      playNotificationSound: () async { sounds++; },
+      readPage: (audience, cursor) async => {
+        'documents': [note(audience, cursor == null ? 'first' : 'older'),
+          if (newest && cursor == null) note(audience, 'new')],
+        if (cursor == null) 'nextPageToken': 'next',
+      },
+    );
+    await inbox.initialize();
+    expect(sounds, 0);
+    await inbox.refresh();
+    expect(sounds, 0);
+    newest = true;
+    await inbox.refresh();
+    expect(sounds, 1);
+    await inbox.refresh();
+    await inbox.refresh(more: true);
+    expect(sounds, 1);
+    await inbox.markAllLoadedRead();
+    expect(inbox.unread, 0);
+    expect(inbox.messages.length, 6);
+    inbox.dispose();
+    final restarted = DeveloperInbox(
+      playNotificationSound: () async { sounds++; },
+      readPage: (audience, cursor) async => {
+        'documents': [note(audience, 'first'), note(audience, 'new')],
+      },
+    );
+    await restarted.initialize();
+    expect(restarted.unread, 0);
+    expect(sounds, 1);
+    restarted.dispose();
+  });
   testWidgets('notification inbox opens full developer message', (
     tester,
   ) async {
@@ -82,11 +117,24 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(home: DeveloperInboxScreen(inbox: inbox)),
     );
-    await tester.tap(find.text('Developer message').first);
-    await tester.pumpAndSettle();
-    expect(find.text('Synthetic developer notification body'), findsOneWidget);
-    inbox.dispose();
-    await tester.pumpWidget(const SizedBox());
+    try {
+      await tester.runAsync(() async {
+        await tester.tap(find.text('Developer message').first);
+        // The receipt uses actual asynchronous local-storage I/O.
+        for (var i = 0; i < 100 && inbox.unread != 1; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
+        // Verify durable receipt, not just an optimistic badge.
+        final reads = await db.collection('_windows_developer_inbox_read').get();
+        expect(reads.docs, hasLength(1));
+      });
+      await tester.pumpAndSettle();
+      expect(find.text('Synthetic developer notification body'), findsOneWidget);
+      expect(inbox.unread, 1); // The detail is still open.
+    } finally {
+      await tester.pumpWidget(const SizedBox());
+      inbox.dispose();
+    }
   });
   test(
     'student complaints share the bell with class/device details and stale cached complaints disappear',

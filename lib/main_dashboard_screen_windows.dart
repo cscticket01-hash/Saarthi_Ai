@@ -51,6 +51,7 @@ import 'windows_ui_localization.dart';
 import 'windows_preferences_reset.dart';
 import 'windows_school_operations.dart';
 import 'windows_developer_notifications.dart';
+import 'windows_notification_sound.dart';
 import 'windows_staff_payroll.dart';
 import 'windows_school_identity.dart';
 import 'windows_document_templates.dart';
@@ -7372,7 +7373,8 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
     _checkAnalyticsProfile();
     final snapshot = await FirebaseFirestore.instance.collection('school_expenses').get();
     _checkAnalyticsProfile();
-    return snapshot.docs.map((d) => <String,dynamic>{...d.data(), 'id': d.id}).toList();
+    return windowsExpenseHistory(snapshot.docs.map((d) => <String,dynamic>{...d.data(), 'expenseId': d.id}),
+      schoolId: FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']?.toString() ?? '');
   }
 
   double _analyticsNumber(dynamic value) {
@@ -7652,10 +7654,9 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
       final expensesByMonth = List<double>.filled(12, 0);
       
       for (final record in expenses) {
-        final amount = _analyticsAmount(record, const ['amount', 'value']);
-        
-        final month = _analyticsMonth(record);
-        if (month != null) expensesByMonth[month] += amount;
+        final date = windowsExpenseDate(record);
+        if (date == null || WindowsAcademicYearSettings.startYear(date, _academicYearRolloverMonth) != _selectedYear) continue;
+        expensesByMonth[date.month - 1] += windowsExpensePaise(record) / 100;
       }
 
       
@@ -8007,23 +8008,70 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
     return '$label: $value';
   }
 
-  Widget _analyticsDropdownPill(String chart) => PopupMenuButton<int>(
-    tooltip: WindowsUiLanguage.translate('Select month'),
-    initialValue: _chartMonth(chart),
-    onSelected: (month) => setState(() => _chartMonths[chart] = month),
-    itemBuilder: (_) => [
-      const PopupMenuItem(value: -1, child: Text('All months')),
-      for (var i = 0; i < 12; i++) PopupMenuItem(value: i, child: Text('${WindowsUiLanguage.translate(_monthLabels[i])} ${i + 1 < _academicYearRolloverMonth ? _selectedYear + 1 : _selectedYear}', translate: false)),
-    ],
-    child: Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
-      decoration: BoxDecoration(color: WindowsAppearance.background(const Color(0xFF12313A)), borderRadius: BorderRadius.circular(8)),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Text(_chartMonth(chart) == -1 ? 'All months' : _periodLabel(_chartMonth(chart)), style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white70), fontSize: 10)),
-        const Icon(Icons.keyboard_arrow_down_rounded, size: 16),
-      ])));
+  Future<void> _pickAnalyticsMonth({String? chart}) async {
+    if (!_periodReady) return;
+    final year = _selectedYear, rollover = _academicYearRolloverMonth;
+    final observed = _observedMonth;
+    final selected = chart == null ? _selectedMonth : _chartMonth(chart);
+    final months = List<int>.generate(12, (i) => (rollover - 1 + i) % 12);
+    final picked = await showDialog<int>(context: context, builder: (ctx) {
+      WindowsAppearance.watch(ctx);
+      final scheme = Theme.of(ctx).colorScheme;
+      return AlertDialog(title: Text('Select month • ${_academicYear(year)}'),
+        content: SizedBox(width: 300, child: Column(mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          for (var row = 0; row < 4; row++) ...[
+            Row(children: [
+              for (var col = 0; col < 3; col++) ...[
+                if (col > 0) const SizedBox(width: 6),
+                Expanded(child: OutlinedButton(
+                  key: ValueKey('analytics-picker-month-${months[row * 3 + col]}'),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 9),
+                    backgroundColor: selected == months[row * 3 + col] ? scheme.primaryContainer : null,
+                    foregroundColor: selected == months[row * 3 + col] ? scheme.onPrimaryContainer : scheme.onSurface),
+                  onPressed: () => Navigator.pop(ctx, months[row * 3 + col]),
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    Text(_monthLabels[months[row * 3 + col]]),
+                    Text('${months[row * 3 + col] + 1 < rollover ? year + 1 : year}', style: const TextStyle(fontSize: 10)),
+                  ]))),
+              ],
+            ]),
+            if (row < 3) const SizedBox(height: 6),
+          ],
+          if (chart != null) ...[
+            const SizedBox(height: 10),
+            OutlinedButton(key: const ValueKey('analytics-picker-all-months'),
+              onPressed: () => Navigator.pop(ctx, -1), child: const Text('All months')),
+          ],
+        ])));
+    });
+    if (!mounted || picked == null || year != _selectedYear || rollover != _academicYearRolloverMonth ||
+        observed != _observedMonth || FirebaseFirestore.instance.activeProfileId != _analyticsProfile) return;
+    if (chart != null) {
+      setState(() => _chartMonths[chart] = picked);
+    } else if (picked != _selectedMonth) {
+      setState(() { _selectedMonth = picked; _chartMonths.clear(); _data = null; });
+      unawaited(_loadAnalytics());
+    }
+  }
+
+  Widget _analyticsDropdownPill(String chart) => TextButton(
+    key: ValueKey('analytics-chart-month-$chart'),
+    onPressed: _periodReady ? () => _pickAnalyticsMonth(chart: chart) : null,
+    style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+      minimumSize: Size.zero, tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      backgroundColor: WindowsAppearance.background(const Color(0xFF12313A)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+    child: Row(mainAxisSize: MainAxisSize.min, children: [
+      Text(_chartMonth(chart) == -1 ? 'All months' : _periodLabel(_chartMonth(chart)),
+        style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white70), fontSize: 10)),
+      const Icon(Icons.keyboard_arrow_down_rounded, size: 16),
+    ]),
+  );
   List<T> _chartValues<T>(String chart, List<T> values) {
     final month = _chartMonth(chart);
-    return month == -1 ? values : [values[month]];
+    return month == -1 ? List<T>.generate(12, (i) => values[(_academicYearRolloverMonth - 1 + i) % 12]) : [values[month]];
   }
   List<String> _chartLabels(String chart) => _chartValues(chart, _monthLabels);
 
@@ -8210,22 +8258,14 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                                   ],
                                 ),
                               ),
-                              DropdownButtonHideUnderline(
-                                child: DropdownButton<int>(
-                                  key: const ValueKey('analytics-month'),
-                                  value: _selectedMonth,
-                                  dropdownColor: WindowsAppearance.resolve(const Color(0xFF12272F)),
-                                  style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 11),
-                                  items: [
-                                    for (var m = 0; m < 12; m++)
-                                      DropdownMenuItem<int>(value: m, child: Text(_periodLabel(m), translate: false)),
-                                  ],
-                                  onChanged: (month) {
-                                    if (month == null || month == _selectedMonth) return;
-                                    setState(() { _selectedMonth = month; _chartMonths.clear(); _data = null; });
-                                    _loadAnalytics();
-                                  },
-                                ),
+                              TextButton(
+                                key: const ValueKey('analytics-month'),
+                                onPressed: _periodReady ? () => _pickAnalyticsMonth() : null,
+                                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                                  Text(_periodLabel(_selectedMonth), translate: false,
+                                    style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 11)),
+                                  const Icon(Icons.keyboard_arrow_down_rounded, size: 16),
+                                ]),
                               ),
                               const SizedBox(width: 8),
                               DropdownButtonHideUnderline(
@@ -9633,6 +9673,8 @@ class SettingsScreen extends StatelessWidget {
         const WindowsAppUpdateCard(),
         const SizedBox(height: 12),
         const WindowsSyncStatusCard(),
+        const SizedBox(height: 12),
+        const WindowsNotificationSoundCard(),
         FutureBuilder<Map<String,dynamic>>(
           future:CentralSchoolCloud.saved(),
           builder:(context,snapshot) {
@@ -23729,6 +23771,7 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
   bool _loading = true;
   String? _error;
   String _historyQuery = '';
+  StreamSubscription<QuerySnapshot<Map<String,dynamic>>>? _expenseSubscription;
 
   @override
   void initState() {
@@ -23736,7 +23779,23 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
     _expenseProfile = FirebaseFirestore.instance.activeProfileId;
     _expenseSchool = FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']?.toString() ?? '';
     _load();
+    unawaited(_watchManagedExpenses());
   }
+
+  Future<void> _watchManagedExpenses() async {
+    try {
+      if (widget.call != null || !await WindowsSchoolExpenseSync.enabled || !mounted) return;
+      _checkExpenseProfile();
+      _expenseSubscription = FirebaseFirestore.instance.collection('school_expenses').snapshots().listen((snapshot) {
+        if (!mounted) return;
+        try { _checkExpenseProfile(); } catch (_) { return; }
+        setState(() { _items..clear()..addAll(snapshot.docs.map((d) => {...d.data(), 'expenseId': d.id})); _loading = false; });
+      }, onError: (Object error) { if (mounted) setState(() => _error = 'Expense refresh unavailable. Use Refresh to retry.'); });
+    } catch (_) { /* manual refresh remains available */ }
+  }
+
+  @override
+  void dispose() { _expenseSubscription?.cancel(); super.dispose(); }
 
   Future<Map<String, dynamic>> _call(Map<String, dynamic> body) async {
     _checkExpenseProfile();
@@ -23778,7 +23837,7 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
       _checkExpenseProfile();
       if (!mounted || generation != _expenseLoadGeneration) return;
       setState(() {
-        _items..clear()..addAll(local.docs.map((d) => {'expenseId': d.id, ...d.data()}));
+        _items..clear()..addAll(local.docs.map((d) => {...d.data(), 'expenseId': d.id}));
         _loading = false;
       });
       // Cloud-first list replacement would hide an unsynced local expense.
@@ -23814,6 +23873,8 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
   Future<void> _addExpense() async {
     _checkExpenseProfile();
     final intent = WindowsExpenseIntent();
+    DateTime expenseDate = DateTime.now();
+    String? validationError;
     final title = TextEditingController();
     final amount = TextEditingController();
     final paidTo = TextEditingController();
@@ -23832,23 +23893,35 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                TextField(controller: title, decoration: const InputDecoration(labelText: 'Expense Title')),
+                TextField(controller: title, enabled: !saving, maxLength: 160, decoration: const InputDecoration(labelText: 'Expense Title')),
+                const SizedBox(height: 6),
+                Align(alignment: Alignment.centerLeft, child: OutlinedButton.icon(
+                  icon: const Icon(Icons.calendar_today_outlined),
+                  label: Text('Expense Date: ${expenseDate.toIso8601String().split('T').first}'),
+                  onPressed: saving ? null : () async {
+                    final now = DateTime.now();
+                    final selected = await showDatePicker(context: ctx, initialDate: expenseDate,
+                      firstDate: DateTime(2000), lastDate: now);
+                    if (selected != null && ctx.mounted) setDlg(() => expenseDate = selected);
+                  },
+                )),
                 const SizedBox(height: 10),
                 Row(children: [
-                  Expanded(child: TextField(controller: amount, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'Amount ₹'))),
+                  Expanded(child: TextField(controller: amount, enabled: !saving, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'Amount ₹', hintText: '0.00'))),
                   const SizedBox(width: 10),
                   Expanded(child: DropdownButtonFormField<String>(
                     value: category,
                     decoration: const InputDecoration(labelText: 'Category'),
                     items: const ['General','Electricity','Salary','Maintenance','Stationery','Transport','Event','Other']
                         .map((e) => DropdownMenuItem(value:e, child:Text(e))).toList(),
-                    onChanged: (v) { if (v != null) setDlg(() => category = v); },
+                    onChanged: saving ? null : (v) { if (v != null) setDlg(() => category = v); },
                   )),
                 ]),
                 const SizedBox(height: 10),
-                TextField(controller: paidTo, decoration: const InputDecoration(labelText: 'Paid To / Vendor')),
+                TextField(controller: paidTo, enabled: !saving, decoration: const InputDecoration(labelText: 'Paid To / Vendor')),
                 const SizedBox(height: 10),
-                TextField(controller: note, maxLines: 2, decoration: const InputDecoration(labelText: 'Note')),
+                TextField(controller: note, enabled: !saving, maxLines: 2, decoration: const InputDecoration(labelText: 'Note')),
+                if (validationError != null) Text(validationError!, style: TextStyle(color: Theme.of(ctx).colorScheme.error)),
               ],
             ),
           ),
@@ -23857,17 +23930,20 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
             FilledButton(
               onPressed: saving ? null : () async {
                 final value = double.tryParse(amount.text.trim());
-                if (title.text.trim().isEmpty || value == null || !value.isFinite || value <= 0) return;
-                setDlg(() => saving = true);
+                if (title.text.trim().isEmpty || value == null || !WindowsExpenseIntent.validAmount(value)) {
+                  setDlg(() => validationError = 'Enter a title and a positive amount with up to two decimal places.');
+                  return;
+                }
+                setDlg(() { saving = true; validationError = null; });
                 try {
                   _checkExpenseProfile();
                   final result=await _call(intent.prepare(title: title.text, category: category,
-                    amount: value, paidTo: paidTo.text, note: note.text));
+                    amount: value, paidTo: paidTo.text, note: note.text, expenseDate: expenseDate));
                   if (ctx.mounted) Navigator.pop(ctx, true);
                   if (mounted && result['cloudSyncPending'] == true) {
                     ScaffoldMessenger.of(this.context).showSnackBar(
                       const SnackBar(content: Text(
-                        'Expense saved locally. Google cloud delta sync queued; confirmation pending.')));
+                        'Expense saved locally. Cloud sync confirmation pending.')));
                   }
                 } catch (e) {
                   if (ctx.mounted) {
@@ -23908,8 +23984,8 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
         body: const Center(child: Text('School changed. Reopen expenses.')));
     }
     final items = windowsExpenseHistory(_items, schoolId: _expenseSchool,
-      query: widget.history ? _historyQuery : '');
-    final total = items.fold<double>(0, (sum, item) => sum + (double.tryParse(item['amount']?.toString() ?? '') ?? 0));
+      query: _historyQuery);
+    final total = items.fold<int>(0, (sum, item) => sum + windowsExpensePaise(item)) / 100;
     return Scaffold(
       backgroundColor: WindowsAppearance.background(const Color(0xFF0B141A)),
       appBar: AppBar(
@@ -23932,17 +24008,17 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
               child: Column(
                 children:[
                   Row(children:[
-                    _WindowsMetricCard(icon:Icons.account_balance_wallet_rounded, label:widget.history && _historyQuery.trim().isNotEmpty ? 'Matching Expenses' : 'Total Expenses', value:'₹${total.toStringAsFixed(2)}', color:WindowsAppearance.foreground(Colors.amberAccent)),
+                    _WindowsMetricCard(icon:Icons.account_balance_wallet_rounded, label:_historyQuery.trim().isNotEmpty ? 'Matching Expenses' : 'Total Expenses', value:'₹${total.toStringAsFixed(2)}', color:WindowsAppearance.foreground(Colors.amberAccent)),
                     const SizedBox(width:12),
-                    _WindowsMetricCard(icon:Icons.receipt_long_rounded, label:widget.history && _historyQuery.trim().isNotEmpty ? 'Matching Entries' : 'Entries', value:'${items.length}', color:WindowsAppearance.foreground(const Color(0xFF69C2FF))),
+                    _WindowsMetricCard(icon:Icons.receipt_long_rounded, label:_historyQuery.trim().isNotEmpty ? 'Matching Entries' : 'Entries', value:'${items.length}', color:WindowsAppearance.foreground(const Color(0xFF69C2FF))),
                   ]),
                   if (_error != null) Padding(padding:const EdgeInsets.all(10), child:Text(_error!, style:TextStyle(fontFamily: 'Segoe UI', color:WindowsAppearance.foreground(Colors.redAccent)))),
                   const SizedBox(height:14),
-                  if (widget.history) Padding(
+                  Padding(
                     padding: const EdgeInsets.only(bottom: 14),
                     child: TextField(
                       decoration: const InputDecoration(prefixIcon: Icon(Icons.search_rounded),
-                        labelText: 'Search expense history', hintText: 'Title, category, vendor, date or note'),
+                        labelText: 'Search expenses', hintText: 'Title, category, vendor, date or note'),
                       onChanged: (value) => setState(() => _historyQuery = value),
                     ),
                   ),

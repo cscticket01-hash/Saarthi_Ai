@@ -1,6 +1,7 @@
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_local_firestore.dart';
 import 'windows_sync_engine.dart';
+import 'windows_expense_intent.dart';
 
 /// School expenses use the same durable record-level queue as fees and salary.
 /// Local commit is the only success boundary here; never claim Google/Drive ACK.
@@ -18,7 +19,7 @@ class WindowsSchoolExpenseSync {
     if (school.trim().isEmpty || id.isEmpty ||
         intent['action'] != 'save_school_expense' ||
         intent['title']?.toString().trim().isEmpty != false ||
-        amount is! num || !amount.isFinite || amount <= 0 ||
+        amount is! num || !WindowsExpenseIntent.validAmount(amount) ||
         intent['timestamp'] is! num) {
       throw StateError('Expense intent invalid. Nothing was queued.');
     }

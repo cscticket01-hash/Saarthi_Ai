@@ -105,7 +105,7 @@ class SchoolSupportClient {
     if (request != null) {
       out = await request!(_school!, action, body);
     } else if (_scriptOnly) {
-      const allowed={'managed/support/create','managed/support/list','managed/support/thread','managed/support/announcements','managed/support/createWithScreenshot','managed/support/reply','managed/support/attachment','managed/support/readReceipts'};
+      const allowed={'managed/support/create','managed/support/list','managed/support/thread','managed/support/announcements','managed/support/createWithScreenshot','managed/support/reply','managed/support/markResolved','managed/support/attachment','managed/support/readReceipts'};
       if(!allowed.contains(action))throw StateError('This support operation requires central school migration.');
       out=await WindowsPlatformClient.instance.call(action.replaceFirst('managed/',''),{'projectId':_school,...body});
     } else if (_managed == true) {
@@ -219,6 +219,27 @@ class SchoolSupportClient {
 
   static bool developerTicket(Map row) => row['audience'] != 'school';
 
+  Future<Map<String,dynamic>> markResolved(Map<String,dynamic> ticket) async {
+    await _bind();
+    final id = ticket['id'];
+    if (id is! String || !ownsTicket(ticket) || !developerTicket(ticket)) {
+      throw StateError('School ticket identity mismatch.');
+    }
+    if ((await pending()).any((r) => r['complaintId'] == id)) {
+      throw StateError('Deliver pending support messages before resolving this ticket.');
+    }
+    final result = await call('managed/support/markResolved', {'complaintId': id});
+    final raw = result['complaint'];
+    if (result['complaintId'] != id || result['status'] != 'resolved' || raw is! Map ||
+        raw['id'] != id || raw['schoolId'] != _school || raw['status'] != 'resolved' ||
+        !developerTicket(raw) || _at(raw['resolvedAt']) <= 0) {
+      throw StateError('Ticket resolution could not be verified.');
+    }
+    final row = Map<String,dynamic>.from(raw);
+    await cache([row]);
+    return row;
+  }
+
   Future<Map<String,dynamic>> page({String? cursor}) async {
     final out = await call('managed/support/list', {if (cursor != null) 'cursor': cursor});
     final rows = (out['complaints'] as List).map((r) =>
@@ -285,8 +306,19 @@ class SchoolSupportClient {
   }
 }
 
+Future<bool> confirmSupportResolution(BuildContext context) async =>
+    await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
+      title: const Text('Mark as Resolved?'),
+      content: const Text('This ticket will move to Complaint history. Its conversation and attachments are retained under the existing history policy.'),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+        FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Mark as Resolved')),
+      ],
+    )) ?? false;
+
 class WindowsComplaintHistory extends StatefulWidget {
-  const WindowsComplaintHistory({super.key});
+  const WindowsComplaintHistory({super.key, this.onResolved});
+  final ValueChanged<Map<String,dynamic>>? onResolved;
   @override
   State<WindowsComplaintHistory> createState() =>
       _WindowsComplaintHistoryState();
@@ -387,7 +419,10 @@ class _WindowsComplaintHistoryState extends State<WindowsComplaintHistory> {
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () async {
                   await Navigator.push(context, MaterialPageRoute(
-                    builder: (_) => WindowsComplaintThread(client: client, complaint: r)));
+                    builder: (_) => WindowsComplaintThread(client: client, complaint: r, onResolved: (row) {
+                      if (mounted) setState(() => rows[row['id'] as String] = row);
+                      widget.onResolved?.call(row);
+                    })));
                   if (mounted) await _load();
                 },
               ),
@@ -412,7 +447,8 @@ String _date(dynamic value) {
 }
 
 class WindowsComplaintThread extends StatefulWidget {
-  const WindowsComplaintThread({super.key, required this.client, required this.complaint});
+  const WindowsComplaintThread({super.key, required this.client, required this.complaint, this.onResolved});
+  final ValueChanged<Map<String,dynamic>>? onResolved;
   final SchoolSupportClient client;
   final Map<String, dynamic> complaint;
   @override
@@ -463,6 +499,23 @@ class WindowsComplaintThreadState extends State<WindowsComplaintThread> {
       });
     } catch (e) {
       if (mounted) setState(() => error = '$e');
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> _resolveTicket() async {
+    if (busy || complaint['status'] == 'resolved' || !widget.client.current) return;
+    if (!await confirmSupportResolution(context) || !mounted || busy) return;
+    setState(() { busy = true; error = null; });
+    try {
+      final row = await widget.client.markResolved(complaint);
+      if (!mounted || !widget.client.current) return;
+      setState(() => complaint = row);
+      widget.onResolved?.call(row);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Ticket resolved. Saved in Complaint history.')));
+    } catch (e) {
+      if (mounted) setState(() => error = e.toString().replaceFirst('Bad state: ', ''));
     } finally {
       if (mounted) setState(() => busy = false);
     }
@@ -527,7 +580,14 @@ class WindowsComplaintThreadState extends State<WindowsComplaintThread> {
           Text('Ticket ${complaint['id']}'),
           if (complaint['hasScreenshot'] == true) TextButton.icon(onPressed: busy ? null : _openScreenshot, icon:const Icon(Icons.image_outlined),label:const Text('View screenshot')),
           Text('${complaint['status']} • ${_date(complaint['createdAt'])}'),
-          if (complaint['status'] == 'resolved') const Text('Sending another reply will reopen this ticket.'),
+          if (complaint['status'] == 'resolved')
+            const Text('Resolved • Saved in Complaint history. Sending another reply will reopen this ticket.')
+          else
+            Align(alignment: Alignment.centerLeft, child: OutlinedButton.icon(
+              onPressed: busy || queued.isNotEmpty ? null : _resolveTicket,
+              icon: const Icon(Icons.check_circle_outline),
+              label: const Text('Mark as Resolved'),
+            )),
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),

@@ -402,6 +402,7 @@ class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
   final _subject = TextEditingController();
   Uint8List? _screenshot;
   bool _choosingScreenshot = false;
+  String? _resolvingTicket;
   String _category = 'General';
   final _support = SchoolSupportClient();
   late final DeveloperInbox _inbox = widget.inbox ?? DeveloperInbox();
@@ -425,6 +426,23 @@ class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
     _subject.dispose();
     _message.dispose();
     super.dispose();
+  }
+
+  Future<void> _resolveRecentTicket(Map<String,dynamic> ticket) async {
+    if (_resolvingTicket != null || !_support.current || ticket['status'] == 'resolved') return;
+    if (!await confirmSupportResolution(context) || !mounted || _resolvingTicket != null) return;
+    setState(() => _resolvingTicket = ticket['id'] as String);
+    try {
+      final row = await _support.markResolved(ticket);
+      if (!mounted || !_support.current) return;
+      _inbox.acceptResolvedTicket(row);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Ticket resolved. Saved in Complaint history.')));
+      unawaited(_inbox.refresh());
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString().replaceFirst('Bad state: ', ''))));
+    } finally {
+      if (mounted) setState(() => _resolvingTicket = null);
+    }
   }
 
   Future<void> _chooseScreenshot() async {
@@ -512,7 +530,7 @@ class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
 
   @override
   Widget build(BuildContext context) { WindowsAppearance.watch(context); return  Scaffold(
-    appBar: AppBar(title: const Text('App Support'), actions: [TextButton.icon(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const WindowsComplaintHistory())), icon: const Icon(Icons.history), label: const Text('Complaint history'))]),
+    appBar: AppBar(title: const Text('App Support'), actions: [TextButton.icon(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => WindowsComplaintHistory(onResolved: _inbox.acceptResolvedTicket))), icon: const Icon(Icons.history), label: const Text('Complaint history'))]),
     body: Stack(children: [SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(28, 28, 92, 28),
       child: Align(
@@ -533,6 +551,7 @@ class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
               const SizedBox(height: 16),
               AnimatedBuilder(animation: _inbox, builder: (context, _) {
                 final tickets = _inbox.supportTickets;
+                final activeTickets = tickets?.where((r) => r['status'] == 'open' || r['status'] == 'in_progress').toList() ?? <Map<String,dynamic>>[];
                 return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Wrap(spacing: 8, runSpacing: 8, children: [
                     for (final entry in ['Total','Open','In progress','Resolved'])
@@ -548,19 +567,31 @@ class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
                   ]),
                   if (tickets == null || _inbox.error != null)
                     const Text('Ticket totals require a verified refresh; cached information may be stale.'),
-                  if (tickets != null && tickets.isNotEmpty) ...[
+                  if (tickets != null) ...[
                     const SizedBox(height: 8),
                     Row(children: [
                       const Expanded(child: Text('Recent tickets', style: TextStyle(fontWeight: FontWeight.bold))),
-                      TextButton(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const WindowsComplaintHistory())), child: const Text('View history')),
+                      TextButton(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => WindowsComplaintHistory(onResolved: _inbox.acceptResolvedTicket))), child: const Text('View history')),
                     ]),
-                    for (final ticket in tickets.take(3))
+                    if (activeTickets.isEmpty) const Text('No active support tickets.'),
+                    for (final ticket in activeTickets.take(3))
                       Card(child: ListTile(
                         title: Text(ticket['message']?.toString().split('\n').first ?? 'Support ticket', maxLines: 1, overflow: TextOverflow.ellipsis),
                         subtitle: Text('${ticket['status']} • ${formatNoticeIst(noticeMillis(ticket['createdAt']))}'),
-                        trailing: const Icon(Icons.chevron_right),
-                        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) =>
-                          WindowsComplaintThread(client: SchoolSupportClient(), complaint: ticket))),
+                        trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                          TextButton.icon(
+                            onPressed: _resolvingTicket != null ? null : () => _resolveRecentTicket(ticket),
+                            icon: const Icon(Icons.check_circle_outline),
+                            label: Text(_resolvingTicket == ticket['id'] ? 'Resolving…' : 'Mark as Resolved'),
+                          ),
+                          const Icon(Icons.chevron_right),
+                        ]),
+                        onTap: () async {
+                          await Navigator.push(context, MaterialPageRoute(builder: (_) =>
+                            WindowsComplaintThread(client: SchoolSupportClient(), complaint: ticket,
+                              onResolved: _inbox.acceptResolvedTicket)));
+                          if (mounted) unawaited(_inbox.refresh());
+                        },
                       )),
                   ],
                 ]);

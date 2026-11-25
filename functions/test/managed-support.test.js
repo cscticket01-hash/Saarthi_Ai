@@ -45,6 +45,24 @@ test('only the owning school resolves student complaints; reopening clears the r
  await assert.rejects(f.call({action:'managed/support/resolve',complaintId:id,status:'open'}),e=>e.status===404);
 });
 
+test('own Windows support ticket resolves without deleting history, foreign and student tickets are denied',async()=>{
+ const f=setup();
+ await f.call({action:'managed/support/create',complaintId:id,message:'Original support problem'});
+ await f.call({action:'managed/support/reply',complaintId:id,messageId:time+'_'+'e'.repeat(32),message:'Extra details'});
+ const action={action:'managed/support/markResolved',complaintId:id};
+ await assert.rejects(f.call(action,'B'),e=>e.status===404);
+ const student=A+'_'+'d'.repeat(32);
+ f.docs.set('platform_complaints/'+student,{schoolId:A,audience:'school',source:'android',role:'student',status:'open',createdAt:time});
+ await assert.rejects(f.call({...action,complaintId:student}),e=>e.status===404);
+ const ack=await f.call(action);
+ assert.equal(ack.status,'resolved');assert.equal(ack.complaint.id,id);assert.equal(ack.complaint.resolvedAt,time);
+ assert.equal((await f.call(action)).complaint.resolvedAt,time);
+ const thread=await f.call({action:'managed/support/thread',complaintId:id});
+ assert.equal(thread.complaint.status,'resolved');assert.equal(thread.complaint.message,'Original support problem');
+ assert.equal(thread.messages.length,1);assert.equal(thread.messages[0].message,'Extra details');
+ assert.equal((await f.call({action:'managed/support/list'})).complaints.find(r=>r.id===id).status,'resolved');
+ assert.equal(f.docs.get('platform_complaints/'+student).status,'open');
+});
 test('private screenshot and revision receipt are school scoped and not in list/thread payload',async()=>{
  const f=setup();
  const png='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aW1kAAAAASUVORK5CYII=';

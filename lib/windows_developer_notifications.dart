@@ -1,6 +1,7 @@
 import 'complaint_retention.dart';
 import 'notice_time.dart';
 import 'windows_support_history.dart';
+import 'windows_notification_sound.dart';
 import 'windows_firebase_sync.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -13,7 +14,9 @@ import 'windows_local_firestore.dart' as local;
 
 /// Developer messages and verified school complaints. Reads never enter the school sync outbox.
 class DeveloperInbox extends ChangeNotifier {
-  DeveloperInbox({this.readPage, this.readComplaints});
+  DeveloperInbox({this.readPage, this.readComplaints, this.playNotificationSound});
+  final Future<void> Function()? playNotificationSound;
+  bool _soundBaselineEstablished = false;
   final Future<Map<String, dynamic>> Function(String audience, String? cursor)?
   readPage;
   final Future<Map<String, dynamic>> Function(String? cursor)? readComplaints;
@@ -23,6 +26,12 @@ class DeveloperInbox extends ChangeNotifier {
   List<Map<String, dynamic>> messages = [];
   List<Map<String,dynamic>>? _tickets;
   List<Map<String,dynamic>>? get supportTickets => current ? _tickets : null;
+  // Reuse existing ticket counters with the server-confirmed status.
+  void acceptResolvedTicket(Map<String,dynamic> row) {
+    if (!current || _disposed || row['schoolId'] != _school || row['status'] != 'resolved' || _tickets == null) return;
+    _tickets = _tickets!.map((ticket) => ticket['id'] == row['id'] ? row : ticket).toList();
+    _notify();
+  }
   final Map<String,String> _read = {};
   final Set<String> _pendingRead = {};
   Map<String,Map<String,dynamic>> _complaintPages = {};
@@ -452,7 +461,19 @@ class DeveloperInbox extends ChangeNotifier {
       _cursors.addAll(next);
       _loaded = true;
       _sort();
-      if(!announcementsOnly) {try{await _syncReadReceipts();}catch(_){/* retain local read receipts for retry */}}
+      final changedRevisions = changed.where((m) =>
+        existing[m['key']] == null || receiptRevision(existing[m['key']]!) != receiptRevision(m)).toList();
+      if(!announcementsOnly) {
+        try{await _syncReadReceipts();}catch(_){/* retain local read receipts for retry */}
+      }
+      if (!current || _disposed) return;
+      final shouldSound = _soundBaselineEstablished && !more &&
+        changedRevisions.any((m) => !complaintExpired(m) && !isRead(m));
+      if (!more) _soundBaselineEstablished = true;
+      if (shouldSound) {
+        final player = playNotificationSound ?? (readPage == null && readComplaints == null ? WindowsNotificationSound.playIfEnabled : null);
+        if (player != null) unawaited(_playQuietly(player));
+      }
     } catch (e) {
       if (current && !_disposed)
         error = e.toString().replaceFirst('Bad state: ', '');
@@ -462,7 +483,24 @@ class DeveloperInbox extends ChangeNotifier {
     }
   }
 
-  Future<void> markRead(Map<String, dynamic> message) async {
+  Future<void> _playQuietly(Future<void> Function() player) async {
+    try { await player(); } catch (_) { /* audio must never block notification delivery */ }
+  }
+
+  Future<void> markAllLoadedRead() async {
+    for (final row in List<Map<String,dynamic>>.of(messages)) {
+      if (!current || _disposed) return;
+      if (!complaintExpired(row)) await markRead(row, sync: false);
+    }
+    if (current && !_disposed) unawaited(_flushReadQuietly());
+  }
+
+  Future<void> _flushReadQuietly() async {
+    try { await _syncReadReceipts(); } catch (_) { /* durable local receipt retained */ }
+    _notify();
+  }
+
+  Future<void> markRead(Map<String, dynamic> message, {bool sync = true}) async {
     if (!current ||
         _disposed ||
         isRead(message) ||
@@ -477,7 +515,7 @@ class DeveloperInbox extends ChangeNotifier {
       _read[message['key'] as String]=receiptRevision(message);
       _pendingRead.add(receiptRevision(message));
       _notify();
-      try{await _syncReadReceipts();}catch(_){/* durable local receipt retained */}
+      if (sync) await _flushReadQuietly();
     } catch (_) {
       if (current && !_disposed) {
         error = 'Read status could not be saved. Try again.';
@@ -513,6 +551,16 @@ class _DeveloperInboxScreenState extends State<DeveloperInboxScreen> {
       appBar: AppBar(
         title: const Text('Notifications'),
         actions: [
+          IconButton(
+            tooltip: 'Mark all loaded notifications as read',
+            onPressed: inbox.unread == 0 ? null : () => inbox.markAllLoadedRead(),
+            icon: const Icon(Icons.done_all),
+          ),
+          IconButton(
+            tooltip: 'Notification sound settings',
+            onPressed: () => showDialog<void>(context: context, builder: (ctx) => const AlertDialog(title: Text('Notification sound'), content: SizedBox(width: 380, child: WindowsNotificationSoundCard()))),
+            icon: const Icon(Icons.volume_up_outlined),
+          ),
           IconButton(
             tooltip: 'Refresh notifications',
             onPressed: inbox.busy ? null : () => inbox.refresh(),
@@ -582,12 +630,12 @@ class _DeveloperInboxScreenState extends State<DeveloperInboxScreen> {
                                 trailing: read ? null : const Badge(),
                                 onTap: () async {
                                   if (!inbox.current) return;
+                                  unawaited(inbox.markRead(m));
                                   if (DeveloperInbox.kind(m) == 'support') {
                                     await Navigator.of(context).push(MaterialPageRoute(builder: (_) =>
-                                      WindowsComplaintThread(client: SchoolSupportClient(), complaint: {
+                                      WindowsComplaintThread(client: SchoolSupportClient(), onResolved: inbox.acceptResolvedTicket, complaint: {
                                         ...m, 'id': m['complaintId'], 'message': m['ticketMessage'],
                                       })));
-                                    await inbox.markRead(m);
                                     return;
                                   }
                                   if (m['complaintId'] != null) {
@@ -694,7 +742,6 @@ class _DeveloperInboxScreenState extends State<DeveloperInboxScreen> {
                                       const Duration(milliseconds: 300),
                                     );
                                     reply.dispose();
-                                    await inbox.markRead(m);
                                     return;
                                   }
                                   await showDialog<void>(
@@ -714,7 +761,6 @@ class _DeveloperInboxScreenState extends State<DeveloperInboxScreen> {
                                       ],
                                     ),
                                   );
-                                  await inbox.markRead(m);
                                 },
                               ),
                             );
