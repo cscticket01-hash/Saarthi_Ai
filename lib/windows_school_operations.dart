@@ -1,5 +1,8 @@
 import 'windows_support_history.dart';
 import 'dart:io' show Platform;
+import 'dart:typed_data';
+import 'package:file_selector/file_selector.dart' as support_files;
+import 'package:image/image.dart' as support_image;
 import 'notice_time.dart';
 import 'windows_appearance.dart';
 import 'promotion_session_policy.dart';
@@ -396,6 +399,8 @@ class WindowsSupportScreen extends StatefulWidget {
 class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
   final _message = TextEditingController();
   final _subject = TextEditingController();
+  Uint8List? _screenshot;
+  bool _choosingScreenshot = false;
   String _category = 'General';
   final _support = SchoolSupportClient();
   late final DeveloperInbox _inbox = widget.inbox ?? DeveloperInbox();
@@ -421,8 +426,50 @@ class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
     super.dispose();
   }
 
+  Future<void> _chooseScreenshot() async {
+    if (_busy || _choosingScreenshot) return;
+    setState(()=>_choosingScreenshot=true);
+    try {
+      final account=await CentralSchoolCloud.saved();
+      if(account.isEmpty) throw StateError('Screenshot requires a central school account.');
+      final file=await support_files.openFile(acceptedTypeGroups:[const support_files.XTypeGroup(label:'PNG screenshot',extensions:['png'])]);
+      if(file==null || !mounted) return;
+      if(await file.length()>5*1024*1024) throw StateError('Choose a PNG under 5 MB.');
+      final bytes=await file.readAsBytes();
+      if(bytes.length<33 || bytes.length>5*1024*1024 || bytes[0]!=137 || bytes[1]!=80 || bytes[2]!=78 || bytes[3]!=71) throw StateError('Choose a PNG screenshot.');
+      final header=ByteData.sublistView(bytes);
+      final w=header.getUint32(16),h=header.getUint32(20);
+      if(w<1||h<1||w>4096||h>4096) throw StateError('Use a screenshot no larger than 4096 × 4096.');
+      final decoded=support_image.decodePng(bytes);
+      if(decoded==null) throw StateError('PNG could not be read.');
+      Uint8List? safe;
+      for(final limit in [1280,960,720,480]){
+        final resized=w>limit||h>limit ? support_image.copyResize(decoded,width:w>=h?limit:null,height:h>w?limit:null) : decoded;
+        final clean=support_image.Image(width:resized.width,height:resized.height,numChannels:3);
+        support_image.compositeImage(clean,resized);
+        final png=support_image.encodePng(clean);
+        if(png.length<=98304){safe=png;break;}
+      }
+      if(safe==null) throw StateError('Screenshot is too detailed. Crop it to the relevant error and try again.');
+      final preview=safe;
+      if(!mounted) return;
+      final approved=await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(
+        title:const Text('Review screenshot before attaching'),
+        content:SizedBox(width:680,child:Column(mainAxisSize:MainAxisSize.min,children:[
+          Flexible(child:Image.memory(preview,fit:BoxFit.contain)),
+          const SizedBox(height:12),
+          const Text('Only attach the relevant error. Remove passwords, student names, IDs, photos and other private information first. This image will be visible to the developer.'),
+        ])),
+        actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),
+          FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Attach screenshot'))],
+      ));
+      if(mounted && approved==true) setState(()=>_screenshot=preview);
+    }catch(e){if(mounted)setState(()=>_error=e.toString().replaceFirst('Bad state: ',''));}
+    finally{if(mounted)setState(()=>_choosingScreenshot=false);}
+  }
+
   Future<void> _send() async {
-    if (_busy) return;
+    if (_busy || _choosingScreenshot) return;
     final body = _message.text.trim();
     final subject = _subject.text.trim();
     if (subject.isEmpty || body.length < 10) {
@@ -442,14 +489,16 @@ class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
       final text = 'Subject: $subject\nCategory: $_category\nApp: ${WindowsPlatformClient.version}\nOS: $os\n\n$body';
       if (text.length > 3000) throw StateError('Total complaint is too long.');
       bool sent = true;
-      if (account['managed'] == true) {
-        sent = await _support.send(text, WindowsPlatformClient.version);
+      if (account.isNotEmpty) {
+        sent = await _support.send(text, WindowsPlatformClient.version, screenshot: _screenshot == null ? null : base64Encode(_screenshot!));
       } else {
+        if(_screenshot != null) throw StateError('Screenshot requires a central school account.');
         await WindowsPlatformClient.instance.complaint(text);
       }
       if (!mounted) return;
       _message.clear();
       _subject.clear();
+      _screenshot=null;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(sent
           ? 'Complaint sent to the developer.'
           : 'Complaint saved locally. Delivery pending — see Complaint history.')));
@@ -539,6 +588,13 @@ class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
                   hintText: 'Describe the issue. Do not include passwords or student personal data.',
                 ),
               ),
+              Wrap(spacing:8,runSpacing:8,children:[
+                OutlinedButton.icon(onPressed:_busy||_choosingScreenshot?null:_chooseScreenshot,
+                  icon:const Icon(Icons.attach_file),label:Text(_choosingScreenshot?'Preparing…':_screenshot==null?'Attach PNG screenshot':'Replace screenshot')),
+                if(_screenshot!=null) TextButton.icon(onPressed:_busy?null:()=>setState(()=>_screenshot=null),
+                  icon:const Icon(Icons.close),label:const Text('Remove screenshot')),
+              ]),
+              if(_screenshot!=null) Align(alignment:Alignment.centerLeft,child:SizedBox(height:100,child:Image.memory(_screenshot!,fit:BoxFit.contain))),
               const Text('App version and Windows version are included. Do not include credentials or private school records.'),
               if (_error != null)
                 Text(_error!, style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.redAccent))),

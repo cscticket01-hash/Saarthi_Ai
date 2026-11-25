@@ -44,3 +44,20 @@ test('only the owning school resolves student complaints; reopening clears the r
  f.docs.get('platform_complaints/'+id).purging=true;
  await assert.rejects(f.call({action:'managed/support/resolve',complaintId:id,status:'open'}),e=>e.status===404);
 });
+
+test('private screenshot and revision receipt are school scoped and not in list/thread payload',async()=>{
+ const f=setup();
+ const png='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aW1kAAAAASUVORK5CYII=';
+ const body={action:'managed/support/createWithScreenshot',complaintId:id,message:'Screenshot issue',screenshot:png};
+ const ack=await f.call(body);assert.equal(ack.screenshotSha256.length,64);
+ await f.call(body);
+ const list=await f.call({action:'managed/support/list'});assert.equal(list.complaints[0].hasScreenshot,true);assert(!JSON.stringify(list).includes(png));
+ const unchanged=await f.call({action:'managed/support/list',ifRevision:list.revision});assert.equal(unchanged.unchanged,true);assert.equal(unchanged.complaints,undefined);
+ const thread=await f.call({action:'managed/support/thread',complaintId:id});assert(!JSON.stringify(thread).includes(png));
+ const attachment=await f.call({action:'managed/support/attachment',complaintId:id});assert.equal(attachment.screenshot,png);
+ await assert.rejects(f.call({action:'managed/support/attachment',complaintId:id},'B'),e=>e.status===404);
+ const key='f'.repeat(64);
+ assert.deepEqual((await f.call({action:'managed/support/readReceipts',keys:[key],marked:[key]})).read,[key]);
+ assert.deepEqual((await f.call({action:'managed/support/readReceipts',keys:[key],marked:[]},'A-new-pc')).read,[key]);
+ assert.deepEqual((await f.call({action:'managed/support/readReceipts',keys:[key],marked:[]},'B')).read,[]);
+});

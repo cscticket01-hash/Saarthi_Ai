@@ -1,5 +1,7 @@
 import 'complaint_retention.dart';
 import 'dart:async';
+import 'dart:convert';
+import 'package:crypto/crypto.dart';
 import 'notice_time.dart';
 import 'dart:math';
 
@@ -16,6 +18,7 @@ class SchoolSupportClient {
   final Future<Map<String,dynamic>> Function(String school, String action, Map<String,dynamic> body)? request;
   final String _profile = local.FirebaseFirestore.instance.activeProfileId;
   String? _school, _uid;
+  bool? _managed;
   static final _flushing = <String>{};
   static const _queue = '_windows_support_outbox';
   static String randomId() => List.generate(
@@ -33,17 +36,18 @@ class SchoolSupportClient {
   Future<void> _bind() async {
     final saved = await (readIdentity ?? CentralSchoolCloud.saved)();
     if (local.FirebaseFirestore.instance.activeProfileId != _profile ||
-        saved['managed'] != true ||
+        saved.isEmpty ||
         local
                 .FirebaseFirestore
                 .instance
                 .activeProfileIdentity['schoolSyncId'] !=
             saved['schoolId'] ||
         (_school != null &&
-            (_school != saved['schoolId'] || _uid != saved['uid'])))
+            (_school != saved['schoolId'] || _uid != saved['uid'] || _managed != (saved['managed'] == true))))
       throw StateError('School account changed. Reopen complaint history.');
     _school ??= saved['schoolId']?.toString();
     _uid ??= saved['uid']?.toString();
+    _managed ??= saved['managed'] == true;
     if (_school == null || _uid == null)
       throw StateError('School login required');
   }
@@ -53,7 +57,21 @@ class SchoolSupportClient {
     Map<String, dynamic> body,
   ) async {
     await _bind();
-    final out = await (request != null ? request!(_school!, action, body) : ManagedSchoolSession.callForSchool(_school, action, body));
+    final Map<String,dynamic> out;
+    if (request != null) {
+      out = await request!(_school!, action, body);
+    } else if (_managed == true) {
+      out = await ManagedSchoolSession.callForSchool(_school, action, body);
+    } else {
+      final saved = await CentralSchoolCloud.saved();
+      await _bind();
+      final cloud = CentralSchoolCloud(endpoint: saved['endpoint'].toString(), expectedSchoolId: _school);
+      try {
+        final token = await CentralSchoolCloud.firebaseToken();
+        await _bind();
+        out = await cloud.api({'action':action,'schoolId':_school,...body}, token:token);
+      } finally { cloud.close(); }
+    }
     await _bind();
     if (out['success'] != true || out['schoolId'] != _school)
       throw StateError('Complaint response could not be verified.');
@@ -62,18 +80,20 @@ class SchoolSupportClient {
 
   // Persist immutable requests before network admission; internal collections
   // do not enter ordinary school record synchronization.
-  Future<String> enqueue(String message, String version, {String? complaintId}) async {
+  Future<String> enqueue(String message, String version, {String? complaintId, String? screenshot}) async {
     await _bind();
     final text = message.trim();
     if (text.length < (complaintId == null ? 10 : 3) || text.length > 3000) {
       throw StateError('Invalid complaint or reply length.');
     }
+    if (screenshot != null && (complaintId != null || screenshot.length > 131072)) throw StateError('Invalid screenshot size.');
     final id = complaintId == null ? '${_school}_${randomId()}'
         : '${DateTime.now().millisecondsSinceEpoch}_${randomId()}';
     final ref = local.FirebaseFirestore.instance.collection(_queue).doc(id);
     await local.WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() => ref.set({
       'id': id, 'schoolId': _school, 'uid': _uid, 'complaintId': complaintId ?? id,
       'message': text, 'version': version, 'kind': complaintId == null ? 'create' : 'reply',
+      if (screenshot != null) 'screenshot': screenshot,
       'createdAt': DateTime.now().millisecondsSinceEpoch, 'delivery': 'pending',
     }));
     await _bind();
@@ -105,13 +125,15 @@ class SchoolSupportClient {
       await _bind();
       try {
         final create = row['kind'] == 'create';
-        final out = await call(create ? 'managed/support/create' : 'managed/support/reply', {
+        final screenshot = row['screenshot'] as String?;
+        final out = await call(create ? (screenshot == null ? 'managed/support/create' : 'managed/support/createWithScreenshot') : 'managed/support/reply', {
           'complaintId': row['complaintId'],
           if (!create) 'messageId': id,
           'message': row['message'],
           if (create) 'version': row['version'],
+          if (create && screenshot != null) 'screenshot': screenshot,
         });
-        if (out['complaintId'] != row['complaintId'] || !create && out['messageId'] != id) {
+        if (out['complaintId'] != row['complaintId'] || !create && out['messageId'] != id || screenshot != null && out['screenshotSha256'] != sha256.convert(base64Decode(screenshot)).toString()) {
           throw StateError('Complaint receipt identity could not be verified.');
         }
         await _bind();
@@ -127,8 +149,8 @@ class SchoolSupportClient {
     } finally { _flushing.remove(scope); }
   }
 
-  Future<bool> send(String message, String version) async {
-    final id = await enqueue(message, version);
+  Future<bool> send(String message, String version, {String? screenshot}) async {
+    final id = await enqueue(message, version, screenshot: screenshot);
     await flushPending();
     return !(await pending()).any((r) => r['id'] == id);
   }
@@ -390,6 +412,22 @@ class WindowsComplaintThreadState extends State<WindowsComplaintThread> {
     }
   }
 
+  Future<void> _openScreenshot() async {
+    try {
+      final out = await widget.client.call('managed/support/attachment', {'complaintId':complaint['id']});
+      final encoded = out['screenshot'];
+      if (encoded is! String || encoded.length > 131072 || out['complaintId'] != complaint['id']) throw StateError('Invalid screenshot');
+      final bytes = base64Decode(encoded);
+      if (sha256.convert(bytes).toString() != out['screenshotSha256']) throw StateError('Screenshot verification failed.');
+      if (!mounted || !widget.client.current) return;
+      await showDialog<void>(context:context,builder:(ctx)=>AlertDialog(
+        title:const Text('Ticket screenshot'),
+        content:SizedBox(width:700,child:Image.memory(bytes,fit:BoxFit.contain,errorBuilder:(_,__,___)=>const Text('Screenshot could not be displayed.'))),
+        actions:[TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Close'))],
+      ));
+    } catch (_) { if(mounted) setState(()=>error='Screenshot unavailable. Try again.'); }
+  }
+
   Future<void> _send() async {
     final text = message.text.trim();
     if (text.length < 3) return;
@@ -431,6 +469,7 @@ class WindowsComplaintThreadState extends State<WindowsComplaintThread> {
         padding: const EdgeInsets.all(20),
         children: [
           Text('Ticket ${complaint['id']}'),
+          if (complaint['hasScreenshot'] == true) TextButton.icon(onPressed: busy ? null : _openScreenshot, icon:const Icon(Icons.image_outlined),label:const Text('View screenshot')),
           Text('${complaint['status']} • ${_date(complaint['createdAt'])}'),
           if (complaint['status'] == 'resolved') const Text('Sending another reply will reopen this ticket.'),
           Card(

@@ -347,6 +347,10 @@ class _DeveloperDashboard extends StatefulWidget {
 
 class _DeveloperDashboardState extends State<_DeveloperDashboard> {
   String _complaintSchool = '';
+  final _ticketRows = <String,Map<String,dynamic>>{};
+  String? _ticketCursor, _ticketError;
+  bool _ticketBusy = false;
+  int _ticketGeneration = 0;
   List<Map<String, dynamic>> get _visibleComplaints => _complaints
       .where(
         (c) =>
@@ -369,7 +373,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
   List<Map<String, dynamic>> get _schools => _maps(_data['schools']);
   List<Map<String, dynamic>> get _licenses => _maps(_data['licenses']);
   List<Map<String, dynamic>> get _receipts => _maps(_data['receipts']);
-  List<Map<String, dynamic>> get _complaints => _maps(_data['complaints']);
+  List<Map<String, dynamic>> get _complaints => _ticketRows.values.toList()..sort((a,b)=>(b['createdAt'] as num? ?? 0).compareTo(a['createdAt'] as num? ?? 0));
   List<Map<String, dynamic>> _maps(dynamic raw) => raw is List
       ? raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList()
       : [];
@@ -446,6 +450,29 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
       _refreshing = false;
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  Future<void> _loadTickets({bool more=false}) async {
+    if(_complaintSchool.isEmpty || (more&&(_ticketBusy||_ticketCursor==null))) return;
+    final generation=++_ticketGeneration,school=_complaintSchool;
+    setState((){_ticketBusy=true;_ticketError=null;if(!more){_ticketRows.clear();_ticketCursor=null;}});
+    try{
+      final result=await _call('complaint/list',{'schoolId':school,if(more)'cursor':_ticketCursor});
+      if(!mounted||generation!=_ticketGeneration||school!=_complaintSchool)return;
+      setState((){for(final row in _maps(result['complaints'])){_ticketRows[row['id'].toString()]=row;}_ticketCursor=result['cursor'] as String?;});
+    }catch(e){if(mounted&&generation==_ticketGeneration)setState(()=>_ticketError='Tickets could not be loaded. Refresh to retry.');}
+    finally{if(mounted&&generation==_ticketGeneration)setState(()=>_ticketBusy=false);}
+  }
+
+  Future<void> _showTicketScreenshot(Map<String,dynamic> c) async {
+    try{
+      final result=await _call('complaint/attachment',{'complaintId':c['id']});
+      final bytes=base64Decode(result['screenshot'] as String);
+      if(!mounted)return;
+      await showDialog<void>(context:context,builder:(ctx)=>AlertDialog(title:const Text('Ticket screenshot'),
+        content:SizedBox(width:720,child:Image.memory(bytes,fit:BoxFit.contain,errorBuilder:(_,__,___)=>const Text('Screenshot could not be displayed.'))),
+        actions:[TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Close'))]));
+    }catch(_){if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Screenshot unavailable.')));}
   }
 
   String _date(dynamic n) {
@@ -700,6 +727,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 SelectableText(c['message']?.toString() ?? ''),
+                if(c['hasScreenshot']==true) TextButton.icon(onPressed:()=>_showTicketScreenshot(c),icon:const Icon(Icons.image_outlined),label:const Text('View screenshot')),
                 if ((c['developerNote']?.toString() ?? '').isNotEmpty &&
                     c['supportHistoryVersion'] != 1)
                   SelectableText('Developer: ${c['developerNote']}'),
@@ -776,6 +804,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                   });
                   if (ctx.mounted) Navigator.pop(ctx);
                   _load(silent: true);
+                  if(mounted) await _loadTickets();
                 } catch (e) {
                   if (ctx.mounted)
                     ScaffoldMessenger.of(
@@ -1310,9 +1339,12 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                 child: Text((school['name'] ?? school['id']).toString()),
               ),
           ],
-          onChanged: (value) => setState(() => _complaintSchool = value ?? ''),
+          onChanged: (value) {setState((){_complaintSchool=value??'';_ticketGeneration++;_ticketBusy=false;_ticketRows.clear();_ticketCursor=null;});if(_complaintSchool.isNotEmpty)unawaited(_loadTickets());},
         ),
-        if (_visibleComplaints.isEmpty)
+        if (_ticketBusy) const LinearProgressIndicator(),
+        if (_ticketError != null) Text(_ticketError!),
+        if (_complaintSchool.isNotEmpty) TextButton.icon(onPressed:_ticketBusy?null:()=>_loadTickets(),icon:const Icon(Icons.refresh),label:const Text('Refresh tickets')),
+        if (_visibleComplaints.isEmpty && !_ticketBusy)
           const Text(
             'No complaints received yet.',
             style: TextStyle(color: const Color(0xFF647899)),
@@ -1341,6 +1373,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
             onTap: () => _complaint(c),
           ),
         ),
+        if(_ticketCursor!=null) TextButton(onPressed:_ticketBusy?null:()=>_loadTickets(more:true),child:const Text('Load more tickets')),
       ],
     ),
   );

@@ -1,5 +1,6 @@
 'use strict';
 const {createHash, randomUUID} = require('node:crypto');
+const {createManagedSupport,SUPPORT_ACTIONS}=require('./managed-support');
 const schoolPattern = /^vs-[a-f0-9]{32}$/;
 const uidFor = sub => 'g_' + createHash('sha256').update(sub).digest('hex');
 function deny(status, message) { const e = new Error(message); e.status = status; e.publicMessage = true; throw e; }
@@ -35,7 +36,7 @@ function createSchoolCloud({auth, db, projectId, clientIds, fetchImpl = fetch, v
     if (req.method !== 'POST') deny(405, 'Use POST');
     const b = req.body;
     if (!b || typeof b !== 'object' || Array.isArray(b) || JSON.stringify(b).length > 262144) deny(400, 'Invalid request');
-    if (b.action !== 'migration/import' && JSON.stringify(b).length > 8192) deny(400,'Request is too large');
+    if (b.action !== 'migration/import' && !['managed/support/createWithScreenshot','managed/support/readReceipts'].includes(b.action) && JSON.stringify(b).length > 8192) deny(400,'Request is too large');
     if (b.action === 'onboard') {
       if (Object.keys(b).some(k => !['action','googleAccessToken','schoolName','expectedSchoolId'].includes(k))) deny(400, 'Unknown onboarding field');
       const google = await verifyGoogle(b.googleAccessToken, clientIds, fetchImpl);
@@ -66,6 +67,7 @@ function createSchoolCloud({auth, db, projectId, clientIds, fetchImpl = fetch, v
     const token = String(req.headers.authorization || '').match(/^Bearer (.+)$/)?.[1];
     if (!token) deny(401, 'School login required');
     const member = await authorizeSchool(auth, db, token, b.schoolId);
+    if(SUPPORT_ACTIONS.includes(b.action))return createManagedSupport({db,now:Date.now,fail:deny})(b.action,b,member);
     if (b.action === 'setup/diagnostic') {
       if(Object.keys(b).some(k=>!['action','schoolId','stage','httpStatus','reason'].includes(k)) ||
           !['firebase_login','firebase_refresh','firestore_verify','drive_list','drive_create','drive_read','drive_upload'].includes(b.stage) ||

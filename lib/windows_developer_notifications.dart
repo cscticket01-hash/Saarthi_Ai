@@ -3,6 +3,7 @@ import 'notice_time.dart';
 import 'windows_support_history.dart';
 import 'dart:async';
 import 'dart:convert';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'platform/platform_config.dart';
@@ -21,14 +22,52 @@ class DeveloperInbox extends ChangeNotifier {
   List<Map<String, dynamic>> messages = [];
   List<Map<String,dynamic>>? _tickets;
   List<Map<String,dynamic>>? get supportTickets => current ? _tickets : null;
-  Set<String> _read = {};
+  final Map<String,String> _read = {};
+  final Set<String> _pendingRead = {};
+  Map<String,Map<String,dynamic>> _complaintPages = {};
+  DateTime? _lastSupportPoll;
   String? _profile, _school, _uid;
   bool busy = false, _disposed = false, _loaded = false;
   String? error;
   int get unread =>
       !current ? 0 : messages.where((m) => !isRead(m) && !complaintExpired(m)).length;
   bool get hasMore => _cursors.values.any((v) => v != null);
-  bool isRead(Map m) => _read.contains(m['key']);
+  static String receiptRevision(Map m) => sha256.convert(utf8.encode(jsonEncode([
+    m['key'],m['title'],m['message'],m['status'],m['developerUpdatedAt'],m['createdAt'],
+  ]))).toString();
+  bool isRead(Map m) => _read[m['key']] == receiptRevision(m);
+
+  Future<void> _syncReadReceipts() async {
+    if(readPage!=null || readComplaints!=null || !current || _disposed) return;
+    final support=SchoolSupportClient();
+    final rows=messages.where((m)=>!complaintExpired(m)).toList();
+    // Each exchange is bounded; recent alerts first, with pending older reads included.
+    final candidates=<String,Map<String,dynamic>>{};
+    for(final m in rows.where((m)=>_pendingRead.contains(receiptRevision(m)))) {
+      candidates[receiptRevision(m)]=m;
+    }
+    for(final m in rows.take(100)) {candidates[receiptRevision(m)]=m;}
+    final keys=candidates.keys.toList();
+    for(var start=0;start<keys.length;start+=100){
+      if(!current||_disposed)return;
+      final chunk=keys.skip(start).take(100).toList();
+      final marked=chunk.where(_pendingRead.contains).toList();
+      final result=await support.call('managed/support/readReceipts',{'keys':chunk,'marked':marked});
+      if(!current||_disposed)return;
+      final returned=result['read'];
+      if(returned is! List || returned.any((r)=>r is! String||!chunk.contains(r)))throw StateError('Invalid read receipt response.');
+      for(final key in returned.cast<String>()){
+        final row=candidates[key]!;
+        if(!messages.any((m)=>m['key']==row['key']&&receiptRevision(m)==key))continue;
+        await _db.collection('_windows_developer_inbox_read').doc(row['key'] as String).set({
+          'readAt':DateTime.now().millisecondsSinceEpoch,'revision':key,'pending':false,
+        });
+        if(!current||_disposed)return;
+        _read[row['key'] as String]=key;
+        _pendingRead.remove(key);
+      }
+    }
+  }
   static String kind(Map row) => row['kind'] == 'support' ? 'support' :
       row['complaintId'] != null ? 'student' : 'announcement';
   int unreadFor(String type) => !current ? 0 : messages.where((m) =>
@@ -40,7 +79,13 @@ class DeveloperInbox extends ChangeNotifier {
   }
   Future<void> tick() async {
     if (_disposed || !current) return;
-    await Future.wait([refresh(), flushSupport()]);
+    final due=_lastSupportPoll==null||DateTime.now().difference(_lastSupportPoll!)>=const Duration(minutes:1);
+    if(due){
+      _lastSupportPoll=DateTime.now();
+      await Future.wait([refresh(),flushSupport()]);
+    }else{
+      await refresh(announcementsOnly:true);
+    }
   }
   bool get current =>
       _profile == _db.activeProfileId &&
@@ -64,7 +109,15 @@ class DeveloperInbox extends ChangeNotifier {
           .toList();
       final read = await _db.collection('_windows_developer_inbox_read').get();
       if (!current || _disposed) return;
-      _read = read.docs.map((d) => d.id).toSet();
+      _read.clear();
+      for(final d in read.docs){
+        final matches=messages.where((m)=>m['key']==d.id);
+        if(matches.isEmpty)continue;
+        final data=d.data(),revision=receiptRevision(matches.first);
+        if(data['revision']!=null&&data['revision']!=revision)continue;
+        _read[d.id]=revision;
+        if(data['pending']!=false)_pendingRead.add(revision);
+      }
       await _purgeExpired();
       _sort();
       _notify();
@@ -92,6 +145,7 @@ class DeveloperInbox extends ChangeNotifier {
           .doc(row['key'] as String)
           .delete();
     }
+    for(final row in stale){_read.remove(row['key']);_pendingRead.remove(receiptRevision(row));}
     messages.removeWhere(complaintExpired);
   }
 
@@ -118,7 +172,7 @@ class DeveloperInbox extends ChangeNotifier {
     if (!current ||
         saved['schoolId'] != _school ||
         saved['uid'] != _uid ||
-        saved['managed'] != true)
+        saved.isEmpty)
       throw StateError(
         'Sign in to the current school to read developer notifications.',
       );
@@ -145,7 +199,7 @@ class DeveloperInbox extends ChangeNotifier {
     return Map<String, dynamic>.from(result);
   }
 
-  Future<void> refresh({bool more = false}) async {
+  Future<void> refresh({bool more = false, bool announcementsOnly = false}) async {
     if (busy || !current || _disposed || _school == null || _school!.isEmpty)
       return;
     busy = true;
@@ -203,18 +257,29 @@ class DeveloperInbox extends ChangeNotifier {
         next[audience] = cursor as String?;
       }
       if (!current || _disposed) return;
-      if ((readPage == null || readComplaints != null) && !more) {
+      if ((readPage == null || readComplaints != null) && !more && !announcementsOnly) {
         final support = SchoolSupportClient();
         final tickets = <Map<String,dynamic>>[];
         String? cursor;
+        final nextPages=<String,Map<String,dynamic>>{};
+        final seen=<String>{};
         do {
+          final pageKey=cursor??'';
+          if(!seen.add(pageKey))throw StateError('Repeated ticket cursor.');
+          final previousPage=_complaintPages[pageKey];
           final out = readComplaints != null
               ? await readComplaints!(cursor)
               : await support.call('managed/support/list', {
                   if (cursor != null) 'cursor': cursor,
+                  if(previousPage?['revision'] is String)'ifRevision':previousPage!['revision'],
                 });
           if (!current || _disposed) return;
-          for (final raw in out['complaints'] as List) {
+          final pageRows=out['unchanged']==true
+            ? previousPage?['complaints'] : out['complaints'];
+          if(pageRows is! List)throw StateError('Invalid conditional ticket response.');
+          if(out['unchanged']==true && (out['revision']!=previousPage?['revision'] || out['cursor']!=previousPage?['cursor']))throw StateError('Ticket revision mismatch.');
+          nextPages[pageKey]={'complaints':pageRows,'revision':out['revision'],'cursor':out['cursor']};
+          for (final raw in pageRows) {
             final row = Map<String, dynamic>.from(raw as Map);
             if (row['schoolId'] != _school)
               throw StateError('Complaint school mismatch.');
@@ -252,6 +317,7 @@ class DeveloperInbox extends ChangeNotifier {
           cursor = out['cursor'] as String?;
         } while (cursor != null);
         if (!current || _disposed) return;
+        _complaintPages=nextPages;
         _tickets = tickets..sort((a,b) => complaintMillis(b['createdAt']).compareTo(complaintMillis(a['createdAt'])));
         final live = updates.map((row) => row['key']).toSet();
         for (final row
@@ -272,6 +338,8 @@ class DeveloperInbox extends ChangeNotifier {
               .doc(row['key'] as String)
               .delete();
           messages.remove(row);
+          _read.remove(row['key']);
+          _pendingRead.remove(receiptRevision(row));
         }
       }
       await _purgeExpired();
@@ -296,14 +364,13 @@ class DeveloperInbox extends ChangeNotifier {
         if (!current || _disposed) return;
         for (final m in changed) {
           final previous = existing[m['key']];
-          if (previous == null || m['complaintId'] == null) continue;
-          final changedContent = previous['message'] != m['message'] ||
-              (previous['status'] != m['status'] && (kind(m) != 'support' || m['status'] != 'open')) ||
-              (kind(m) == 'support' && previous['developerUpdatedAt'] != m['developerUpdatedAt']);
-          if (changedContent && _read.contains(m['key'])) {
+          if (previous == null) continue;
+          final changedContent=receiptRevision(previous)!=receiptRevision(m);
+          if (changedContent && _read.containsKey(m['key'])) {
             if (!current || _disposed) return;
             await _db.collection('_windows_developer_inbox_read').doc(m['key'] as String).delete();
             _read.remove(m['key']);
+            _pendingRead.remove(receiptRevision(previous));
           }
         }
       }
@@ -317,6 +384,7 @@ class DeveloperInbox extends ChangeNotifier {
       _cursors.addAll(next);
       _loaded = true;
       _sort();
+      if(!announcementsOnly) {try{await _syncReadReceipts();}catch(_){/* retain local read receipts for retry */}}
     } catch (e) {
       if (current && !_disposed)
         error = e.toString().replaceFirst('Bad state: ', '');
@@ -329,17 +397,19 @@ class DeveloperInbox extends ChangeNotifier {
   Future<void> markRead(Map<String, dynamic> message) async {
     if (!current ||
         _disposed ||
-        _read.contains(message['key']) ||
-        !messages.any((m) => m['key'] == message['key']))
+        isRead(message) ||
+        !messages.any((m) => m['key'] == message['key'] && receiptRevision(m)==receiptRevision(message)))
       return;
     try {
       await _db
           .collection('_windows_developer_inbox_read')
           .doc(message['key'] as String)
-          .set({'readAt': DateTime.now().millisecondsSinceEpoch});
+          .set({'readAt': DateTime.now().millisecondsSinceEpoch,'revision':receiptRevision(message),'pending':true});
       if (!current || _disposed) return;
-      _read.add(message['key'] as String);
+      _read[message['key'] as String]=receiptRevision(message);
+      _pendingRead.add(receiptRevision(message));
       _notify();
+      try{await _syncReadReceipts();}catch(_){/* durable local receipt retained */}
     } catch (_) {
       if (current && !_disposed) {
         error = 'Read status could not be saved. Try again.';
