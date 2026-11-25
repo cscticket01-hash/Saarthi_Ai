@@ -47,4 +47,78 @@ void main() {
     expect(find.byTooltip('Verified'), findsNothing);
     await tester.pumpWidget(const SizedBox());
   });
+
+  testWidgets('session monitor does not replay unchanged status and retains off-page recovery', (tester) async {
+    var repair = SyncHealth.healthy;
+    var network = InternetHealth.connected;
+    final monitor = WindowsSyncHealthMonitor(
+      internetProbe: () async => network,
+      schoolServer: () async => SyncHealth.healthy,
+      selfRepair: () async => repair,
+      mobileServer: () async => SyncHealth.healthy,
+      isCurrentSchool: () => true,
+    );
+    Widget page() => MaterialApp(home: Scaffold(body: WindowsSyncSystemHealth(
+      monitor: monitor,
+      schoolServer: () async => SyncHealth.healthy,
+      selfRepair: () async => repair,
+      mobileServer: () async => SyncHealth.healthy,
+      isCurrentSchool: () => true,
+    )));
+    final pulses = find.byWidgetPredicate((w) => w is TweenAnimationBuilder<double>);
+    await tester.pumpWidget(page());
+    await tester.pump();
+    expect(pulses, findsNWidgets(4));
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpWidget(page());
+    await tester.pump();
+    expect(pulses, findsNothing);
+    await tester.pump(const Duration(seconds: 5));
+    expect(pulses, findsNothing);
+
+    repair = SyncHealth.failed;
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pump();
+    expect(find.byTooltip('Failed'), findsOneWidget);
+    expect(pulses, findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    repair = SyncHealth.healthy;
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pump();
+    await tester.pumpWidget(page());
+    await tester.pump();
+    expect(find.byTooltip('Verified'), findsNWidgets(4));
+    expect(pulses, findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpWidget(page());
+    await tester.pump();
+    expect(pulses, findsNothing);
+
+    // Failure and recovery both occur while no health widget is mounted.
+    await tester.pumpWidget(const SizedBox());
+    repair = SyncHealth.failed;
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pump();
+    repair = SyncHealth.healthy;
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pump();
+    await tester.pumpWidget(page());
+    await tester.pump();
+    expect(find.byTooltip('Verified'), findsNWidgets(4));
+    expect(pulses, findsOneWidget);
+
+    network = InternetHealth.offline;
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pump();
+    expect(find.text('System Offline'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpWidget(page());
+    await tester.pump();
+    expect(find.text('System Offline'), findsOneWidget);
+    expect(find.byKey(const ValueKey('offline-0')), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    monitor.dispose();
+  });
 }

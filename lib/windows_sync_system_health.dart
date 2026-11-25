@@ -94,6 +94,190 @@ class SyncInternetProbe {
   }
 }
 
+/// A school-scoped, app-session monitor. It retains status and undelivered
+/// transitions when the control center route is removed, not its widget state.
+class WindowsSyncHealthMonitor extends ChangeNotifier {
+  WindowsSyncHealthMonitor({
+    required this.schoolServer,
+    required this.selfRepair,
+    required this.mobileServer,
+    required this.isCurrentSchool,
+    this.internetProbe,
+  }) {
+    unawaited(_refresh());
+    _poll = Timer.periodic(const Duration(seconds: 5), (_) => unawaited(_refresh()));
+  }
+
+  final SyncHealthProbe schoolServer, selfRepair, mobileServer;
+  final bool Function() isCurrentSchool;
+  final Future<InternetHealth> Function()? internetProbe;
+  final _states = List<SyncHealth>.filled(4, SyncHealth.unknown);
+  final _observed = List<bool>.filled(4, false);
+  final _pending = <int, int>{};
+  final _internet = SyncInternetProbe();
+  Timer? _poll;
+  bool _closed = false, _retired = false, _networkBusy = false, _serversBusy = false, _repairBusy = false;
+  int _generation = 0, _revision = 0;
+  InternetHealth? _network;
+  DateTime? _lastServerCheck;
+
+  bool get offline => _network == InternetHealth.offline;
+  bool get _current => !_closed && !_retired && isCurrentSchool();
+  SyncHealth status(int index) => _states[index];
+
+  // Latest transition per row; a recovered service never renders a stale red
+  // status. Consumed events are not replayed when the route is recreated.
+  Map<int, int> takeTransitions() {
+    final result = Map<int, int>.of(_pending);
+    _pending.clear();
+    return result;
+  }
+
+  void _record(int index, SyncHealth result) {
+    if (result == SyncHealth.checking) return;
+    if (_observed[index] && _states[index] == result) return;
+    _observed[index] = true;
+    _states[index] = result;
+    _pending[index] = ++_revision;
+  }
+
+  void _stop() {
+    _retired = true;
+    _generation++;
+    _poll?.cancel();
+    _internet.dispose();
+  }
+
+  @override
+  void dispose() {
+    _closed = true;
+    _stop();
+    super.dispose();
+  }
+
+  Future<void> _refresh() async {
+    if (!_current) {
+      _stop();
+      return;
+    }
+    if (_networkBusy) return;
+    _networkBusy = true;
+    try {
+      InternetHealth internet;
+      try { internet = await (internetProbe ?? _internet.check)(); }
+      catch (_) { internet = InternetHealth.unknown; }
+      if (!_current) return;
+      if (_network != internet) {
+        _generation++;
+        _lastServerCheck = null;
+      }
+      _network = internet;
+      _record(0, switch (internet) {
+        InternetHealth.connected => SyncHealth.healthy,
+        InternetHealth.offline => SyncHealth.failed,
+        InternetHealth.unknown => SyncHealth.unknown,
+      });
+      if (internet != InternetHealth.connected) {
+        for (var i = 1; i < _states.length; i++) {
+          // No claim that a remote service failed just because internet is down.
+          _record(i, SyncHealth.unknown);
+        }
+      }
+      notifyListeners();
+      if (internet != InternetHealth.connected) return;
+      final generation = _generation;
+      if (!_repairBusy) {
+        _repairBusy = true;
+        unawaited(_check(2, selfRepair, generation)
+            .whenComplete(() => _repairBusy = false));
+      }
+      final now = DateTime.now();
+      final last = _lastServerCheck;
+      if (!_serversBusy && (last == null || now.difference(last) >= const Duration(minutes: 1))) {
+        _serversBusy = true;
+        _lastServerCheck = now;
+        // Checking is not a new health result. Keep the last verified state
+        // during routine polling, rather than manufacturing a transition.
+        for (final i in [1, 3]) {
+          if (!_observed[i]) _states[i] = SyncHealth.checking;
+        }
+        notifyListeners();
+        unawaited(Future.wait<void>([
+          _check(1, schoolServer, generation),
+          _check(3, mobileServer, generation),
+        ]).whenComplete(() => _serversBusy = false).then<void>((_) {}));
+      }
+    } finally {
+      _networkBusy = false;
+    }
+  }
+
+  Future<void> _check(int index, SyncHealthProbe probe, int generation) async {
+    SyncHealth result;
+    try { result = await probe(); } catch (_) { result = SyncHealth.unknown; }
+    if (!_current || generation != _generation || _network != InternetHealth.connected) return;
+    if (!_observed[index] || _states[index] != result) {
+      _record(index, result);
+      notifyListeners();
+    }
+  }
+}
+
+/// Owns at most one active-school monitor, independently of Navigator routes.
+/// A standalone preview/test without this scope retains widget-local ownership.
+class WindowsSyncHealthSessionScope extends StatefulWidget {
+  const WindowsSyncHealthSessionScope({super.key, required this.child});
+  final Widget child;
+
+  static WindowsSyncHealthMonitor? monitorFor(
+    BuildContext context, {
+    required String identity,
+    required SyncHealthProbe schoolServer,
+    required SyncHealthProbe selfRepair,
+    required SyncHealthProbe mobileServer,
+    required bool Function() isCurrentSchool,
+  }) {
+    final owner = context.dependOnInheritedWidgetOfExactType<_HealthSessionOwner>()?.owner;
+    if (owner == null) return null;
+    return owner.monitorFor(identity, schoolServer, selfRepair, mobileServer, isCurrentSchool);
+  }
+
+  @override
+  State<WindowsSyncHealthSessionScope> createState() => _WindowsSyncHealthSessionScopeState();
+}
+
+class _WindowsSyncHealthSessionScopeState extends State<WindowsSyncHealthSessionScope> {
+  WindowsSyncHealthMonitor? _monitor;
+  String? _identity;
+
+  WindowsSyncHealthMonitor monitorFor(String identity, SyncHealthProbe schoolServer,
+      SyncHealthProbe selfRepair, SyncHealthProbe mobileServer, bool Function() isCurrentSchool) {
+    if (_identity != identity || _monitor == null || !_monitor!._current) {
+      _monitor?.dispose();
+      _identity = identity;
+      _monitor = WindowsSyncHealthMonitor(schoolServer: schoolServer, selfRepair: selfRepair,
+          mobileServer: mobileServer, isCurrentSchool: isCurrentSchool);
+    }
+    return _monitor!;
+  }
+
+  @override
+  void dispose() {
+    _monitor?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => _HealthSessionOwner(owner: this, child: widget.child);
+}
+
+class _HealthSessionOwner extends InheritedWidget {
+  const _HealthSessionOwner({required this.owner, required super.child});
+  final _WindowsSyncHealthSessionScopeState owner;
+  @override
+  bool updateShouldNotify(_HealthSessionOwner oldWidget) => owner != oldWidget.owner;
+}
+
 class WindowsSyncSystemHealth extends StatefulWidget {
   const WindowsSyncSystemHealth({
     super.key,
@@ -102,10 +286,12 @@ class WindowsSyncSystemHealth extends StatefulWidget {
     required this.mobileServer,
     required this.isCurrentSchool,
     this.internetProbe,
+    this.monitor,
   });
   final SyncHealthProbe schoolServer, selfRepair, mobileServer;
   final bool Function() isCurrentSchool;
   final Future<InternetHealth> Function()? internetProbe;
+  final WindowsSyncHealthMonitor? monitor;
 
   @override
   State<WindowsSyncSystemHealth> createState() => _WindowsSyncSystemHealthState();
@@ -118,86 +304,60 @@ class _WindowsSyncSystemHealthState extends State<WindowsSyncSystemHealth> {
     'Self-Repair Engine',
     'Student Android App Server',
   ];
-  final _states = List<SyncHealth>.filled(4, SyncHealth.unknown);
-  final _internet = SyncInternetProbe();
-  Timer? _poll;
-  bool _networkBusy = false, _serversBusy = false;
-  int _generation = 0;
-  InternetHealth? _network;
-  DateTime? _lastServerCheck;
+  late final WindowsSyncHealthMonitor _monitor;
+  late final bool _ownsMonitor;
+  final _pulses = List<int>.filled(4, 0);
+  bool _visible = false;
 
   @override
   void initState() {
     super.initState();
-    unawaited(_refresh());
-    _poll = Timer.periodic(const Duration(seconds: 5), (_) => unawaited(_refresh()));
+    _ownsMonitor = widget.monitor == null;
+    _monitor = widget.monitor ?? WindowsSyncHealthMonitor(
+      schoolServer: widget.schoolServer, selfRepair: widget.selfRepair,
+      mobileServer: widget.mobileServer, isCurrentSchool: widget.isCurrentSchool,
+      internetProbe: widget.internetProbe,
+    );
+    _monitor.addListener(_changed);
   }
-  @override
-  void dispose() {
-    _generation++;
-    _poll?.cancel();
-    _internet.dispose();
-    super.dispose();
-  }
-  bool get _current => mounted && widget.isCurrentSchool();
 
-  Future<void> _refresh() async {
-    if (!_current || _networkBusy) return;
-    _networkBusy = true;
-    try {
-      InternetHealth internet;
-      try { internet = await (widget.internetProbe ?? _internet.check)(); }
-      catch (_) { internet = InternetHealth.unknown; }
-      if (!_current) return;
-      if (_network != internet) {
-        _generation++;
-        _lastServerCheck = null;
-      }
-      setState(() {
-        _network = internet;
-        _states[0] = switch (internet) {
-          InternetHealth.connected => SyncHealth.healthy,
-          InternetHealth.offline => SyncHealth.failed,
-          InternetHealth.unknown => SyncHealth.unknown,
-        };
-        if (internet != InternetHealth.connected) {
-          for (var i = 1; i < _states.length; i++) {
-            _states[i] = SyncHealth.unknown;
-          }
-        }
-      });
-      if (internet != InternetHealth.connected) return;
-      final generation = _generation;
-      unawaited(_check(2, widget.selfRepair, generation));
-      final now = DateTime.now();
-      final last = _lastServerCheck;
-      if (!_serversBusy && (last == null || now.difference(last) >= const Duration(minutes: 1))) {
-        _serversBusy = true;
-        _lastServerCheck = now;
-        setState(() {
-          _states[1] = SyncHealth.checking;
-          _states[3] = SyncHealth.checking;
-        });
-        unawaited(Future.wait<void>([
-          _check(1, widget.schoolServer, generation),
-          _check(3, widget.mobileServer, generation),
-        ]).whenComplete(() => _serversBusy = false).then<void>((_) {}));
-      }
-    } finally {
-      _networkBusy = false;
+  void _consume() {
+    final events = _monitor.takeTransitions();
+    for (final event in events.entries) {
+      _pulses[event.key] = event.value;
     }
   }
 
-  Future<void> _check(int index, SyncHealthProbe probe, int generation) async {
-    SyncHealth result;
-    try { result = await probe(); } catch (_) { result = SyncHealth.unknown; }
-    if (!_current || generation != _generation || _network != InternetHealth.connected) return;
-    if (_states[index] != result) setState(() => _states[index] = result);
+  void _changed() {
+    if (!mounted || !_visible) return;
+    setState(_consume);
   }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final visible = TickerMode.of(context);
+    if (visible && !_visible) {
+      // No replay of a pulse consumed on a previous visit/visibility period.
+      _pulses.fillRange(0, _pulses.length, 0);
+      _consume();
+    }
+    _visible = visible;
+  }
+
+  @override
+  void dispose() {
+    _monitor.removeListener(_changed);
+    if (_ownsMonitor) _monitor.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (_network == InternetHealth.offline) {
-      return const SizedBox(height: 120, child: Center(child: _OfflineRadar()));
+    if (_monitor.offline) {
+      return SizedBox(height: 120, child: Center(child: _OfflineRadar(
+        key: ValueKey('offline-${_pulses[0]}'), animate: _pulses[0] != 0,
+      )));
     }
     return Column(mainAxisSize: MainAxisSize.min, children: [
       for (var i = 0; i < _names.length; i++)
@@ -205,15 +365,16 @@ class _WindowsSyncSystemHealthState extends State<WindowsSyncSystemHealth> {
           child: Row(children: [
             Expanded(child: Text(_names[i], style: const TextStyle(fontWeight: FontWeight.bold))),
             const SizedBox(width: 8),
-            _HealthIndicator(state: _states[i]),
+            _HealthIndicator(state: _monitor.status(i), revision: _pulses[i]),
           ])),
     ]);
   }
 }
 
 class _HealthIndicator extends StatelessWidget {
-  const _HealthIndicator({required this.state});
+  const _HealthIndicator({required this.state, required this.revision});
   final SyncHealth state;
+  final int revision;
   @override
   Widget build(BuildContext context) {
     final reduceMotion = MediaQuery.of(context).disableAnimations;
@@ -226,9 +387,9 @@ class _HealthIndicator extends StatelessWidget {
     final color = WindowsAppearance.foreground(accent);
     final indicator = state == SyncHealth.checking && !reduceMotion
         ? SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: color))
-        : !reduceMotion && (state == SyncHealth.healthy || state == SyncHealth.failed)
+        : !reduceMotion && revision != 0 && state != SyncHealth.checking
             ? TweenAnimationBuilder<double>(
-                key: ValueKey('result-$state'),
+                key: ValueKey('result-$state-$revision'),
                 tween: Tween(begin: 0.0, end: 1.0),
                 duration: Duration(milliseconds: state == SyncHealth.failed ? 1200 : 650),
                 builder: (context, progress, child) {
@@ -244,19 +405,14 @@ class _HealthIndicator extends StatelessWidget {
     return Tooltip(message: label,
       child: Semantics(label: label,
         child: SizedBox(width: 24, height: 24,
-          child: AnimatedSwitcher(
-            duration: reduceMotion ? Duration.zero : const Duration(milliseconds: 300),
-            transitionBuilder: (child, animation) => FadeTransition(
-              opacity: animation,
-              child: ScaleTransition(scale: Tween<double>(begin: .65, end: 1).animate(CurvedAnimation(parent: animation, curve: Curves.easeOut)), child: child)),
-            child: KeyedSubtree(key: ValueKey(state), child: Center(child: indicator)),
-          ))));
+          child: Center(child: indicator))));
   }
 }
 
 // Option 03: decorative radar, not a simulated network test or progress.
 class _OfflineRadar extends StatefulWidget {
-  const _OfflineRadar();
+  const _OfflineRadar({super.key, required this.animate});
+  final bool animate;
   @override
   State<_OfflineRadar> createState() => _OfflineRadarState();
 }
@@ -267,8 +423,8 @@ class _OfflineRadarState extends State<_OfflineRadar> with SingleTickerProviderS
     super.didChangeDependencies();
     if (MediaQuery.of(context).disableAnimations || !TickerMode.of(context)) {
       _rotation.stop();
-    } else if (!_rotation.isAnimating) {
-      _rotation.repeat();
+    } else if (widget.animate && !_rotation.isAnimating && !_rotation.isCompleted) {
+      _rotation.forward();
     }
   }
   @override
