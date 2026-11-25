@@ -1,5 +1,6 @@
 import 'windows_person_fields.dart';
 import 'notice_time.dart';
+import 'windows_notice_action_menu.dart';
 import 'windows_payment_confirmation.dart';
 import 'windows_person_avatar.dart';
 import 'india_address_fields.dart';
@@ -6794,14 +6795,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                                   ],
                                 ),
                               ),
-                              PopupMenuButton<String>(
-                                tooltip: WindowsUiLanguage.translate('Notice Actions'),
-                                color: WindowsAppearance.foreground(const Color(0xFF1B2A32)),
-                                icon:  Icon(
-                                  Icons.more_vert_rounded,
-                                  color: WindowsAppearance.foreground(Colors.white38),
-                                  size: 20,
-                                ),
+                              WindowsNoticeActionMenu(
                                 onSelected: (value) {
                                   if (value == 'preview') {
                                     _showNoticeDetailDialog(data);
@@ -6811,38 +6805,6 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                                     _deleteNotice(doc.id);
                                   }
                                 },
-                                itemBuilder: (_) =>  [
-                                  PopupMenuItem(
-                                    value: 'preview',
-                                    child: Row(
-                                      children: [
-                                        Icon(Icons.visibility_outlined, color: WindowsAppearance.foreground(Color(0xFF00A884)), size: 18),
-                                        SizedBox(width: 9),
-                                        Text('Preview', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white))),
-                                      ],
-                                    ),
-                                  ),
-                                  PopupMenuItem(
-                                    value: 'edit',
-                                    child: Row(
-                                      children: [
-                                        Icon(Icons.edit_outlined, color: WindowsAppearance.foreground(Colors.blueAccent), size: 18),
-                                        SizedBox(width: 9),
-                                        Text('Edit', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white))),
-                                      ],
-                                    ),
-                                  ),
-                                  PopupMenuItem(
-                                    value: 'delete',
-                                    child: Row(
-                                      children: [
-                                        Icon(Icons.delete_outline_rounded, color: WindowsAppearance.foreground(Colors.redAccent), size: 18),
-                                        SizedBox(width: 9),
-                                        Text('Delete', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.redAccent))),
-                                      ],
-                                    ),
-                                  ),
-                                ],
                               ),
                             ],
                           ),
