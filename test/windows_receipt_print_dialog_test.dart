@@ -71,7 +71,7 @@ void main() {
     addTearDown(()=>PrintingPlatform.instance=native);
     await tester.pumpWidget(MaterialApp(home:Scaffold(body:WindowsReceiptPrintDialog(
       receipt:Future.value(Uint8List(1)),title:'Receipt',subtitle:'School',isCurrent:()=>true,
-      printers:()async=>[printer]))));
+      printers:()async=>[printer],composeLayout:(source,format)async=>source))));
     await tester.pump();await tester.pump();
     await tester.ensureVisible(find.text('A4 (210 × 297 mm)'));
     await tester.tap(find.text('A4 (210 × 297 mm)'));
@@ -135,7 +135,7 @@ void main() {
           expect(bytes.take(5).toList(),[37,80,68,70,45]);
           return true;
         },
-        previewBuilder:(_)=>const SizedBox()))));
+        previewBuilder:(_)=>const SizedBox(),composeLayout:(source,format)async=>source))));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Add printer'));
     await tester.tap(find.text('Add printer'));
@@ -148,7 +148,7 @@ void main() {
       reason:'Temporary offline status must not hide installed printers');
     await tester.tap(find.text('HP offline USB').last);
     await tester.pumpAndSettle();
-    // Select a Legal stock size without modifying the original PDF bytes.
+    // Select Legal with the synthetic layout hook; original bytes stay immutable.
     await tester.ensureVisible(find.text('A4 (210 × 297 mm)'));
     await tester.tap(find.text('A4 (210 × 297 mm)'));
     await tester.pumpAndSettle();

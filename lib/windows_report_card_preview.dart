@@ -99,7 +99,7 @@ class _WindowsReportCardPreviewState extends State<WindowsReportCardPreview> {
   }
 
   Future<void> _print() => _perform(() async {
-    // Flutter paints a PNG of the native preview; no PDF exists on this path.
+    // Flutter paints a PNG; the shared dialog builds temporary print-only bytes.
     await WidgetsBinding.instance.endOfFrame;
     _guardSchool();
     final boundary = _paperKey.currentContext?.findRenderObject();
@@ -113,9 +113,10 @@ class _WindowsReportCardPreviewState extends State<WindowsReportCardPreview> {
     image.dispose();
     if (data == null) throw StateError('Report image could not be rendered.');
     _guardSchool();
-    await WindowsBrowserPrint.openImages([
+    if(!mounted)return;
+    await WindowsBrowserPrint.openImages(context,[
       (png: data.buffer.asUint8List(), width: width, height: height),
-    ]);
+    ],title:'Report card',isCurrent:()=>_sameSchool);
   });
 
   Future<void> _download() => _perform(() async {

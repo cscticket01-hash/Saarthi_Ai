@@ -178,6 +178,22 @@ void main() {
       inbox.dispose();
     },
   );
+  test('resolved ticket from another PC is not unread; a new developer reply can reopen it', () async {
+    var resolved=false,revision=1,sounds=0;
+    final now=DateTime.now().millisecondsSinceEpoch;
+    final inbox=DeveloperInbox(readPage:(a,c)async=>{'documents':[]},
+      playNotificationSound:()async{sounds++;},
+      readComplaints:(_)async=>{'complaints':[
+        {'id':'school-ticket','schoolId':school,'message':'App issue','status':resolved?'resolved':'in_progress',
+          'createdAt':now,'developerNote':'Reply $revision','developerUpdatedAt':now+revision},
+      ],'cursor':null});
+    try{
+      await inbox.initialize();expect(inbox.unread,1);
+      resolved=true;await inbox.refresh();expect(inbox.unread,0);expect(sounds,0);
+      expect(inbox.supportTickets!.single['status'],'resolved');
+      resolved=false;revision++;await inbox.refresh();expect(inbox.unread,1);expect(sounds,1);
+    }finally{inbox.dispose();}
+  });
   test('developer ticket replies and student complaint updates become unread separately', () async {
     var revision = 1;
     final inbox = DeveloperInbox(readPage: (a,c) async => {'documents': []},

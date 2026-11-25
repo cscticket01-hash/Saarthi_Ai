@@ -1,4 +1,7 @@
 import 'dart:io';
+import 'dart:async';
+import 'windows_print_layout.dart';
+import 'windows_printer_media.dart';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:pdf/pdf.dart';
@@ -14,7 +17,7 @@ class WindowsReceiptPrintDialog extends StatefulWidget {
   const WindowsReceiptPrintDialog({super.key, required this.receipt,
     required this.title, required this.subtitle, required this.isCurrent,
     this.printers, this.printJob, this.previewBuilder,
-    this.openPrinterSettings, this.systemPrintJob});
+    this.openPrinterSettings, this.systemPrintJob, this.media, this.composeLayout});
   final Future<Uint8List> receipt;
   final String title, subtitle;
   final bool Function() isCurrent;
@@ -23,6 +26,8 @@ class WindowsReceiptPrintDialog extends StatefulWidget {
   final Future<void> Function()? openPrinterSettings;
   final Future<bool> Function(Uint8List,PdfPageFormat)? systemPrintJob;
   final Widget Function(Uint8List)? previewBuilder;
+  final Future<List<WindowsPrinterPaper>> Function(Printer)? media;
+  final Future<Uint8List> Function(Uint8List,PdfPageFormat)? composeLayout;
   @override
   State<WindowsReceiptPrintDialog> createState() => _WindowsReceiptPrintDialogState();
 }
@@ -35,6 +40,102 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
   bool loadingPrinters = true, printing = false;
   String paper = 'A4';
   bool landscape = false, paperChosen = false;
+  static const pdfDestination = 'saarthi:save-pdf';
+  List<WindowsPrinterPaper> driverMedia = [];
+  bool loadingMedia = false;
+  String? mediaError;
+  int mediaGeneration = 0, layoutGeneration = 0;
+  PdfPageFormat? originalFormat;
+  Future<Uint8List>? layout;
+  final rangeController = TextEditingController();
+  final scaleController = TextEditingController(text:'100');
+  final marginController = TextEditingController(text:'10');
+  Timer? layoutDelay;
+  bool customPages = false;
+  int perSheet = 1;
+  String margins = 'None', scaling = 'Fit to page';
+  bool expandedSettings = false;
+  bool get locked => printing || savingPdf || openingSystemDialog;
+  WindowsPrinterPaper? chosenStock;
+  List<WindowsPrinterPaper> get stock {
+    final base = selected == null || selected == pdfDestination || widget.printers != null && widget.media == null
+      ? WindowsPrinterMedia.standard : driverMedia;
+    final items = {for(final p in base)p.name:p};
+    if(chosenStock!=null)items.putIfAbsent(paper,()=>chosenStock!);
+    for(final p in WindowsPrinterMedia.standard) {
+      if(p.name==paper) items.putIfAbsent(p.name,()=>p);
+    }
+    if(originalFormat!=null && paper=='Original') {
+      final f=originalFormat!;
+      final w=f.width<f.height?f.width:f.height, h=f.width<f.height?f.height:f.width;
+      items['Original']=WindowsPrinterPaper('Original',w/PdfPageFormat.mm,h/PdfPageFormat.mm);
+    }
+    if(!items.containsKey(paper)) items[paper]=WindowsPrinterMedia.standard.first;
+    return items.values.toList();
+  }
+  bool get driverSupportsPaper {
+    if (selected==null || selected==pdfDestination) return false;
+    if(widget.printers!=null && widget.media==null) return true;
+    final f=paperFormat(paper);
+    return !loadingMedia && driverMedia.any((p)=>
+      (p.format.width-f.width).abs()<3 && (p.format.height-f.height).abs()<3);
+  }
+
+  Future<void> loadMedia() async {
+    final generation=++mediaGeneration;
+    final matches=printers.where((p)=>p.url==selected).toList();
+    if(matches.isEmpty){
+      if(mounted)setState((){driverMedia=[];loadingMedia=false;mediaError=null;});
+      return;
+    }
+    setState((){loadingMedia=true;driverMedia=[];mediaError=null;});
+    try {
+      final rows=await (widget.media?.call(matches.first) ??
+        (widget.printers!=null?Future.value(WindowsPrinterMedia.standard):WindowsPrinterMedia.installed(matches.first.name)));
+      if(mounted && generation==mediaGeneration && widget.isCurrent())setState(()=>driverMedia=rows);
+    }catch(_){
+      if(mounted && generation==mediaGeneration)setState(()=>mediaError='Driver paper sizes unavailable. Refresh or use Windows system print dialog.');
+    }finally{
+      if(mounted && generation==mediaGeneration)setState(()=>loadingMedia=false);
+    }
+  }
+
+  void changeLayout(Uint8List? source, VoidCallback update, {bool debounce=false}) {
+    if(locked || source==null)return;
+    layoutDelay?.cancel();
+    final generation=++layoutGeneration;
+    final pending=Completer<Uint8List>();
+    setState((){
+      update();
+      paperChosen=true;
+      pageFormatReady=true;
+      message='';
+      layout=pending.future;
+    });
+    void start() async {
+      if(!mounted || generation!=layoutGeneration)return;
+      try {
+        final format=selectedFormat;
+        final range=customPages?rangeController.text.trim():'';
+        if(customPages && range.isEmpty)throw const FormatException('Enter a page range.');
+        final margin=switch(margins){'None'=>0.0,'Minimum'=>3.0,'Default'=>10.0,
+          _=>double.tryParse(marginController.text.trim())??-1};
+        if(!margin.isFinite||margin<0)throw const FormatException('Enter a valid margin.');
+        final double? scale=switch(scaling){'Fit to page'=>null,'Actual size'=>100.0,
+          _=>double.tryParse(scaleController.text.trim())??-1};
+        if(scale!=null&&(!scale.isFinite||scale<10||scale>200))throw const FormatException('Enter scale from 10 to 200 percent.');
+        final bytes=await (widget.composeLayout?.call(source,format) ??
+          WindowsPrintLayout.compose(source,format,range:range,perSheet:perSheet,
+            marginMm:margin,scale:scale,isCurrent:()=>mounted&&widget.isCurrent()&&generation==layoutGeneration));
+        pending.complete(bytes);
+      }catch(e,st){pending.completeError(e,st);}
+    }
+    // Attach an error listener immediately: validation may finish before the
+    // next widget build, and superseded jobs must not leak asynchronous errors.
+    unawaited(pending.future.then<void>((_) {},onError:(Object _,StackTrace __){}));
+    if(debounce){layoutDelay=Timer(const Duration(milliseconds:300),start);}
+    else{scheduleMicrotask(start);}
+  }
   late bool pageFormatReady;
   String message = '';
   String? sourcePaperLabel;
@@ -52,7 +153,7 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
     super.didUpdateWidget(oldWidget);
     if (oldWidget.receipt != widget.receipt) {
       paper = 'A4'; landscape = false; paperChosen = false;
-      sourcePaperLabel = null;
+      sourcePaperLabel = null; originalFormat=null; chosenStock=null; layout=null; layoutGeneration++; layoutDelay?.cancel();
       pageFormatReady = widget.previewBuilder != null;
     }
   }
@@ -62,20 +163,22 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
     if (format != null) {
       final width = format.width < format.height ? format.width : format.height;
       final height = format.width < format.height ? format.height : format.width;
-      for (final stock in ['A4','Legal','Letter']) {
-        final candidate = paperFormat(stock);
+      for (final stock in WindowsPrinterMedia.standard) {
+        final candidate = stock.format;
         if ((candidate.width-width).abs() <= 2 && (candidate.height-height).abs() <= 2) {
-          matched = stock; break;
+          matched = stock.name; break;
         }
       }
     }
     setState(() {
+      originalFormat=format;
+      if(format!=null && matched==null) matched='Original';
       sourcePaperLabel = matched == null ? null :
         matched! + (format!.width > format.height ? ' • Landscape' : ' • Portrait');
       if (paperChosen) return;
       pageFormatReady = matched != null;
       if (matched != null) {
-        paper = matched!;
+        paper = matched!; chosenStock=null;
         landscape = format!.width > format.height;
       } else {
         message = 'Could not identify the original paper size. Select paper size before printing.';
@@ -95,7 +198,8 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    copies.dispose();
+    layoutGeneration++; mediaGeneration++; layoutDelay?.cancel();
+    copies.dispose(); rangeController.dispose(); scaleController.dispose(); marginController.dispose();
     super.dispose();
   }
   Future<void> loadPrinters() async {
@@ -109,19 +213,23 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
         row.url:row};
       setState(() {
         printers = unique.values.toList();
-        if (!unique.containsKey(selected)) {
+        if (selected != pdfDestination && !unique.containsKey(selected)) {
           final defaults = printers.where((p) => p.isDefault);
-          selected = defaults.isNotEmpty ? defaults.first.url : printers.isEmpty ? null : printers.first.url;
+          selected = defaults.isNotEmpty ? defaults.first.url : printers.isEmpty ? pdfDestination : printers.first.url;
         }
       });
+      await loadMedia();
     } catch (e) {
-      if (mounted) setState(() => message = 'Printers unavailable. Check the printer connection, then Refresh.');
+      if (mounted) setState(() { selected=pdfDestination; message = 'Printers unavailable. Check the printer connection, then Refresh.'; });
+      // PDF export remains available without a physical driver.
     } finally {
       if (mounted) setState(() => loadingPrinters = false);
     }
   }
   Future<void> printReceipt(Uint8List bytes) async {
-    if (printing || !pageFormatReady || !widget.isCurrent()) return;
+    if (locked || !pageFormatReady || !widget.isCurrent()) return;
+    if(selected==pdfDestination){await savePdf(bytes);return;}
+    if(!driverSupportsPaper){setState(()=>message='Select paper supported by the installed printer driver.');return;}
     final count = int.tryParse(copies.text.trim());
     if (count == null || count < 1 || count > 20) {
       setState(() => message = 'Enter 1 to 20 copies.'); return;
@@ -151,11 +259,12 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
       if (mounted) setState(() => printing = false);
     }
   }
-  static PdfPageFormat paperFormat(String value)=>switch(value){
-    'Legal'=>PdfPageFormat.legal,
-    'Letter'=>PdfPageFormat.letter,
-    _=>PdfPageFormat.a4,
-  };
+  PdfPageFormat paperFormat(String value){
+    if(value=='Original'&&originalFormat!=null){final f=originalFormat!;return f.width<=f.height?f:PdfPageFormat(f.height,f.width);}
+    if(chosenStock?.name==value)return chosenStock!.format;
+    for(final p in [...driverMedia,...WindowsPrinterMedia.standard]){if(p.name==value)return p.format;}
+    return PdfPageFormat.a4;
+  }
 
   Future<void> addPrinter() async {
     if(printing || openingSystemDialog || !widget.isCurrent())return;
@@ -214,15 +323,16 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
       if (mounted) setState(() => savingPdf = false);
     }
   }
-  Widget settings(Uint8List? bytes) => SingleChildScrollView(padding: const EdgeInsets.all(20), child: Column(
+  Widget settings(Uint8List? source, Uint8List? bytes) => SingleChildScrollView(padding: const EdgeInsets.all(20), child: Column(
     crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       const Text('Print', style: TextStyle(fontSize: 23, fontWeight: FontWeight.bold)),
       const SizedBox(height: 20),
       if (loadingPrinters) const LinearProgressIndicator(),
       DropdownButtonFormField<String>(value: selected, isExpanded: true,
         decoration: const InputDecoration(labelText: 'Printer'),
-        items: printers.map((p) => DropdownMenuItem(value: p.url, child: Text(p.name, overflow: TextOverflow.ellipsis))).toList(),
-        onChanged: printing ? null : (value) => setState(() => selected = value)),
+        items: [for(final p in printers) DropdownMenuItem(value:p.url,child:Text(p.name,overflow:TextOverflow.ellipsis)),
+          const DropdownMenuItem(value:pdfDestination,child:Text('Save as PDF'))],
+        onChanged: locked ? null : (value) {setState(()=>selected=value);unawaited(loadMedia());}),
       Wrap(alignment:WrapAlignment.end,spacing:8,runSpacing:4,children:[
         TextButton.icon(
           onPressed:printing||openingSystemDialog?null:addPrinter,
@@ -234,7 +344,7 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
           label:const Text('Refresh printers')),
       ]),
       const SizedBox(height: 12),
-      TextField(controller: copies, enabled: !printing,
+      TextField(controller: copies, enabled: !locked && selected!=pdfDestination,
         keyboardType: TextInputType.number,
         decoration: const InputDecoration(labelText: 'Copies', helperText: '1–20')),
       const SizedBox(height: 16),
@@ -242,43 +352,60 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
         const Text('Detecting original paper size…'),
       DropdownButtonFormField<String>(value: paper, isExpanded: true,
         decoration: const InputDecoration(labelText: 'Paper size'),
-        items: const [DropdownMenuItem(value: 'A4', child: Text('A4 (210 × 297 mm)', overflow: TextOverflow.ellipsis)),
-          DropdownMenuItem(value: 'Letter', child: Text('Letter (216 × 279 mm)', overflow: TextOverflow.ellipsis)),
-          DropdownMenuItem(value: 'Legal', child: Text('Legal (216 × 356 mm)', overflow: TextOverflow.ellipsis))],
-        onChanged: printing ? null : (v) => setState(() {
-          paper = v ?? 'A4'; paperChosen = true; pageFormatReady = true;
-          if (message.startsWith('Could not identify')) message = '';
-        })),
-      const SizedBox(height: 12),
-      DropdownButtonFormField<bool>(value: landscape, isExpanded: true,
-        decoration: const InputDecoration(labelText: 'Orientation'),
-        items: const [DropdownMenuItem(value: false, child: Text('Portrait')),
-          DropdownMenuItem(value: true, child: Text('Landscape'))],
-        onChanged: printing || !pageFormatReady ? null : (value) => setState(() {
-          landscape = value ?? false; paperChosen = true; pageFormatReady = true;
-        })),
-      const SizedBox(height: 20),
-      const Text('Pages: All receipt pages'),
-      const SizedBox(height: 8),
-      Text(sourcePaperLabel == null ? 'Layout: Original receipt'
-        : 'Original document: '+sourcePaperLabel!),
-      const SizedBox(height: 5),
-      const Text('For full-size Legal artwork, generate a Legal-size '
-        'document. Changing printer paper does not resize an existing PDF.',
-        style:TextStyle(fontSize:11)),
+        items: stock.map((p)=>DropdownMenuItem(value:p.name,child:Text(p.label,overflow:TextOverflow.ellipsis))).toList(),
+        onChanged: locked || loadingMedia || source==null ? null : (v) {if(v!=null){final next=stock.firstWhere((p)=>p.name==v);changeLayout(source,(){paper=v;chosenStock=next;});}}),
+      if(loadingMedia)const Text('Reading installed printer paper sizes…'),
+      if(mediaError!=null)Text(mediaError!,style:const TextStyle(fontSize:11)),
+      if(selected!=null && selected!=pdfDestination && !loadingMedia && !driverSupportsPaper)
+        const Text('Current paper is not verified for this printer. Choose a supported size or use system dialog.',style:TextStyle(fontSize:11)),
+      const SizedBox(height:12),
+      DropdownButtonFormField<bool>(value:landscape,isExpanded:true,
+        decoration:const InputDecoration(labelText:'Orientation'),
+        items:const [DropdownMenuItem(value:false,child:Text('Portrait')),DropdownMenuItem(value:true,child:Text('Landscape'))],
+        onChanged:locked||!pageFormatReady||source==null?null:(v){if(v!=null)changeLayout(source,()=>landscape=v);}),
+      const SizedBox(height:12),
+      DropdownButtonFormField<bool>(value:customPages,decoration:const InputDecoration(labelText:'Pages'),
+        items:const [DropdownMenuItem(value:false,child:Text('All')),DropdownMenuItem(value:true,child:Text('Custom range'))],
+        onChanged:locked||source==null?null:(v){if(v!=null)changeLayout(source,()=>customPages=v);}),
+      if(customPages)TextField(controller:rangeController,enabled:!locked,decoration:const InputDecoration(hintText:'1,3-5',labelText:'Page range'),
+        onChanged:(_)=>changeLayout(source,(){},debounce:true)),
+      ExpansionTile(title:const Text('More settings'),initiallyExpanded:expandedSettings,
+        onExpansionChanged:(v)=>expandedSettings=v,
+        tilePadding:EdgeInsets.zero,children:[
+          DropdownButtonFormField<int>(value:perSheet,decoration:const InputDecoration(labelText:'Pages per sheet'),
+            items:[for(final n in [1,2,4,6,9,16])DropdownMenuItem(value:n,child:Text('$n'))],
+            onChanged:locked||source==null?null:(v){if(v!=null)changeLayout(source,()=>perSheet=v);}),
+          DropdownButtonFormField<String>(value:margins,decoration:const InputDecoration(labelText:'Margins'),
+            items:[for(final v in ['None','Default','Minimum','Custom'])DropdownMenuItem(value:v,child:Text(v))],
+            onChanged:locked||source==null?null:(v){if(v!=null)changeLayout(source,()=>margins=v);}),
+          if(margins=='Custom')TextField(controller:marginController,enabled:!locked,keyboardType:TextInputType.number,
+            decoration:const InputDecoration(labelText:'Margin (mm, all sides)'),onChanged:(_)=>changeLayout(source,(){},debounce:true)),
+          DropdownButtonFormField<String>(value:scaling,decoration:const InputDecoration(labelText:'Scale'),
+            items:[for(final v in ['Fit to page','Actual size','Custom'])DropdownMenuItem(value:v,child:Text(v))],
+            onChanged:locked||source==null?null:(v){if(v!=null)changeLayout(source,()=>scaling=v);}),
+          if(scaling=='Custom')TextField(controller:scaleController,enabled:!locked,keyboardType:TextInputType.number,
+            decoration:const InputDecoration(labelText:'Scale %'),onChanged:(_)=>changeLayout(source,(){},debounce:true)),
+          TextButton(onPressed:locked?null:(){setState((){
+            layoutGeneration++;layoutDelay?.cancel();layout=null;customPages=false;perSheet=1;margins='None';scaling='Fit to page';paperChosen=false;chosenStock=null;
+            paper='A4';landscape=false;
+          });if(originalFormat!=null)acceptPageFormat(originalFormat);},child:const Text('Reset to original layout')),
+          const Text('Colour, duplex, tray and driver-specific options: Windows system print dialog.',style:TextStyle(fontSize:11)),
+        ]),
+      Text(sourcePaperLabel==null?'Original document':'Original document: ${sourcePaperLabel!}'),
+      if(layout!=null)const Text('Changed layout uses a print-only 300 dpi rendering. Original file is unchanged.',style:TextStyle(fontSize:11)),
       const SizedBox(height: 20),
       if (message.isNotEmpty) Padding(padding: const EdgeInsets.only(bottom: 16), child: Text(message)),
-      FilledButton.icon(onPressed: printing || !pageFormatReady || loadingPrinters || selected == null || bytes == null || !widget.isCurrent()
+      FilledButton.icon(onPressed: locked || !pageFormatReady || loadingPrinters || selected == null || bytes == null || !widget.isCurrent() || (selected!=pdfDestination && !driverSupportsPaper)
           ? null : () => printReceipt(bytes),
-        icon: const Icon(Icons.print), label: Text(printing ? 'Sending…' : 'Print')),
+        icon: const Icon(Icons.print), label: Text(printing ? 'Sending…' : selected==pdfDestination?'Save as PDF':'Print')),
       TextButton.icon(
-        onPressed:printing||openingSystemDialog||!pageFormatReady||bytes==null||!widget.isCurrent()
+        onPressed:locked||!pageFormatReady||bytes==null||!widget.isCurrent()
           ?null:()=>showSystemPrinterDialog(bytes),
         icon:const Icon(Icons.print_outlined),
         label:Text(openingSystemDialog?'Opening Windows print dialog…'
           :'More printers / system print dialog')),
       TextButton.icon(
-        onPressed: printing || savingPdf || bytes == null || !widget.isCurrent()
+        onPressed: locked || bytes == null || !widget.isCurrent()
             ? null : () => savePdf(bytes),
         icon: const Icon(Icons.picture_as_pdf_outlined),
         label: Text(savingPdf ? 'Saving PDF…' : 'Save PDF'),
@@ -292,19 +419,25 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
       height: (size.height - 32).clamp(300.0, 900.0).toDouble(),
       child: Column(children: [
         ListTile(title: Text(widget.title), subtitle: Text(widget.subtitle),
-          trailing: IconButton(tooltip: 'Close receipt', onPressed: printing ? null : () => Navigator.pop(context), icon: const Icon(Icons.close))),
+          trailing: IconButton(tooltip: 'Close receipt', onPressed: locked ? null : () => Navigator.pop(context), icon: const Icon(Icons.close))),
         const Divider(height: 1),
         Expanded(child: FutureBuilder<Uint8List>(future: widget.receipt, builder: (context, snapshot) {
           if (!widget.isCurrent()) return const Center(child: Text('School changed. Reopen receipt history.'));
-          final preview = snapshot.hasError ? Center(child: Text('Receipt unavailable: ${snapshot.error}'))
-              : !snapshot.hasData ? const Center(child: CircularProgressIndicator())
-              : widget.previewBuilder?.call(snapshot.data!) ?? FittedDocumentPreview(bytes: snapshot.data!,
-                  onPageFormat: (format) => acceptPageFormat(format));
-          return LayoutBuilder(builder: (context, limits) => limits.maxWidth >= 760
-            ? Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                Expanded(child: preview), const VerticalDivider(width: 1), SizedBox(width: 290, child: settings(snapshot.data))])
-            : Column(children: [Expanded(child: preview), const Divider(height: 1),
-                SizedBox(height: (limits.maxHeight * .5).clamp(100.0, 320.0).toDouble(), child: settings(snapshot.data))]));
+          return FutureBuilder<Uint8List>(future:layout,builder:(context,output){
+            final changing=layout!=null;
+            final ready=!changing || output.connectionState==ConnectionState.done;
+            final printable=changing?(ready&&!output.hasError?output.data:null):snapshot.data;
+            final preview=snapshot.hasError?const Center(child:Text('Document unavailable.')):
+              output.hasError&&changing?Center(child:Text('Layout unavailable: ${output.error}')):
+              printable==null?const Center(child:CircularProgressIndicator()):
+              widget.previewBuilder?.call(printable)??FittedDocumentPreview(bytes:printable,
+                onPageFormat:changing?null:acceptPageFormat);
+            return LayoutBuilder(builder:(context,limits)=>limits.maxWidth>=760
+              ? Row(crossAxisAlignment: CrossAxisAlignment.stretch,children:[
+                Expanded(child:preview),const VerticalDivider(width:1),SizedBox(width:310,child:settings(snapshot.data,printable))])
+              : Column(children:[Expanded(child:preview),const Divider(height:1),
+                SizedBox(height:(limits.maxHeight*.5).clamp(100.0,320.0).toDouble(),child:settings(snapshot.data,printable))]));
+          });
         })),
       ])));
   }

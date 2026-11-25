@@ -178,12 +178,12 @@ class WindowsDocumentTemplates {
     if (!context.mounted) return true;
     final hasPhoto = card.images['photo']?.isNotEmpty == true;
     final compact=IdCardEngine.compactQr(qr);
-    await Navigator.of(context).push<void>(MaterialPageRoute(builder: (_) =>
+    await Navigator.of(context).push<void>(MaterialPageRoute(builder: (previewContext) =>
       NativeIdCardPreview(template:card.template,data:card.data,images:card.images,
         backgrounds:card.backgrounds,qr:compact,
         onPrint:hasPhoto ? (pages) async {
           checkSchool();
-          await WindowsBrowserPrint.openImages(pages);
+          await WindowsBrowserPrint.openImages(previewContext,pages,title:'ID card',actualSize:true,isCurrent:(){try{checkSchool();return true;}catch(_){return false;}});
         } : null,
         onDownload:hasPhoto ? () async {
           checkSchool();

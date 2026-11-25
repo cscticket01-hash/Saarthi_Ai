@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:crypto/crypto.dart';
-import 'package:printing/printing.dart';
 import 'id_card_local_cipher.dart';
 import 'id_card_manifest.dart';
 import 'id_card_engine.dart';
@@ -32,7 +31,7 @@ class WindowsIdCardDesignerEntry {
     await showDialog<bool>(context:context,builder:(c)=>AlertDialog(title:Text(title),content:Text(message),actions:[TextButton(onPressed:()=>Navigator.pop(c,false),child:const Text('Cancel')),FilledButton(onPressed:()=>Navigator.pop(c,true),child:const Text('Confirm'))])) ?? false;
   static Future<void> pdfPreview(BuildContext context, Uint8List bytes) async {
     if(!context.mounted)return;
-    await Navigator.of(context).push<void>(MaterialPageRoute(builder:(_)=>Scaffold(appBar:AppBar(title:const Text('Review exact front/back PDF')),body:PdfPreview(build:(_)=>bytes,canChangePageFormat:false,canChangeOrientation:false))));
+    await WindowsBrowserPrint.open(context,bytes,title:'Review exact front/back PDF');
   }
   static Future<IdCardDraftStorageIo> storage(String templateId, String school) async {
     if(!RegExp(r'^[a-z][a-z0-9-]{1,80}$').hasMatch(templateId))throw const FormatException('Invalid template identity');
@@ -138,12 +137,12 @@ class WindowsIdCardDesignerEntry {
       checkSchool();
       final manifest=IdCardManifest.fromJson(Map<String,dynamic>.from(draft['manifest'] as Map));
       if (!context.mounted) return;
-      await Navigator.of(context).push<void>(MaterialPageRoute(builder: (_) =>
+      await Navigator.of(context).push<void>(MaterialPageRoute(builder: (previewContext) =>
         NativeIdCardPreview(template:manifest,data:data,images:images,
           backgrounds:backgrounds,qr:qr,
           onPrint:(pages) async {
             checkSchool();
-            await WindowsBrowserPrint.openImages(pages);
+            await WindowsBrowserPrint.openImages(previewContext,pages,title:'ID card draft',actualSize:true,isCurrent:(){try{checkSchool();return true;}catch(_){return false;}});
           },
           onDownload:() async {
             checkSchool();
