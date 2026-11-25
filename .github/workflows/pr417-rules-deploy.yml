@@ -1,0 +1,46 @@
+name: PR 417 verified central Firestore rules deployment
+on:
+  push:
+    branches: [deploy/pr417-firebase-rules-20261125]
+    paths: ['.github/workflows/pr417-rules-deploy.yml']
+permissions:
+  contents: read
+concurrency:
+  group: central-firebase-rules-production
+  cancel-in-progress: false
+jobs:
+  rules-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ca63dd4ab118d1efd92cc0589c2d8c09133603e3
+          persist-credentials: false
+      - name: Match exact previously reviewed source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "ca63dd4ab118d1efd92cc0589c2d8c09133603e3"
+          test "$(git hash-object firestore.platform.rules)" = "edc78891d7ff4751b338f0588eed9db1d60868e9"
+          test "$(git hash-object firebase.json)" = "c9b93891d7cc7a5f722cbf9b23a7e85b0be70e67"
+          test "$(git hash-object .firebaserc)" = "da65a2262b8cc41aec964ddb160bda3db38388a4"
+          echo "Exact reviewed source: ca63dd4ab118d1efd92cc0589c2d8c09133603e3; PR 417 security emulator run 45461471794 passed."
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools
+      - name: Publish only reviewed central Firestore rules
+        env:
+          FIREBASE_DEPLOY_CREDENTIAL: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          test -n "$FIREBASE_DEPLOY_CREDENTIAL"
+          credential="$(mktemp "$RUNNER_TEMP/pr417-firebase.XXXXXX")"
+          trap 'rm -f "$credential"' EXIT
+          printf '%s' "$FIREBASE_DEPLOY_CREDENTIAL" > "$credential"
+          export GOOGLE_APPLICATION_CREDENTIALS="$credential"
+          firebase deploy --non-interactive --project saarthi-ai-df12b --only firestore:rules
