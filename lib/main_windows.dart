@@ -1051,6 +1051,7 @@ class _LocalAuthShell extends StatelessWidget {
   }
 }
 
+// PR #419 recovery release: compatible production broker verified live.
 class _AppLockRecoveryDialog extends StatefulWidget {
   const _AppLockRecoveryDialog();
   @override
