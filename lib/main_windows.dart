@@ -139,8 +139,8 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
             );
             // Only the published glass preset uses the atmospheric backdrop.
             // Authentication, App Lock and school routing stay unchanged.
-            return WindowsAppearance.presetId == 'midnight-glass'
-                ? LiquidGlassBackdrop(child: gated)
+            return (WindowsAppearance.presetId == 'midnight-glass' || WindowsAppearance.presetId == 'aurora-liquid-glass')
+                ? LiquidGlassBackdrop(child: gated, aurora: WindowsAppearance.presetId == 'aurora-liquid-glass')
                 : gated;
           },
           routes: {
@@ -486,6 +486,33 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
     }
   }
 
+  Future<void> _forgotPassword() async {
+    if (_unlocking) return;
+    setState(() => _unlocking = true);
+    try {
+      final saved = await CentralSchoolCloud.saved();
+      final schoolId = saved['schoolId']?.toString();
+      if (saved['managed'] != true || schoolId == null || schoolId.isEmpty) {
+        throw StateError('Online managed school account required.');
+      }
+      if (!mounted) return;
+      final reset = await showDialog<bool>(
+        context: context, barrierDismissible: false,
+        builder: (_) => _AppLockRecoveryDialog(schoolId: schoolId),
+      );
+      if (mounted && reset == true) {
+        _password.clear();
+        setState(() => _error = null);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Password changed. Unlock with your new password.')));
+      }
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _unlocking = false);
+    }
+  }
+
   Future<void> _unlock() async {
     if (_unlocking) return;
     final password = _password.text;
@@ -642,6 +669,7 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
                       padding: const EdgeInsets.symmetric(vertical: 14),
                     ),
                   ),
+                  TextButton(onPressed: _unlocking ? null : _forgotPassword, child: const Text('Forgot Password?')),
                 ],
               ),
             ),
@@ -1021,4 +1049,56 @@ class _LocalAuthShell extends StatelessWidget {
       ),
     );
   }
+}
+
+class _AppLockRecoveryDialog extends StatefulWidget {
+  const _AppLockRecoveryDialog({required this.schoolId});
+  final String schoolId;
+  @override
+  State<_AppLockRecoveryDialog> createState() => _AppLockRecoveryDialogState();
+}
+class _AppLockRecoveryDialogState extends State<_AppLockRecoveryDialog> {
+  final _otp = TextEditingController(), _new = TextEditingController(), _confirm = TextEditingController();
+  bool _busy = false, _sent = false;
+  String? _message;
+  @override
+  void dispose() { _otp.dispose(); _new.dispose(); _confirm.dispose(); super.dispose(); }
+  Future<void> _send() async {
+    setState(() { _busy = true; _message = null; });
+    try {
+      final r = await ManagedSchoolSession.callForSchool(widget.schoolId, 'managed/app-lock/otp/send', {});
+      if (r['success'] != true || r['schoolId'] != widget.schoolId) throw StateError('Email delivery not confirmed.');
+      if (mounted) setState(() { _sent = true; _message = 'Code sent to the verified school email. Valid for 5 minutes.'; });
+    } catch (e) { if (mounted) setState(() => _message = e.toString()); }
+    finally { if (mounted) setState(() => _busy = false); }
+  }
+  Future<void> _reset() async {
+    if (_new.text != _confirm.text || _new.text.length < 6 || _new.text.length > 128 || _otp.text.length != 6) {
+      setState(() => _message = 'Enter six-digit code and matching password (6–128 characters).'); return;
+    }
+    setState(() { _busy = true; _message = null; });
+    try {
+      await WindowsLocalSecurity.recoverWithEmailOtp(schoolId: widget.schoolId, otp: _otp.text, newPassword: _new.text);
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (e) { if (mounted) setState(() => _message = e.toString()); }
+    finally { if (mounted) setState(() => _busy = false); }
+  }
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Recover App Lock'),
+    content: SizedBox(width: 380, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+      const Text('The code is sent only to the verified registered school email. School data stays unchanged.'),
+      TextButton(onPressed: _busy ? null : _send, child: Text(_sent ? 'Resend code' : 'Send email code')),
+      if (_sent) ...[
+        TextField(controller: _otp, enabled: !_busy, keyboardType: TextInputType.number, inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(6)], decoration: const InputDecoration(labelText: 'Email code')),
+        TextField(controller: _new, enabled: !_busy, obscureText: true, decoration: const InputDecoration(labelText: 'New App Lock password')),
+        TextField(controller: _confirm, enabled: !_busy, obscureText: true, decoration: const InputDecoration(labelText: 'Confirm password')),
+      ],
+      if (_message != null) Text(_message!),
+    ]))),
+    actions: [
+      TextButton(onPressed: _busy ? null : () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+      FilledButton(onPressed: _busy || !_sent ? null : _reset, child: const Text('Reset password')),
+    ],
+  );
 }

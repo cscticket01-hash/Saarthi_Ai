@@ -580,6 +580,31 @@ function VS_guardFinalPromotion(b,existing,school){
   if(next.promotionPending!==true||next.promotionSyncState!=='Pending')
     throw new Error('Promotion must retain pending acknowledgement state');
 }
+// Validate changed person fields, not untouched historical values or exact replays.
+function VS_validatePersonContactFields(collection,current,next) {
+  const changed=key=>next[key]!==undefined&&next[key]!==(current||{})[key];
+  if(collection==='students_directory'&&changed('pinCode')&&next.pinCode!==null&&next.pinCode!==''&&
+     (typeof next.pinCode!=='string'||!/^[0-9]{6}$/.test(next.pinCode.trim())))throw new Error('PERSON_POSTAL_PIN_INVALID');
+  function parse(value){
+    if(value&&typeof value==='object'&&Object.keys(value).length===1&&typeof value.__vsTimestamp==='string'){
+      const iso=value.__vsTimestamp;
+      if(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(iso)||!Number.isFinite(Date.parse(iso)))return null;
+      value=iso.slice(0,10);
+    }
+    if(typeof value!=='string')return null;
+    const s=value.trim(),d=/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s),i=/^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+    if(!d&&!i)return null;
+    const y=Number(d?d[3]:i[1]),m=Number(d?d[2]:i[2]),day=Number(d?d[1]:i[3]);
+    const date=new Date(Date.UTC(y,m-1,day));
+    return y>=1900&&y<=2100&&date.getUTCFullYear()===y&&date.getUTCMonth()===m-1&&date.getUTCDate()===day?date.getTime():null;
+  }
+  ['dateOfBirth','joiningDate'].forEach(key=>{
+    if(changed(key)&&next[key]!==null&&next[key]!==''&&parse(next[key])===null)throw new Error('PERSON_DATE_INVALID');
+  });
+  const birth=parse(next.dateOfBirth),joining=parse(next.joiningDate);
+  if(changed('dateOfBirth')&&birth!==null&&birth>Date.now())throw new Error('PERSON_DATE_INVALID');
+  if((changed('dateOfBirth')||changed('joiningDate'))&&birth!==null&&joining!==null&&joining<birth)throw new Error('PERSON_DATE_ORDER_INVALID');
+}
 function VS_studentUnique(store,id,data,existing) {
   const slot=VS_studentSlot(data),oldSlot=existing?VS_studentSlot(existing.data):null,all=VS_sheetRecords(store);let partial=slot===null;
   Object.keys(all).forEach(other=>{
@@ -994,6 +1019,7 @@ function VS_managedRecordUnlocked(b,readContext) {
     // stale delete onto a live (possibly restored/new-generation) record.
     const alreadyDeleted=b.operation==='delete'&&existing&&existing.data._syncDeleted===true;
     if((existing&&existing.data._syncRevision||'')!==b.expectedRecordRevision&&!replacement&&!sameDeletion&&!childReplacement&&!alreadyDeleted&&!patched)throw new Error('Record revision conflict');
+    if(b.operation==='write'&&['students_directory','teachers_directory'].includes(b.collection))VS_validatePersonContactFields(b.collection,existing&&existing.data,b.data||{});
     if(replacement&&!existing.data._syncDeleted){VS_deleteStudentOwnedRecords(b.id,existing.data,b.operationId,b.data);}
   }
 
@@ -1043,6 +1069,7 @@ function VS_managedRecordUnlocked(b,readContext) {
       throw new Error('Promotion audit event requires immutable school ownership');
   }
   if(b.operation!=='write'||!b.data||b.data.schoolId!==school)throw new Error('Invalid school record');
+  if(b.syncProtocol!==2&&['students_directory','teachers_directory'].includes(b.collection))VS_validatePersonContactFields(b.collection,existing&&existing.data,b.data);
   VS_validateScanQuota(store,b,existing,school);
   if(VS_sheetLifecycleEnabled()&&b.collection==='teachers_directory')VS_validateTeacherPayrollIdentity(b.id,b.data);
   if(VS_sheetLifecycleEnabled()&&b.collection==='teacher_salary'&&existing&&!existing.data._syncDeleted){for(const key of ['teacherId','personId','staffId','employeeId'])if(existing.data[key]!=null&&b.data[key]!==existing.data[key]){const directory=key==='employeeId'&&!String(existing.data.employeeId||'').trim()&&existing.data.staffId===b.data.staffId?VS_sheetItem(VS_managedSheet('school_settings'),'staff_payroll_directory'):null;const enrolled=directory&&(directory.data.staff||[]).some(row=>row.id===existing.data.staffId&&row.employeeId===b.data.employeeId);if(!enrolled)throw new Error('Payroll history owner is immutable');}}

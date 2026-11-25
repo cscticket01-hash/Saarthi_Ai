@@ -155,7 +155,7 @@ class _DeveloperWindowsThemeState extends State<DeveloperWindowsTheme> {
   int slide = 0;
   String get previewAsset => draftPreset == null
       ? 'assets/app_screenshot_${pages[slide] == 'settings' ? 'settings_v2' : pages[slide]}.png'
-      : 'assets/theme_preview_${draftPreset == 'midnight-glass' ? 'electric-blue' : draftPreset}_${pages[slide] == 'settings' ? 'settings_v2' : pages[slide]}.webp';
+      : 'assets/theme_preview_${draftPreset == 'midnight-glass' ? 'electric-blue' : draftPreset == 'aurora-liquid-glass' ? 'mint-light' : draftPreset}_${pages[slide] == 'settings' ? 'settings_v2' : pages[slide]}.webp';
   Widget panel(Widget child) => Card(
     margin: EdgeInsets.zero,
     child: Padding(padding: const EdgeInsets.all(14), child: child),
@@ -223,7 +223,7 @@ class _DeveloperWindowsThemeState extends State<DeveloperWindowsTheme> {
                         : ColorFiltered(
                             colorFilter: ColorFilter.mode(
                               draft,
-                              (draftPreset == null || draft.toARGB32() != windowsThemePreset(draftPreset)?.seed.toARGB32())
+                              (draftPreset == 'aurora-liquid-glass' || draftPreset == null || draft.toARGB32() != windowsThemePreset(draftPreset)?.seed.toARGB32())
                                   ? BlendMode.hue : BlendMode.dst,
                             ),
                             child: Image.asset(
@@ -381,7 +381,9 @@ class _DeveloperWindowsThemeState extends State<DeveloperWindowsTheme> {
                                   Expanded(
                                     child: ClipRRect(
                                       borderRadius: BorderRadius.circular(5),
-                                      child: preset.id == 'midnight-glass'
+                                      child: preset.id == 'aurora-liquid-glass'
+                                          ? const DecoratedBox(decoration: BoxDecoration(gradient: LinearGradient(colors: [Color(0xFFE4F9FF), Color(0xFFB9CFFF), Color(0xFFD8CAFF)])), child: Center(child: Icon(Icons.auto_awesome, color: Color(0xFF436AE8))))
+                                          : preset.id == 'midnight-glass'
                                           ? const _MidnightGlassTile()
                                           : Image.asset(
                                               preset.image,

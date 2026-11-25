@@ -5,6 +5,7 @@ const {createProviderPressure,retryAfterMillis,firebaseQuota,quotaError}=require
 const {createWindowsTheme,DEFAULT_THEME}=require('./windows-theme');
 const {createDeveloperPasswordOtp}=require('./developer-password-otp');
 const {createSchoolAdminSecurity}=require('./school-admin-security');
+const {createSchoolAppLockOtp}=require('./school-app-lock-otp');
 const {createSchoolSyncDelivery}=require('./school-sync-delivery');
 'use strict';
 const {createManagedSupport}=require('./managed-support');
@@ -28,8 +29,10 @@ function clean(value,depth=0){if(depth>12)fail(400,'Record is too deeply nested'
 function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edgeRecordParallelism=1,cloudflareAtomicSmallFiles=false,repairKnowledgeOptions={},firebaseCredentialFingerprint=null,cloudflareAllDataEnabled=false,providerPressureJournal=null,googleQuotaScopes={},changeFeedIdleGraceMillis=0,deviceAccessEnforced=false,deviceManagementEnabled=false,deviceEnrollmentEnabled=false,deviceOfflinePrivateKey,deviceOfflineWindowMs,deviceStore,studentImportEnabled=false,cardIssueEnabled=false,cardReaderEnforced=false,cardReaderPrivateKey,auth,db,projectId,encryptionKey,fetchImpl=fetch,now=Date.now,cloudflareSync=null,attendanceStore,attendanceCollection='attendance_outbox',messaging,scheduleHint=callback=>setTimeout(callback,250),pushDiagnostics=entry=>console.info(JSON.stringify(entry)),monitor=async()=>({available:false,reason:'Monitoring access has not been configured'}),cloudflareMonitor=async()=>({available:false,reason:'Cloudflare analytics not configured'})}){
  const schoolDeltaSingleflight=createSchoolDeltaSingleflight();
  const windowsTheme=createWindowsTheme({db,now});
+ const mobileAppearanceCache=new Map();
  const developerPasswordOtp=createDeveloperPasswordOtp({auth,db,now,fetchImpl});
  const schoolAdminSecurity=createSchoolAdminSecurity({auth,db,now});
+ const schoolAppLockOtp=createSchoolAppLockOtp({auth,db,now,fetchImpl});
  const repairKnowledge=createRepairKnowledge({...repairKnowledgeOptions,db,now});
  const deviceAccess=createManagedDeviceAccess({
   authorizeRevoke:async(identity,body)=>{
@@ -522,7 +525,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   if(action?.startsWith('developer/managed/security/otp/'))return developerPasswordOtp(action,b,admin,req);
   if(action==='developer/managed/repair-knowledge/status')return {success:true,...await repairKnowledge.status()};
   if(action==='developer/managed/repair-knowledge/publish')return {success:true,...await repairKnowledge.publish(b.publication,admin.uid)};
-  if(action==='developer/managed/theme/get')return {success:true,theme:await windowsTheme.read()};if(action==='developer/managed/theme/save')return {success:true,theme:await windowsTheme.save(b.theme,admin.uid)};if(action==='developer/managed/create'){
+  if(action==='developer/managed/theme/get')return {success:true,theme:await windowsTheme.read()};if(action==='developer/managed/theme/save'){const theme=await windowsTheme.save(b.theme,admin.uid);mobileAppearanceCache.clear();return {success:true,theme};}if(action==='developer/managed/create'){
    const email=String(b.email||'').trim().toLowerCase(),name=String(b.schoolName||'').trim();if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||name.length<2||name.length>160)fail(400,'School name and valid login email required');
    const password=b.password;
    if(password!==undefined&&(typeof password!=='string'||password.length<12||password.length>128))fail(400,'Use an initial password of 12–128 characters');
@@ -961,11 +964,18 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   if(result.attendancePolicy) result.attendanceStatus={version:result.attendancePolicy.scheduleVersion===1?1:0,day:result.attendancePolicy.day,recorded:result.attendancePolicy.recorded===true,schedule:result.attendancePolicy.schedule??null};
   if(!cardReaderEnforced&&edgeEnabled(b.schoolId)&&result.attendancePermit){const permit=JSON.parse(Buffer.from(result.attendancePermit.split('.')[0],'base64url').toString('utf8'));result.cloudflareLane=cloudflareSync.grant(permit);}
   delete result.attendancePolicy;
+  if(result.success===true&&b.request.appearanceProtocol===1&&['mobile_login','mobile_dashboard'].includes(b.request.action)){
+   try{result.publishedAppearance=await cachedRead(mobileAppearanceCache,'published',()=>windowsTheme.read());}catch{/* Appearance must not deny school access. */}
+  }
   return {...result,...verifiedCard,policyExpiresAt:Math.min(e.expiresAt,now()+72*3600000)};
  }
  const m=await identity(req,b.schoolId);
  m.edgeDeliveryVersion=b.edgeDeliveryVersion===1?1:0;
  const deviceDecision=await deviceAccess.authorize({req,body:b,identity:m,entitlement:lease(m)});if(deviceDecision.handled)return deviceDecision.result;
+ if(action==='managed/app-lock/otp/send'||action==='managed/app-lock/otp/verify'){
+  if(!lease(m).allowed)fail(403,'School licence is inactive');
+  return schoolAppLockOtp(action,b,m,await deviceAccess.themeDevices(req,m));
+ }
  if(action==='managed/admin/security'){
   if(!lease(m).allowed)fail(403,'School licence is inactive');
   return schoolAdminSecurity.handle(b,m);

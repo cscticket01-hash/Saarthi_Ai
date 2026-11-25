@@ -13933,7 +13933,8 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                           ),
                           const SizedBox(width: 10),
                           Expanded(
-                            child: TextField(
+                            child: WindowsDateOfBirthField(
+                              isBirthDate: false,
                               controller:
                                   joiningCtrl,
                               style:
@@ -16381,7 +16382,8 @@ class _AddTeacherScreenState
                       ),
                       Expanded(
                         child:
-                            TextField(
+                            WindowsDateOfBirthField(
+                          isBirthDate: false,
                           controller:
                               _joiningCtrl,
                           style:
@@ -16786,9 +16788,9 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                       const SizedBox(height: 10),
                       Row(
                         children: [
-                          Expanded(child: TextField(controller: pinCtrl, keyboardType: TextInputType.number, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)), decoration: _inputDecoration('PIN Code'))),
+                          Expanded(child: TextField(controller: pinCtrl, keyboardType: TextInputType.number, inputFormatters: postalPinInputFormatters, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)), decoration: _inputDecoration('PIN Code'))),
                           const SizedBox(width: 10),
-                          Expanded(child: TextField(controller: admissionDateCtrl, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)), decoration: _inputDecoration('Admission Date'))),
+                          Expanded(child: WindowsDateOfBirthField(controller: admissionDateCtrl, isBirthDate: false, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)), decoration: _inputDecoration('Admission Date'))),
                         ],
                       ),
                       const SizedBox(height: 10),
@@ -16903,6 +16905,16 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                               backgroundColor: WindowsAppearance.background(Colors.redAccent),
                               content: const Text('Valid Admission Date (DD/MM/YYYY) daalein.'),
                             ));
+                            return;
+                          }
+
+                          final birthText = dobCtrl.text.trim();
+                          final birthDate = parsePersonBirthDate(birthText);
+                          if (birthText.isNotEmpty && (birthDate == null ||
+                              birthDate.year < 1900 || birthDate.isAfter(DateTime.now()) ||
+                              birthDate.isAfter(parsedDate))) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Enter a valid date of birth before admission.')));
                             return;
                           }
 
@@ -17788,11 +17800,13 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                       TextField(
                         controller: pinCtrl,
                         keyboardType: TextInputType.number,
+                        inputFormatters: postalPinInputFormatters,
                         style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                         decoration: _dialogInput('PIN Code'),
                       ),
                       const SizedBox(height: 8),
-                      TextField(
+                      WindowsDateOfBirthField(
+                        isBirthDate: false,
                         controller: admissionCtrl,
                         style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                         decoration: _dialogInput('Admission Date'),
@@ -17843,6 +17857,23 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                       onPressed: saving
                           ? null
                           : () async {
+                              final pin = pinCtrl.text.trim();
+                              final admission = admissionCtrl.text.trim();
+                              final birth = dobCtrl.text.trim();
+                              if (pin.isNotEmpty && pin != (data['pinCode']?.toString().trim() ?? '') && !isValidPostalPin(pin)) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('PIN Code mein exactly 6 digits daalein.')));
+                                return;
+                              }
+                              if ((admission.isNotEmpty && admission != (data['joiningDate']?.toString() ?? '') &&
+                                  (parsePersonBirthDate(admission) == null || parsePersonBirthDate(admission)!.year < 1900)) ||
+                                  (birth.isNotEmpty && birth != (data['dateOfBirth']?.toString() ?? '') &&
+                                  (parsePersonBirthDate(birth) == null || parsePersonBirthDate(birth)!.year < 1900 ||
+                                  parsePersonBirthDate(birth)!.isAfter(DateTime.now())))) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('Enter a valid calendar date.')));
+                                return;
+                              }
                               setDialogState(() => saving = true);
 
                               try {
@@ -20552,7 +20583,7 @@ class _StudentDocumentsScreenState
         if(url.isEmpty)throw StateError('Document file is not available.');
         html.window.open(url,'_blank');return;
       }
-      final bytes=await WindowsBackendBridge.documentBytes(document);
+      final bytes=await WindowsBackendBridge.documentBytes(document, preferOptimized: true);
       if(!mounted || FirebaseFirestore.instance.activeProfileId!=_schoolProfile)return;
       final mime=(document['optimizedMimeType']??document['mimeType']??'').toString();
       await showDialog<void>(context:context,builder:(ctx){ WindowsAppearance.watch(ctx); return Dialog(child:SizedBox(

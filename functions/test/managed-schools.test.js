@@ -636,3 +636,16 @@ for (const clientCount of [1, 2, 5]) {
   assert(!f.sent.some(item=>JSON.parse(JSON.parse(item.opt.body).payload||'{}').operation==='write'));
  });
 }
+
+test('opted-in Android appearance reads are coalesced and invalidated by theme publishing',async()=>{
+ const f=fixture();
+ let reads=0;const doc=f.db.doc;f.db.doc=p=>{const r=doc(p),get=r.get;r.get=async()=>{if(p==='platform_configuration/windows_theme')reads++;return get();};return r;};
+ const request={action:'managed/mobile',schoolId:A,request:{action:'mobile_dashboard',sessionToken:'same',appearanceProtocol:1}};
+ const first=await f.call(request);
+ assert.equal(first.publishedAppearance.revision,'default');
+ for(let i=0;i<99;i++)await f.call(request);
+ assert.equal(reads,1);
+ const saved=await f.call({action:'developer/managed/theme/save',theme:{schemaVersion:1,presetId:'aurora-liquid-glass',red:67,green:106,blue:232,expectedRevision:'default'}},'developer');
+ assert.equal(saved.theme.presetId,'aurora-liquid-glass');
+ assert.equal((await f.call(request)).publishedAppearance.revision,saved.theme.revision);
+});

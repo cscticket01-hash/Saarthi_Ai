@@ -401,6 +401,7 @@ class WindowsBackendBridge {
   static final Map<String, Future<Uint8List>> _documentRestores = {};
   static Future<Uint8List> documentBytes(
     Map<String, dynamic> document, {
+    bool preferOptimized = false,
     Future<Map<String, dynamic>> Function(String school, String fileId)? fetch,
   }) async {
     final profile = FirebaseFirestore.instance.activeProfileId;
@@ -414,10 +415,12 @@ class WindowsBackendBridge {
       document['contentHash'],
       document['originalPath'],
       document['localPath'],
+      document['optimizedPath'],
+      preferOptimized,
     ]);
     final existing = _documentRestores[key];
     if (existing != null) return existing;
-    final pending = _restoreDocumentBytes(document, fetch: fetch);
+    final pending = _restoreDocumentBytes(document, fetch: fetch, preferOptimized: preferOptimized);
     _documentRestores[key] = pending;
     try {
       return await pending;
@@ -429,6 +432,7 @@ class WindowsBackendBridge {
 
   static Future<Uint8List> _restoreDocumentBytes(
     Map<String, dynamic> document, {
+    required bool preferOptimized,
     Future<Map<String, dynamic>> Function(String school, String fileId)? fetch,
   }) async {
     final db = FirebaseFirestore.instance,
@@ -449,7 +453,12 @@ class WindowsBackendBridge {
     final schoolRoot = Directory(
       '${root.path}${Platform.pathSeparator}${_safeFileName(origin)}',
     );
-    for (final source in [document['originalPath'], document['localPath']]) {
+    final sources = preferOptimized
+        ? [document['optimizedPath'],
+           // Old generations may use localPath for the exact optimized bytes.
+           if (document['optimizedPath'] == null) document['localPath']]
+        : [document['originalPath'], document['localPath']];
+    for (final source in sources) {
       final local = normalizedDocumentPath(source);
       if (local == null) continue;
       try {
@@ -465,6 +474,10 @@ class WindowsBackendBridge {
         if ({'feeReceipt','marksheet'}.contains(document['documentKind']) &&
             document['contentHash'] != crypto.sha256.convert(bytes).toString())
           throw StateError('Original school PDF hash mismatch. File retained for review.');
+        if (preferOptimized && document['contentHash'] is String &&
+            document['contentHash'] != crypto.sha256.convert(bytes).toString()) {
+          continue; // Do not display a mismatched or uncropped generation.
+        }
         if (bytes.isNotEmpty) return bytes;
       } on FileSystemException { /* Retain the path; try authenticated restore. */ }
     }

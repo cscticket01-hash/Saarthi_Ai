@@ -1,4 +1,5 @@
 import 'windows_connect/central_school_cloud.dart';
+import 'windows_connect/managed_school_session.dart';
 import 'dart:convert';
 import 'package:crypto/crypto.dart';
 import 'dart:io';
@@ -82,6 +83,33 @@ class WindowsLocalSecurity {
       adminId: newAdminId,
       password: newPassword,
     );
+  }
+
+  static Future<void> recoverWithEmailOtp({
+    required String schoolId, required String otp, required String newPassword,
+  }) async {
+    if (!configured || _schoolSuffix != '_$schoolId' ||
+        newPassword.length < 6 || newPassword.length > 128) {
+      throw StateError('Valid school and new App Lock password required.');
+    }
+    final saved = await CentralSchoolCloud.saved();
+    if (saved['managed'] != true || saved['schoolId'] != schoolId) {
+      throw StateError('School changed.');
+    }
+    final key = _adminPasswordKey;
+    final result = await ManagedSchoolSession.callForSchool(schoolId,
+      'managed/app-lock/otp/verify', {'otp': otp});
+    if (result['success'] != true || result['verified'] != true ||
+        result['schoolId'] != schoolId) {
+      throw StateError('Recovery code is incorrect.');
+    }
+    final current = await CentralSchoolCloud.saved();
+    if (current['schoolId'] != schoolId || current['uid'] != saved['uid'] ||
+        _adminPasswordKey != key || !configured) {
+      throw StateError('School changed.');
+    }
+    await _secure.write(key: key, value: newPassword);
+    if (_adminPasswordKey == key) _adminPassword = newPassword;
   }
 
   static Future<void> _writeCredentials({

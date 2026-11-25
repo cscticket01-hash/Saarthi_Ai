@@ -250,3 +250,18 @@ test('payroll leave decisions preserve history and reject closed months and inva
  assert.throws(()=>check(null,leave,(collection,id)=>collection==='school_settings'?{schoolId:school,closed:true}:owner),e=>e.code==='SALARY_MONTH_CLOSED');
  assert.throws(()=>check(leave,{},lookup,'delete'),e=>e.code==='SALARY_LEAVE_HISTORY_IMMUTABLE');
 });
+
+test('person postal PIN and dates reject invalid new fields while preserving legacy data',async()=>{
+ const {validatePersonContactFields}=await import('../src/domain-policy.ts');
+ const row={pinCode:'788001',dateOfBirth:'29/02/2012',joiningDate:'2026-04-01'};
+ assert.doesNotThrow(()=>validatePersonContactFields('students_directory',null,row));
+ for(const pinCode of ['12345','1234567','abcdef',123456]){
+  assert.throws(()=>validatePersonContactFields('students_directory',row,{...row,pinCode}),e=>e.code==='PERSON_POSTAL_PIN_INVALID');
+ }
+ for(const dateOfBirth of ['31/02/2012','29/02/2011','2100-01-01']){
+  assert.throws(()=>validatePersonContactFields('students_directory',row,{...row,dateOfBirth}),e=>e.code==='PERSON_DATE_INVALID');
+ }
+ assert.throws(()=>validatePersonContactFields('teachers_directory',row,{...row,joiningDate:'01/01/2010'}),e=>e.code==='PERSON_DATE_ORDER_INVALID');
+ const legacy={pinCode:'bad',dateOfBirth:'historical'};
+ assert.doesNotThrow(()=>validatePersonContactFields('students_directory',legacy,{...legacy,name:'Updated'}));
+});

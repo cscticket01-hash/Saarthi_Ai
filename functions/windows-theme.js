@@ -8,6 +8,7 @@ const PRESET_COLOURS=Object.freeze({
  'mint-light':[0,140,120],
  'sunset-ember':[255,112,91],
  'aurora-violet':[139,92,255],
+ 'aurora-liquid-glass':[67,106,232],
  'emerald-gold':[216,187,101]
 });
 const PRESET_IDS=new Set(Object.keys(PRESET_COLOURS));

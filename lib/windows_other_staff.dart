@@ -345,11 +345,9 @@ class _SchoolStaffDirectoryState extends State<SchoolStaffDirectory> {
                       decoration: const InputDecoration(labelText: 'Mobile'),
                     ),
                     WindowsDateOfBirthField(controller: birth, enabled: !saving),
-                    TextField(
-                      controller: joining,
-                      decoration: const InputDecoration(
-                        labelText: 'Joining date / details',
-                      ),
+                    WindowsDateOfBirthField(
+                      controller: joining, isBirthDate: false, enabled: !saving,
+                      decoration: const InputDecoration(labelText: 'Joining date (DD/MM/YYYY)'),
                     ),
                     TextField(controller: address, decoration: const InputDecoration(labelText: 'Address')),
                     const SizedBox(height: 10),
@@ -415,6 +413,8 @@ class _SchoolStaffDirectoryState extends State<SchoolStaffDirectory> {
                     : () async {
                         setD(() => saving = true);
                         try {
+                          final datesProblem = validateTeacherOptionalFields(email: '', birthDate: birth.text, joiningDate: joining.text, previous: existing);
+                          if (datesProblem != null) throw FormatException(datesProblem);
                           if(existing != null && existing['active'] != false && !active) {
                             final approved=await requestWindowsAdminApproval(ctx,
                               scope:'protected-settings',
