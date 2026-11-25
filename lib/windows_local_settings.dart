@@ -97,7 +97,7 @@ class WindowsLocalSecurity {
   }
 
   static Future<void> verifySchoolForAppLockRecovery({
-    required String schoolId, required String adminPassword,
+    required String schoolId,
   }) async {
     cancelAppLockRecovery();
     final epoch = _recoveryEpoch;
@@ -106,16 +106,15 @@ class WindowsLocalSecurity {
     if (!configured || !RegExp(r'^vs-[a-f0-9]{32}$').hasMatch(id) ||
         saved['managed'] != true || saved['schoolId'] != id ||
         saved['uid'] is! String || (saved['uid'] as String).isEmpty ||
-        _schoolSuffix != '_$id' || adminPassword.isEmpty ||
-        adminPassword.length > 128 || epoch != _recoveryEpoch) {
-      throw StateError('Enter this school’s ID and independent Admin Password.');
+        _schoolSuffix != '_$id' || epoch != _recoveryEpoch) {
+      throw StateError('Enter the registered School ID.');
     }
     final key = _adminPasswordKey;
     final currentPassword = _adminPassword;
     final elapsed = Stopwatch()..start();
     final result = await ManagedSchoolSession.callForSchool(id,
       'managed/app-lock/recovery/verify',
-      {'recoverySchoolId': id, 'adminPassword': adminPassword});
+      {'recoverySchoolId': id});
     final current = await CentralSchoolCloud.saved();
     final token = result['approvalToken'];
     if (result['success'] != true || result['authorized'] != true ||
@@ -129,8 +128,7 @@ class WindowsLocalSecurity {
     }
     _recoveryGrant = _AppLockRecoveryGrant(
       schoolId: id, uid: saved['uid'] as String, storageKey: key,
-      previousPassword: currentPassword!, token: token, elapsed: elapsed,
-      adminDigest: sha256.convert(utf8.encode(adminPassword)).toString());
+      previousPassword: currentPassword!, token: token, elapsed: elapsed);
   }
 
   static Future<void> recoverWithSchoolApproval({
@@ -146,10 +144,7 @@ class WindowsLocalSecurity {
         grant.storageKey != _adminPasswordKey ||
         grant.previousPassword != _adminPassword) {
       cancelAppLockRecovery();
-      throw StateError('Verify School ID and Admin Password again.');
-    }
-    if (sha256.convert(utf8.encode(newPassword)).toString() == grant.adminDigest) {
-      throw StateError('App Lock must be different from Admin Password.');
+      throw StateError('Verify School ID again.');
     }
     // Consume locally before awaiting the server. Never reuse an approval.
     cancelAppLockRecovery();
@@ -237,9 +232,9 @@ class _AppLockRecoveryGrant {
   _AppLockRecoveryGrant({
     required this.schoolId, required this.uid, required this.storageKey,
     required this.previousPassword, required this.token,
-    required this.elapsed, required this.adminDigest,
+    required this.elapsed,
   });
-  final String schoolId, uid, storageKey, previousPassword, token, adminDigest;
+  final String schoolId, uid, storageKey, previousPassword, token;
   final Stopwatch elapsed;
 }
 
