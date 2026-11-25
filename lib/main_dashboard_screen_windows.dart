@@ -1613,6 +1613,85 @@ Widget _windowsSharedAdminSidebar(BuildContext context, {required ValueChanged<W
             subtitle: Text('ADMIN PANEL', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Color(0xFF00D9A5)), fontSize: 10)),
           )));
       }));
+
+// Both windows use one modal route, one size, one theme and one animation.
+enum _WindowsAdminDrawerAction { analytics, logout }
+
+Future<Object?> _showWindowsAdminDrawer(BuildContext context, {
+  required bool allowAnalytics,
+}) async {
+  final navigator = Navigator.of(context, rootNavigator: true);
+  final route = RawDialogRoute<Object>(
+    barrierDismissible: true,
+    barrierLabel: 'Admin navigation',
+    barrierColor: Colors.black.withOpacity(0.62),
+    transitionDuration: const Duration(milliseconds: 280),
+    pageBuilder: (dialogContext, animation, secondaryAnimation) => SafeArea(
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: SlideTransition(
+          position: Tween<Offset>(
+            begin: const Offset(-1, 0), end: Offset.zero,
+          ).animate(CurvedAnimation(
+            parent: animation,
+            curve: Curves.easeOutCubic,
+            reverseCurve: Curves.easeInCubic,
+          )),
+          child: Drawer(
+          width: WindowsAdminSidebar.width,
+          backgroundColor: WindowsAppearance.presetId == 'midnight-glass'
+              ? Colors.transparent : null,
+          child: _windowsSharedAdminSidebar(dialogContext,
+            onAnalytics: allowAnalytics
+                ? () => navigator.pop(_WindowsAdminDrawerAction.analytics)
+                : null,
+            onLogout: () => navigator.pop(_WindowsAdminDrawerAction.logout),
+            onSelected: (page) => navigator.pop(page)),
+          ),
+        ),
+      ),
+    ),
+    transitionBuilder: (context, animation, secondaryAnimation, child) => child,
+  );
+  final selection = await navigator.push(route);
+  // Finish closing the drawer before opening another route or password dialog.
+  await route.completed;
+  return selection;
+}
+
+Widget _windowsAdminMenuButton(VoidCallback onPressed) =>
+  Material(
+              color: WindowsAppearance.background(Colors.transparent),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(13),
+                onTap: onPressed,
+                child: Container(
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: WindowsAppearance.gradientColors([Color(0xFF00A884), Color(0xFF00C896)]),
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(13),
+                    boxShadow: [
+                      BoxShadow(
+                        color: WindowsAppearance.shadow(const Color(0xFF00A884).withOpacity(0.22)),
+                        blurRadius: 16,
+                        offset: const Offset(0, 6),
+                      ),
+                    ],
+                  ),
+                  child:  Icon(
+                    Icons.menu_rounded,
+                    color: WindowsAppearance.foreground(Colors.white),
+                    size: 25,
+                  ),
+                ),
+              ),
+            );
+
 Future<void> _windowsConfirmLogout(BuildContext context) async {
   final confirmed = await showDialog<bool>(context: context, builder: (ctx) { WindowsAppearance.watch(ctx); return  AlertDialog(
     title: const Text('Logout Admin?'), content: const Text('Logout karne ke baad App Lock dikhega.'),
@@ -5435,28 +5514,28 @@ Future<void> _printIdCard() async {
     }
   }
 
-  void _openAdminDrawerPage(
-    Widget page, {
-    String? sectionKey,
-    String? sectionTitle,
-  }) {
-    Navigator.of(context).pop();
-    Future<void>.delayed(Duration.zero, () async {
-      if (!mounted) return;
-
-      if (sectionKey != null) {
-        final unlocked = await _requireWindowsSectionPassword(
-          context,
-          sectionKey,
-          sectionTitle ?? 'Protected Section',
-        );
-        if (!unlocked || !mounted) return;
+  Future<void> _openAdminDrawer() async {
+    final selection = await _showWindowsAdminDrawer(context, allowAnalytics: true);
+    if (!mounted) return;
+    if (selection == _WindowsAdminDrawerAction.analytics) {
+      await _openAdminAnalyticsGate();
+    } else if (selection == _WindowsAdminDrawerAction.logout) {
+      await _confirmAdminLogoutFromHeader();
+    } else if (selection is WindowsAdminPage &&
+        selection != WindowsAdminPage.dashboard) {
+      final lock = _windowsAdminModuleLock(selection);
+      if (lock != null) {
+        await _openAdminModule(_windowsAdminModule(selection),
+          sectionKey: lock, sectionTitle: _windowsAdminModuleTitle(selection));
+      } else {
+        final module = _windowsAdminModule(selection);
+        await Navigator.of(context).push(MaterialPageRoute<void>(
+          builder: (appearanceContext) {
+            WindowsAppearance.watch(appearanceContext);
+            return module;
+          }));
       }
-
-      await Navigator.of(context).push(
-        MaterialPageRoute<void>(builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  page; }),
-      );
-    });
+    }
   }
 
   Future<void> _openAdminModule(
@@ -5476,19 +5555,6 @@ Future<void> _printIdCard() async {
     );
   }
 
-  Widget _buildAdminDrawer() => Drawer(width: WindowsAdminSidebar.width,
-    backgroundColor: WindowsAppearance.presetId == 'midnight-glass'
-        ? Colors.transparent : null,
-    child: _windowsSharedAdminSidebar(context,
-      onAnalytics: () { Navigator.of(context).pop(); _openAdminAnalyticsGate(); },
-      onLogout: () { Navigator.of(context).pop(); _confirmAdminLogoutFromHeader(); },
-      onSelected: (page) {
-        if (page == WindowsAdminPage.dashboard) { Navigator.of(context).pop(); return; }
-        final module = _windowsAdminModule(page);
-        final lock = _windowsAdminModuleLock(page);
-        _openAdminDrawerPage(module, sectionKey: lock, sectionTitle: _windowsAdminModuleTitle(page));
-      }));
-
   @override
   Widget build(BuildContext context) {WindowsAppearance.watch(context);
     final adminEmail = FirebaseAuth.instance.currentUser?.email ?? 'School Administrator';
@@ -5506,71 +5572,7 @@ Future<void> _printIdCard() async {
         titleSpacing: 18,
         title: Row(
           children: [
-            Material(
-              color: WindowsAppearance.background(Colors.transparent),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(13),
-                onTap: () {
-                  showGeneralDialog<void>(
-                    context: context,
-                    barrierDismissible: true,
-                    barrierLabel: 'Admin navigation',
-                    barrierColor: Colors.black.withOpacity(0.62),
-                    transitionDuration: const Duration(milliseconds: 140),
-                    pageBuilder: (
-                      dialogContext,
-                      animation,
-                      secondaryAnimation,
-                    ) {
-                      return SafeArea(
-                        child: Align(
-                          alignment: Alignment.centerLeft,
-                          child: _buildAdminDrawer(),
-                        ),
-                      );
-                    },
-                    transitionBuilder: (
-                      dialogContext,
-                      animation,
-                      secondaryAnimation,
-                      child,
-                    ) {
-                      return FadeTransition(
-                        opacity: CurvedAnimation(
-                          parent: animation,
-                          curve: Curves.easeOut,
-                        ),
-                        child: child,
-                      );
-                    },
-                  );
-                },
-                child: Container(
-                  width: 42,
-                  height: 42,
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: WindowsAppearance.gradientColors([Color(0xFF00A884), Color(0xFF00C896)]),
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    borderRadius: BorderRadius.circular(13),
-                    boxShadow: [
-                      BoxShadow(
-                        color: WindowsAppearance.shadow(const Color(0xFF00A884).withOpacity(0.22)),
-                        blurRadius: 16,
-                        offset: const Offset(0, 6),
-                      ),
-                    ],
-                  ),
-                  child:  Icon(
-                    Icons.menu_rounded,
-                    color: WindowsAppearance.foreground(Colors.white),
-                    size: 25,
-                  ),
-                ),
-              ),
-            ),
+            _windowsAdminMenuButton(_openAdminDrawer),
             const SizedBox(width: 12),
              Expanded(
               child: Column(
@@ -8041,19 +8043,31 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
     );
   }
 
-  Widget _analyticsSidebar() => _windowsSharedAdminSidebar(context,
-    onAnalytics: null,
-    onLogout: () => _windowsConfirmLogout(context),
-    onSelected: (page) {
-      if (page == WindowsAdminPage.dashboard) { Navigator.of(context).pop(); return; }
-      final module = _windowsAdminModule(page);
-      final lock = _windowsAdminModuleLock(page);
-      if (lock != null) {
-        _openAnalyticsModule(module, sectionKey: lock, sectionTitle: _windowsAdminModuleTitle(page));
-      } else {
-        Navigator.of(context).push(MaterialPageRoute<void>(builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  module; }));
-      }
-    });
+  Future<void> _openAnalyticsDrawer() async {
+    final selection = await _showWindowsAdminDrawer(context, allowAnalytics: false);
+    if (!mounted || FirebaseFirestore.instance.activeProfileId != _analyticsProfile) return;
+    if (selection == _WindowsAdminDrawerAction.logout) {
+      await _windowsConfirmLogout(context);
+      return;
+    }
+    if (selection is! WindowsAdminPage) return;
+    if (selection == WindowsAdminPage.dashboard) {
+      Navigator.of(context).pop();
+      return;
+    }
+    final module = _windowsAdminModule(selection);
+    final lock = _windowsAdminModuleLock(selection);
+    if (lock != null) {
+      await _openAnalyticsModule(module, sectionKey: lock,
+        sectionTitle: _windowsAdminModuleTitle(selection));
+    } else {
+      await Navigator.of(context).push(MaterialPageRoute<void>(
+        builder: (appearanceContext) {
+          WindowsAppearance.watch(appearanceContext);
+          return module;
+        }));
+    }
+  }
 
   Future<void> _openAnalyticsSettings() async {
     await Navigator.of(context).push(
@@ -8087,7 +8101,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
   @override
   Widget build(BuildContext context) {WindowsAppearance.watch(context);
     if (FirebaseFirestore.instance.activeProfileId != _analyticsProfile) {
-      return Scaffold(appBar: AppBar(title: const Text('Admin Analytics')),
+      return Scaffold(appBar: AppBar(title: const Text('Admin Panel')),
         body: const Center(child: Text('School changed. Reopen analytics.')));
     }
     final data = _data;
@@ -8097,9 +8111,16 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
       appBar: AppBar(
         backgroundColor: WindowsAppearance.background(const Color(0xFF071A21)),
         elevation: 0,
-        title: const Text(
-          'Admin Analytics',
-          style: TextStyle(fontFamily: 'Segoe UI', fontWeight: FontWeight.w800),
+        automaticallyImplyLeading: false,
+        title: Row(
+          children: [
+            _windowsAdminMenuButton(_openAnalyticsDrawer),
+            const SizedBox(width: 12),
+            const Expanded(child: Text(
+              'Admin Panel',
+              style: TextStyle(fontFamily: 'Segoe UI', fontWeight: FontWeight.w800),
+            )),
+          ],
         ),
         actions: [
           IconButton(
@@ -8293,16 +8314,6 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
               ),
             ),
           );
-
-          if (constraints.maxWidth >= 1000) {
-            return Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _analyticsSidebar(),
-                Expanded(child: content),
-              ],
-            );
-          }
 
           return content;
         },

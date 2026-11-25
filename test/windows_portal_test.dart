@@ -325,6 +325,19 @@ void main() {
     final menus=find.byType(PopupMenuButton<int>);
     expect(menus, findsNWidgets(5), reason: 'Analytics did not finish loading its five charts.');
     expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.text('Admin Panel'), findsOneWidget);
+    expect(find.byType(WindowsAdminSidebar), findsNothing);
+    final menu = find.byIcon(Icons.menu_rounded);
+    expect(menu, findsOneWidget);
+    await tester.tap(menu);
+    await tester.pumpAndSettle();
+    expect(find.byType(WindowsAdminSidebar), findsOneWidget);
+    expect(tester.getSize(find.byType(WindowsAdminSidebar)).width,
+      WindowsAdminSidebar.width);
+    expect(tester.getTopLeft(find.byType(WindowsAdminSidebar)), Offset.zero);
+    await tester.tapAt(const Offset(1500, 100));
+    await tester.pumpAndSettle();
+    expect(find.byType(WindowsAdminSidebar), findsNothing);
     await tester.tap(menus.at(1)); await tester.pumpAndSettle();
     await tester.tap(find.text('Jan ${DateTime.now().year}')); await tester.pumpAndSettle();
     expect(find.text('Jan: ₹500'),findsOneWidget);
