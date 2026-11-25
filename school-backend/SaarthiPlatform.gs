@@ -83,6 +83,14 @@ function VS_platformAdmin(b){
  if(b.action==='platform_activate')return VS_activatePlatformLicense(b.key);
  if(b.action==='platform_notice'){VS_notifySchoolNotice(String(b.noticeId||''));return {sent:true};}
  if(b.action==='platform_complaint')return VS_queueComplaint(b,'admin','windows');
+ if(b.action==='platform_support_create')return VS_legacySupportCreate(b);
+ if(b.action==='platform_support_list')return VS_legacySupportList(b);
+ if(b.action==='platform_support_thread')return VS_legacySupportThread(b);
+ if(b.action==='platform_support_create_screenshot')return VS_legacySupportBroker(b,'createWithScreenshot');
+ if(b.action==='platform_support_reply')return VS_legacySupportBroker(b,'reply');
+ if(b.action==='platform_support_attachment')return VS_legacySupportBroker(b,'attachment');
+ if(b.action==='platform_support_read_receipts')return VS_legacySupportBroker(b,'readReceipts');
+ if(b.action==='platform_support_announcements')return VS_legacySupportAnnouncements(b);
  if(b.action==='platform_bind'||b.action==='platform_heartbeat'){
   if(b.action==='platform_bind'&&!p.getProperty('VS_LICENSE_KEY_HASH'))VS_schoolTrial(b.deviceFingerprint);
   p.setProperty('VS_WINDOWS_LAST_ACTIVE',String(Date.now()));
@@ -136,6 +144,87 @@ function VS_publishMonitor(){
   p.setProperty('VS_MONITOR_LAST_SENT',String(Date.now()));
  }finally{lock.releaseLock();}
 }
+function VS_legacySupportId(id){
+ const school=VS_project();
+ if(typeof id!=='string'||id.indexOf(school+'_')!==0||!/^[a-f0-9]{32}$/.test(id.slice(school.length+1)))throw new Error('Invalid school complaint identity');
+ return id;
+}
+// The original school administrator has already passed VS_requireAdmin.
+// Never accept a caller-supplied broker URL or return the monitor token.
+function VS_legacySupportBroker(b,operation){
+ const allowed={createWithScreenshot:['complaintId','message','version','screenshot'],reply:['complaintId','messageId','message'],attachment:['complaintId'],readReceipts:['keys','marked']};
+ if(!Object.prototype.hasOwnProperty.call(allowed,operation))throw new Error('Invalid support operation');
+ const school=VS_project(),body={action:'legacy/support/'+operation,schoolId:school};
+ allowed[operation].forEach(k=>{if(b[k]!==undefined)body[k]=b[k];});
+ if(operation!=='readReceipts')VS_legacySupportId(body.complaintId);
+ if(operation==='createWithScreenshot'&&(typeof body.screenshot!=='string'||body.screenshot.length>131072))throw new Error('Invalid screenshot');
+ const token=VS_legacySupportToken();
+ const r=UrlFetchApp.fetch('https://saarthi-oauth-staging.onrender.com/school-cloud',{method:'post',contentType:'application/json',payload:JSON.stringify(body),headers:{Authorization:'Bearer '+token},followRedirects:false,muteHttpExceptions:true});
+ const code=r.getResponseCode();let out;
+ try{out=JSON.parse(r.getContentText());}catch(_){throw new Error('Support server unavailable');}
+ if(code!==200||!out||out.success!==true||out.schoolId!==school)throw new Error('Support operation not confirmed ('+code+')');
+ return out;
+}
+function VS_legacySupportToken(){const token=VS_monitorToken();if(!token)throw new Error('Ask the developer to configure this school monitoring connection');return token;}
+function VS_legacySupportRead(id,token){
+ const row=VS_doc(VS_central('get','platform_complaints/'+VS_legacySupportId(id),null,token));
+ if(row&&row.schoolId!==VS_project())throw new Error('Complaint identity mismatch');
+ return row;
+}
+function VS_legacySupportPublic(row){
+ const clean=Object.assign({},row);delete clean.screenshotBase64;delete clean.owner;delete clean.personId;
+ return clean;
+}
+function VS_legacySupportList(b){
+ const school=VS_project(),token=VS_legacySupportToken(),query={from:[{collectionId:'platform_complaints'}],
+  where:{compositeFilter:{op:'AND',filters:[['schoolId',school],['source','windows'],['role','admin']].map(pair=>({fieldFilter:{field:{fieldPath:pair[0]},op:'EQUAL',value:VS_encode(pair[1])}}))}},
+  orderBy:[{field:{fieldPath:'__name__'},direction:'ASCENDING'}],limit:51};
+ if(b.cursor!=null)query.startAt={values:[{referenceValue:'projects/'+VS_CENTRAL_PROJECT+'/databases/(default)/documents/platform_complaints/'+VS_legacySupportId(b.cursor)}],before:false};
+ const raw=VS_central('post',':runQuery',{structuredQuery:query},token)||[];
+ const docs=raw.filter(r=>r.document).map(r=>VS_doc(r.document));
+ if(docs.some(r=>r.schoolId!==school))throw new Error('Complaint school mismatch');
+ return {schoolId:school,complaints:docs.slice(0,50).filter(r=>r.source==='windows'&&r.role==='admin'&&!r.purging).map(VS_legacySupportPublic),cursor:docs.length>50?docs[49].id:null};
+}
+function VS_legacySupportThread(b){
+ const school=VS_project(),token=VS_legacySupportToken(),row=VS_legacySupportRead(b.complaintId,token);
+ if(!row||row.source!=='windows'||row.role!=='admin'||row.purging)throw new Error('Complaint not available');
+ const path='platform_complaints/'+row.id+'/messages',query={from:[{collectionId:'messages'}],orderBy:[{field:{fieldPath:'__name__'},direction:'ASCENDING'}],limit:51};
+ if(b.cursor!=null){if(typeof b.cursor!=='string'||!/^[-_a-zA-Z0-9]{1,120}$/.test(b.cursor))throw new Error('Invalid message cursor');query.startAt={values:[{referenceValue:'projects/'+VS_CENTRAL_PROJECT+'/databases/(default)/documents/'+path+'/'+b.cursor}],before:false};}
+ const raw=VS_central('post','platform_complaints/'+row.id+':runQuery',{structuredQuery:query},token)||[];
+ const docs=raw.filter(r=>r.document).map(r=>VS_doc(r.document));
+ if(docs.some(r=>r.schoolId!==school))throw new Error('Message school mismatch');
+ return {schoolId:school,complaint:VS_legacySupportPublic(row),messages:docs.slice(0,50),cursor:docs.length>50?docs[49].id:null,readOnly:false};
+}
+function VS_legacySupportAnnouncements(b){
+ const school=VS_project(),audience=b.audience;
+ if(audience!=='all'&&audience!==school)throw new Error('Invalid notification audience');
+ const token=VS_legacySupportToken();
+ const query='?pageSize=50&orderBy='+encodeURIComponent('createdAt desc')+(b.cursor?'&pageToken='+encodeURIComponent(String(b.cursor)):'');
+ const out=VS_central('get','platform_developer_notifications/'+audience+'/messages'+query,null,token)||{};
+ return {schoolId:school,documents:out.documents||[],nextPageToken:out.nextPageToken||null};
+}
+function VS_legacySupportCreate(b){
+ const school=VS_project(),id=VS_legacySupportId(b.complaintId),message=String(b.message||'').trim(),version=String(b.version||'').slice(0,32);
+ if(message.length<3||message.length>3000)throw new Error('Use 3–3000 characters for the problem');
+ const token=VS_legacySupportToken();
+ const lock=LockService.getScriptLock();lock.waitLock(15000);
+ try{
+  const existing=VS_legacySupportRead(id,token);
+  if(existing){if(existing.source!=='windows'||existing.role!=='admin'||existing.message!==message)throw new Error('Complaint identity already used');return {schoolId:school,complaintId:id,delivered:true};}
+  const old=VS_get('support_outbox',id);
+  if(old){if(old.schoolId!==school||old.role!=='admin'||old.source!=='windows'||old.message!==message)throw new Error('Complaint identity already used');}
+  else{
+   const limitId=VS_hash('admin/'+VS_day()),limit=VS_get('support_limits',limitId)||{count:0};
+   if(limit.count>=5)throw new Error('Five reports per person per day are allowed');
+   VS_set('support_limits',limitId,{count:limit.count+1});
+   VS_set('support_outbox',id,{schoolId:school,source:'windows',role:'admin',message,version,status:'open',createdAt:Date.now()});
+  }
+ }finally{lock.releaseLock();}
+ try{VS_flushSupport();}catch(_){}
+ const result=VS_legacySupportRead(id,token);
+ if(result&&(result.message!==message||result.role!=='admin'||result.source!=='windows'))throw new Error('Complaint identity already used');
+ return {schoolId:school,complaintId:id,queued:!result,delivered:!!result};
+}
 function VS_queueComplaint(b,role,source,personId){
  const message=String(b.message||'').trim();if(message.length<3||message.length>3000)throw new Error('Use 3–3000 characters for the problem');
  const id=VS_project()+'_'+VS_secret().slice(0,32);
@@ -158,7 +247,12 @@ function VS_flushSupport(){
    {update:{name:'projects/'+VS_CENTRAL_PROJECT+'/databases/(default)/documents/platform_complaints/'+id,fields:fields},currentDocument:{exists:false},updateTransforms:[{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'}]},
    {update:{name:'projects/'+VS_CENTRAL_PROJECT+'/databases/(default)/documents/platform_support_limits/'+VS_project(),fields:{complaintId:VS_encode(id)}},updateTransforms:[{fieldPath:'lastSentAt',setToServerValue:'REQUEST_TIME'}]}
   ]},token);
- }catch(err){if(err.httpCode!==409)throw err;}
+ }catch(err){
+  // A conflict or lost ACK is not delivery proof. Read the same document
+  // using the school-scoped monitor identity before deleting the local row.
+  let proof;try{proof=VS_legacySupportRead(id,token);}catch(_){throw err;}
+  if(!proof||proof.schoolId!==report.schoolId||proof.source!==report.source||proof.role!==report.role||proof.message!==report.message||proof.version!==report.version)throw err;
+ }
  props.setProperty('VS_SUPPORT_LAST_SENT',String(Date.now()));VS_firestore('delete','support_outbox/'+encodeURIComponent(id));
 }
 function VS_setupMessaging(androidAppId,senderId){

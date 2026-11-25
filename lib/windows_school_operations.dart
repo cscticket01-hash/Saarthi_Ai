@@ -1,4 +1,10 @@
 import 'windows_support_history.dart';
+import 'windows_firebase_sync.dart';
+import 'dart:io' show Platform;
+import 'dart:typed_data';
+import 'package:file_selector/file_selector.dart' as support_files;
+import 'package:image/image.dart' as support_image;
+import 'notice_time.dart';
 import 'windows_appearance.dart';
 import 'promotion_session_policy.dart';
 import 'windows_admin_security.dart';
@@ -385,36 +391,94 @@ class _SchoolAttendanceOverviewState extends State<SchoolAttendanceOverview> {
 }
 
 class WindowsSupportScreen extends StatefulWidget {
-  const WindowsSupportScreen({super.key});
+  const WindowsSupportScreen({super.key, this.inbox});
+  final DeveloperInbox? inbox;
   @override
   State<WindowsSupportScreen> createState() => _WindowsSupportScreenState();
 }
 
 class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
   final _message = TextEditingController();
+  final _subject = TextEditingController();
+  Uint8List? _screenshot;
+  bool _choosingScreenshot = false;
+  String _category = 'General';
   final _support = SchoolSupportClient();
-  final _inbox = DeveloperInbox();
+  late final DeveloperInbox _inbox = widget.inbox ?? DeveloperInbox();
+  bool get _ownsInbox => widget.inbox == null;
   Timer? _inboxTimer;
   @override
   void initState() {
     super.initState();
-    unawaited(_inbox.initialize());
-    _inboxTimer = Timer.periodic(const Duration(minutes: 1), (_) => _inbox.refresh());
+    if (_ownsInbox) {
+      unawaited(_inbox.initialize());
+      _inboxTimer = Timer.periodic(const Duration(seconds: 15), (_) => unawaited(_inbox.tick()));
+      unawaited(_inbox.flushSupport());
+    }
   }
   bool _busy = false;
   String? _error;
   @override
   void dispose() {
     _inboxTimer?.cancel();
-    _inbox.dispose();
+    if (_ownsInbox) _inbox.dispose();
+    _subject.dispose();
     _message.dispose();
     super.dispose();
   }
 
+  Future<void> _chooseScreenshot() async {
+    if (_busy || _choosingScreenshot) return;
+    setState(()=>_choosingScreenshot=true);
+    try {
+      final account=await CentralSchoolCloud.saved();
+      if(account.isEmpty){
+        final remote=await WindowsFirebaseRemote.status();
+        if(!remote.authenticated||remote.schoolIdentity!=remote.projectId)throw StateError('Connect the original school administrator before attaching a screenshot.');
+      }
+      final file=await support_files.openFile(acceptedTypeGroups:[const support_files.XTypeGroup(label:'PNG screenshot',extensions:['png'])]);
+      if(file==null || !mounted) return;
+      if(await file.length()>5*1024*1024) throw StateError('Choose a PNG under 5 MB.');
+      final bytes=await file.readAsBytes();
+      if(bytes.length<33 || bytes.length>5*1024*1024 || bytes[0]!=137 || bytes[1]!=80 || bytes[2]!=78 || bytes[3]!=71) throw StateError('Choose a PNG screenshot.');
+      final header=ByteData.sublistView(bytes);
+      final w=header.getUint32(16),h=header.getUint32(20);
+      if(w<1||h<1||w>4096||h>4096) throw StateError('Use a screenshot no larger than 4096 × 4096.');
+      final decoded=support_image.decodePng(bytes);
+      if(decoded==null) throw StateError('PNG could not be read.');
+      Uint8List? safe;
+      for(final limit in [1280,960,720,480]){
+        final resized=w>limit||h>limit ? support_image.copyResize(decoded,width:w>=h?limit:null,height:h>w?limit:null) : decoded;
+        final clean=support_image.Image(width:resized.width,height:resized.height,numChannels:3);
+        support_image.compositeImage(clean,resized);
+        final png=support_image.encodePng(clean);
+        if(png.length<=98304){safe=png;break;}
+      }
+      if(safe==null) throw StateError('Screenshot is too detailed. Crop it to the relevant error and try again.');
+      final preview=safe;
+      if(!mounted) return;
+      final approved=await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(
+        title:const Text('Review screenshot before attaching'),
+        content:SizedBox(width:680,child:Column(mainAxisSize:MainAxisSize.min,children:[
+          Flexible(child:Image.memory(preview,fit:BoxFit.contain)),
+          const SizedBox(height:12),
+          const Text('Only attach the relevant error. Remove passwords, student names, IDs, photos and other private information first. This image will be visible to the developer.'),
+        ])),
+        actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),
+          FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Attach screenshot'))],
+      ));
+      if(mounted && approved==true) setState(()=>_screenshot=preview);
+    }catch(e){if(mounted)setState(()=>_error=e.toString().replaceFirst('Bad state: ',''));}
+    finally{if(mounted)setState(()=>_choosingScreenshot=false);}
+  }
+
   Future<void> _send() async {
-    if (_message.text.trim().length < 10) {
+    if (_busy || _choosingScreenshot) return;
+    final body = _message.text.trim();
+    final subject = _subject.text.trim();
+    if (subject.isEmpty || body.length < 10) {
       setState(
-        () => _error = 'Describe the problem in at least 10 characters.',
+        () => _error = 'Enter a subject and describe the problem in at least 10 characters.',
       );
       return;
     }
@@ -424,16 +488,20 @@ class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
     });
     try {
       final account = await CentralSchoolCloud.saved();
-      if (account['managed'] == true) {
-        await _support.send(_message.text.trim(), WindowsPlatformClient.version);
-      } else {
-        await WindowsPlatformClient.instance.complaint(_message.text.trim());
-      }
+      String os = 'Windows';
+      try { if (Platform.isWindows) os = Platform.operatingSystemVersion; } catch (_) {}
+      final text = 'Subject: $subject\nCategory: $_category\nApp: ${WindowsPlatformClient.version}\nOS: $os\n\n$body';
+      if (text.length > 3000) throw StateError('Total complaint is too long.');
+      if(account.isNotEmpty&&(account['uid'] is! String||account['schoolId']!=FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']))throw StateError('School account changed.');
+      final sent=await _support.send(text,WindowsPlatformClient.version,screenshot:_screenshot==null?null:base64Encode(_screenshot!));
+      if (!mounted) return;
       _message.clear();
-      if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Complaint sent to the developer.')),
-        );
+      _subject.clear();
+      _screenshot=null;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(sent
+          ? 'Complaint sent to the developer.'
+          : 'Complaint saved locally. Delivery pending — see Complaint history.')));
+      unawaited(_inbox.refresh());
     } catch (e) {
       if (mounted)
         setState(() => _error = e.toString().replaceFirst('Bad state: ', ''));
@@ -444,13 +512,13 @@ class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
 
   @override
   Widget build(BuildContext context) { WindowsAppearance.watch(context); return  Scaffold(
-    appBar: AppBar(title: const Text('Report app problem'), actions: [TextButton.icon(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const WindowsComplaintHistory())), icon: const Icon(Icons.history), label: const Text('Complaint history'))]),
+    appBar: AppBar(title: const Text('App Support'), actions: [TextButton.icon(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const WindowsComplaintHistory())), icon: const Icon(Icons.history), label: const Text('Complaint history'))]),
     body: Stack(children: [SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(28, 28, 92, 28),
       child: Align(
         alignment: Alignment.topLeft,
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 620),
+          constraints: const BoxConstraints(maxWidth: 820),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -462,17 +530,71 @@ class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
               const Text(
                 'Tell us which screen had a problem and what happened.',
               ),
+              const SizedBox(height: 16),
+              AnimatedBuilder(animation: _inbox, builder: (context, _) {
+                final tickets = _inbox.supportTickets;
+                return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Wrap(spacing: 8, runSpacing: 8, children: [
+                    for (final entry in ['Total','Open','In progress','Resolved'])
+                      SizedBox(width: 145, child: Card(child: Padding(
+                        padding: const EdgeInsets.all(12), child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(entry),
+                            Text(tickets == null ? '—' : '${entry == 'Total' ? tickets.length : tickets.where((r) => r['status'] == entry.toLowerCase().replaceAll(' ','_')).length}',
+                              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                          ],
+                        ),
+                      ))),
+                  ]),
+                  if (tickets == null || _inbox.error != null)
+                    const Text('Ticket totals require a verified refresh; cached information may be stale.'),
+                  if (tickets != null && tickets.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Row(children: [
+                      const Expanded(child: Text('Recent tickets', style: TextStyle(fontWeight: FontWeight.bold))),
+                      TextButton(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const WindowsComplaintHistory())), child: const Text('View history')),
+                    ]),
+                    for (final ticket in tickets.take(3))
+                      Card(child: ListTile(
+                        title: Text(ticket['message']?.toString().split('\n').first ?? 'Support ticket', maxLines: 1, overflow: TextOverflow.ellipsis),
+                        subtitle: Text('${ticket['status']} • ${formatNoticeIst(noticeMillis(ticket['createdAt']))}'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) =>
+                          WindowsComplaintThread(client: SchoolSupportClient(), complaint: ticket))),
+                      )),
+                  ],
+                ]);
+              }),
               const SizedBox(height: 22),
+              TextField(controller: _subject, enabled: !_busy, maxLength: 120,
+                decoration: const InputDecoration(labelText: 'Subject')),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                value: _category,
+                decoration: const InputDecoration(labelText: 'Category'),
+                items: [for (final c in ['General','Sync Engine','Student Records','Fees','Exam Center','Attendance','Staff salary','App update','Other'])
+                  DropdownMenuItem(value: c, child: Text(c))],
+                onChanged: _busy ? null : (v) => setState(() => _category = v ?? 'General')),
+              const SizedBox(height: 12),
               TextField(
                 controller: _message,
+                enabled: !_busy,
                 minLines: 7,
                 maxLines: 12,
-                maxLength: 3000,
+                maxLength: 2800,
                 decoration: const InputDecoration(
                   labelText: 'Your complaint',
-                  hintText: 'Describe the issue. Do not include passwords.',
+                  hintText: 'Describe the issue. Do not include passwords or student personal data.',
                 ),
               ),
+              Wrap(spacing:8,runSpacing:8,children:[
+                OutlinedButton.icon(onPressed:_busy||_choosingScreenshot?null:_chooseScreenshot,
+                  icon:const Icon(Icons.attach_file),label:Text(_choosingScreenshot?'Preparing…':_screenshot==null?'Attach PNG screenshot':'Replace screenshot')),
+                if(_screenshot!=null) TextButton.icon(onPressed:_busy?null:()=>setState(()=>_screenshot=null),
+                  icon:const Icon(Icons.close),label:const Text('Remove screenshot')),
+              ]),
+              if(_screenshot!=null) Align(alignment:Alignment.centerLeft,child:SizedBox(height:100,child:Image.memory(_screenshot!,fit:BoxFit.contain))),
+              const Text('App version and Windows version are included. Do not include credentials or private school records.'),
               if (_error != null)
                 Text(_error!, style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.redAccent))),
               const SizedBox(height: 18),

@@ -101,6 +101,20 @@ service cloud.firestore {
           request.time >= resource.data.reportedAt + duration.value(5, 'm'));
     }
     match /platform_complaints/{complaint} {
+      // Legacy Apps Script uses its existing school-scoped monitoring identity.
+      // An unrestricted query is still denied; caller must constrain schoolId.
+      // Stable IDs also authorize an exact missing-document lookup for an
+      // idempotent create. Existing foreign records must still be denied.
+      allow get: if request.auth != null &&
+        exists(/databases/$(database)/documents/platform_monitor_access/$(request.auth.uid)) &&
+        complaint.matches('^' + get(/databases/$(database)/documents/platform_monitor_access/$(request.auth.uid)).data.schoolId + '_[a-f0-9]{32}$') &&
+        (!exists(/databases/$(database)/documents/platform_complaints/$(complaint)) || monitor(resource.data.schoolId));
+      allow list: if monitor(resource.data.schoolId) && resource.data.source == 'windows' && resource.data.role == 'admin';
+      match /messages/{message} {
+        allow read: if monitor(get(/databases/$(database)/documents/platform_complaints/$(complaint)).data.schoolId) &&
+          get(/databases/$(database)/documents/platform_complaints/$(complaint)).data.source == 'windows' &&
+          get(/databases/$(database)/documents/platform_complaints/$(complaint)).data.role == 'admin';
+      }
       allow create: if monitor(request.resource.data.schoolId) &&
         complaint.matches('^' + request.resource.data.schoolId + '_[a-f0-9]{32}$') &&
         request.resource.data.keys().hasOnly(['schoolId','source','role','message','version','status','createdAt']) &&
@@ -127,6 +141,8 @@ service cloud.firestore {
         get(/databases/$(database)/documents/school_memberships/$(request.auth.uid)).data.active == true &&
         get(/databases/$(database)/documents/school_memberships/$(request.auth.uid)).data.role == 'school_admin' &&
         (audience == 'all' || audience == get(/databases/$(database)/documents/school_memberships/$(request.auth.uid)).data.schoolId);
+      allow read: if request.auth != null && exists(/databases/$(database)/documents/platform_monitor_access/$(request.auth.uid)) &&
+        (audience == 'all' || monitor(audience));
       // Publishing remains developer-only under the rule below.
     }
     // Purchase receipts are append-only to browser clients; Admin SDK writes bypass rules.

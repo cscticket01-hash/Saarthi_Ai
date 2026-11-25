@@ -25,7 +25,7 @@ exports.schoolCloudApi = onRequest({region:'asia-south1', maxInstances:3, concur
     return res.json(await handle(req));
   } catch(e) {
     // No token, Google error payload, profile or credential is logged/returned.
-    const status = [400,401,403,405,409].includes(e.status) ? e.status : 503;
+    const status = [400,401,403,404,405,409,413,429].includes(e.status) ? e.status : 503;
     return res.status(status).json({success:false,message:status === 503 ? 'School cloud is unavailable or developer configuration is incomplete. Retry the same school.' : e.message});
   }
 });

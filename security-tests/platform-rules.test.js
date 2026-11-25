@@ -2,7 +2,7 @@
 const {before,after,beforeEach,test}=require('node:test');
 const {readFileSync}=require('node:fs');
 const {initializeTestEnvironment,assertFails,assertSucceeds}=require('@firebase/rules-unit-testing');
-const {doc,collection,getDoc,getDocs,setDoc,updateDoc,deleteDoc,serverTimestamp,Timestamp,writeBatch}=require('firebase/firestore');
+const {doc,collection,getDoc,getDocs,query,where,setDoc,updateDoc,deleteDoc,serverTimestamp,Timestamp,writeBatch}=require('firebase/firestore');
 let env;
 before(async()=>{env=await initializeTestEnvironment({projectId:'demo-saarthi-platform',firestore:{rules:readFileSync('../firestore.platform.rules','utf8')}});});
 after(async()=>{await env?.cleanup();});
@@ -160,4 +160,21 @@ test('shared repair signing, CI evidence and private source state are backend-on
    await assertFails(deleteDoc(doc(db,path)));
   }
  }
+});
+
+test('legacy support readback and scoped history do not permit foreign tickets or writes',async()=>{
+ await access();
+ const a='school-one_'+'a'.repeat(32),b='school-two_'+'b'.repeat(32);
+ await seed('platform_complaints/'+a,{schoolId:'school-one',source:'windows',role:'admin',message:'Own report'});
+ await seed('platform_complaints/'+b,{schoolId:'school-two',source:'windows',role:'admin',message:'Foreign report'});
+ await seed('platform_complaints/'+a+'/messages/reply',{schoolId:'school-one',role:'developer',message:'Reply'});
+ await assertSucceeds(getDoc(doc(school(),'platform_complaints/'+a)));
+ await assertFails(getDoc(doc(school(),'platform_complaints/'+b)));
+ await assertSucceeds(getDoc(doc(school(),'platform_complaints/school-one_'+'c'.repeat(32))));
+ await assertFails(getDocs(query(collection(school(),'platform_complaints'),where('schoolId','==','school-one'))));
+ await assertSucceeds(getDocs(query(collection(school(),'platform_complaints'),where('schoolId','==','school-one'),where('source','==','windows'),where('role','==','admin'))));
+ await assertFails(getDocs(query(collection(school(),'platform_complaints'),where('schoolId','==','school-two'))));
+ await assertSucceeds(getDocs(collection(school(),'platform_complaints/'+a+'/messages')));
+ await assertFails(getDocs(collection(school('school-two-monitor'),'platform_complaints/'+a+'/messages')));
+ await assertFails(updateDoc(doc(school(),'platform_complaints/'+a),{status:'resolved'}));
 });

@@ -54,6 +54,18 @@ class DeveloperService {
     }
     if (action == 'developer/dashboard')
       return _dashboard(body['refresh'] == true);
+    if (action == 'complaint/list') return _complaintPage(body);
+    if (action == 'complaint/attachment') {
+      final id = body['complaintId']?.toString() ?? '';
+      if (!RegExp(r'^[-_a-zA-Z0-9]{1,120}$').hasMatch(id)) throw StateError('Invalid ticket ID');
+      final ref = _db.collection('platform_complaints').doc(id);
+      final row = (await ref.get()).data();
+      if(row==null || complaintExpired(row) || row['hasScreenshot']!=true) throw StateError('Screenshot unavailable');
+      final attachment=(await ref.collection('attachments').doc('screenshot').get()).data();
+      final encoded=attachment?['base64'];
+      if(encoded is! String || encoded.length>131072 || attachment?['schoolId']!=row['schoolId'] || sha256.convert(base64Decode(encoded)).toString()!=row['screenshotSha256']) throw StateError('Invalid screenshot');
+      return {'success':true,'screenshot':encoded};
+    }
     _cached = null;
     if (action == 'school/block' ||
         action == 'school/delete' ||
@@ -203,6 +215,7 @@ class DeveloperService {
               ? (data['resolvedAt'] ?? FieldValue.serverTimestamp())
               : null,
           'developerNote': note,
+          'developerUpdatedAt': FieldValue.serverTimestamp(),
           'supportHistoryVersion': 1,
           'updatedAt': FieldValue.serverTimestamp(),
         });
@@ -210,6 +223,28 @@ class DeveloperService {
       return {'success': true};
     }
     throw ArgumentError('Unknown developer action');
+  }
+
+  Future<Map<String,dynamic>> _complaintPage(Map<String,dynamic> body) async {
+    final school=body['schoolId']?.toString()??'';
+    if(school.isEmpty) throw StateError('Select a school.');
+    Query<Map<String,dynamic>> query=_db.collection('platform_complaints');
+    if(school!='all') query=query.where('schoolId',isEqualTo:school);
+    query=query.orderBy(FieldPath.documentId);
+    final cursor=body['cursor'];
+    if(cursor!=null){
+      if(cursor is! String || !RegExp(r'^[-_a-zA-Z0-9]{1,120}$').hasMatch(cursor)) throw StateError('Invalid ticket cursor');
+      query=query.startAfter([cursor]);
+    }
+    final page=await query.limit(51).get();
+    final docs=page.docs.take(50).toList();
+    final rows=<Map<String,dynamic>>[];
+    for(final d in docs){
+      final data=d.data();
+      if(complaintExpired(data)) continue;
+      rows.add({...Map<String,dynamic>.from(_plain(data)..remove('screenshotBase64')),'id':d.id});
+    }
+    return {'success':true,'complaints':rows,'cursor':page.docs.length>50?docs.last.id:null};
   }
 
   Future<Map<String, dynamic>> _dashboard(bool refresh) async {
@@ -231,7 +266,7 @@ class DeveloperService {
               (s) => s.docs
                   .map(
                     (d) => <String, dynamic>{
-                      ...Map<String, dynamic>.from(_plain(d.data())),
+                      ...Map<String, dynamic>.from(_plain(d.data())..remove('screenshotBase64')),
                       'id': d.id,
                     },
                   )

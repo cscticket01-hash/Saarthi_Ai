@@ -130,6 +130,26 @@ void main() {
       inbox.dispose();
     },
   );
+  test('developer ticket replies and student complaint updates become unread separately', () async {
+    var revision = 1;
+    final inbox = DeveloperInbox(readPage: (a,c) async => {'documents': []},
+      readComplaints: (_) async => {'complaints': [
+        {'id':'own-ticket','schoolId':school,'message':'App issue','status':'in_progress',
+          'developerNote':'Reply $revision','createdAt':1700000000000,'developerUpdatedAt':1700000000000+revision},
+        {'id':'student-ticket','schoolId':school,'audience':'school','message':'Student problem',
+          'status':revision == 1 ? 'open' : 'in_progress','createdAt':1700000000001},
+      ],'cursor':null});
+    await inbox.initialize();
+    expect(inbox.unreadFor('support'),1);
+    expect(inbox.unreadFor('student'),1);
+    for(final row in inbox.messages) { await inbox.markRead(row); }
+    expect(inbox.unread,0);
+    revision++;
+    await inbox.refresh();
+    expect(inbox.unreadFor('support'),1);
+    expect(inbox.unreadFor('student'),1);
+    inbox.dispose();
+  });
   test(
     'foreign path and changed profile during a response cannot write cache or expose another school',
     () async {

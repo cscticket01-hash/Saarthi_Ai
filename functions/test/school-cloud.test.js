@@ -6,7 +6,7 @@ const A='vs-'+'a'.repeat(32),B='vs-'+'b'.repeat(32),clientId='desktop.apps.googl
 function fixture(){
  const documents=new Map();
  const db={doc:path=>({path,get:async()=>snap(path),set:async value=>documents.set(path,value),create:async value=>{assert(!documents.has(path));documents.set(path,value);}}),
-  runTransaction:async run=>run({get:async ref=>snap(ref.path),create:(ref,value)=>{assert(!documents.has(ref.path));documents.set(ref.path,value);}})};
+  runTransaction:async run=>run({get:async ref=>snap(ref.path),create:(ref,value)=>{assert(!documents.has(ref.path));documents.set(ref.path,value);},set:(ref,value,options)=>documents.set(ref.path,options?.merge===true?{...documents.get(ref.path),...value}:value)})};
  function snap(path){return {exists:documents.has(path),data:()=>documents.get(path)};}
  const auth={verifyIdToken:async token=>{if(!['A','B'].includes(token))throw Error('invalid token');return {uid:token==='A'?uidFor('123'):uidFor('456')};},
   createCustomToken:async(uid,claims)=>{assert.equal(claims.admin,undefined);assert.equal(claims.developer,undefined);return 'custom-'+uid;}};
@@ -109,3 +109,49 @@ test('Setup diagnostics require active own-school authorization, reject secrets 
 });
 
 test('managed-only onboarding preserves existing schools but cannot self-create a tenant',async()=>{const f=fixture();const handle=createSchoolCloud({auth:f.auth,db:f.db,projectId:'central-project',clientIds:[clientId],fetchImpl:f.fetchImpl,allowNewSchools:false});const req=()=>handle({method:'POST',headers:{},body:{action:'onboard',schoolName:'School',googleAccessToken:'google-access-token'}});await assert.rejects(req(),e=>e.status===403);assert.equal(f.documents.size,0);f.seed();assert.equal((await req()).schoolId,A);f.documents.get('school_memberships/'+uidFor('123')).managed=true;await assert.rejects(req(),e=>e.status===403);});
+
+test('legacy central membership uses the same idempotent complaint ticket without managed-role impersonation',async()=>{
+ const f=fixture();f.seed();
+ const complaintId=A+'_'+'c'.repeat(32);
+ const body={action:'support/create',schoolId:A,complaintId,message:'Legacy central support'};
+ const first=await f.req(body);assert.equal(first.complaintId,complaintId);
+ await f.req(body);assert.equal(f.documents.get('platform_complaints/'+complaintId).schoolId,A);
+ await assert.rejects(f.req({...body,schoolId:B}),e=>e.status===403);
+ await assert.rejects(f.req({action:'support/thread',schoolId:B,complaintId},'B'),e=>e.status===404);
+ f.documents.set('school_memberships/'+uidFor('123'),{schoolId:A,role:'school_admin',active:true,managed:true});
+ await assert.rejects(f.req(body),e=>e.status===403);
+});
+
+test('legacy monitor uses existing private attachment and receipt owner, never foreign or student tickets',async()=>{
+ const f=fixture(),school='original-school-one',other='original-school-two';
+ f.seed();f.documents.set('platform_monitor_access/'+uidFor('123'),{schoolId:school});
+ const complaintId=school+'_'+'e'.repeat(32);
+ const screenshot='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aW1kAAAAASUVORK5CYII=';
+ const body={action:'legacy/support/createWithScreenshot',schoolId:school,complaintId,message:'Original school screenshot',screenshot};
+ const first=await f.req(body);assert.equal(first.delivered,true);assert.equal(first.screenshotSha256.length,64);
+ assert.equal((await f.req(body)).screenshotSha256,first.screenshotSha256);
+ const attached=await f.req({action:'legacy/support/attachment',schoolId:school,complaintId});assert.equal(attached.screenshot,screenshot);
+ const messageId='1795600000000_'+'f'.repeat(32);
+ const reply={action:'legacy/support/reply',schoolId:school,complaintId,messageId,message:'More information'};
+ assert.equal((await f.req(reply)).messageId,messageId);
+ const parent=f.documents.get('platform_complaints/'+complaintId);
+ assert.equal(parent.schoolId,school);
+ assert.equal(parent.source,'windows');
+ assert.equal(parent.role,'admin');
+ assert.equal(parent.message,body.message);
+ assert.equal(parent.screenshotSha256,first.screenshotSha256);
+ assert.equal((await f.req(reply)).messageId,messageId);
+ assert.equal([...f.documents.keys()].filter(p=>p.startsWith('platform_complaints/'+complaintId+'/messages/')).length,1);
+ assert.equal((await f.req({action:'legacy/support/attachment',schoolId:school,complaintId})).screenshot,screenshot);
+ const key='a'.repeat(64);
+ assert.deepEqual((await f.req({action:'legacy/support/readReceipts',schoolId:school,keys:[key],marked:[key]})).read,[key]);
+ f.documents.set('platform_monitor_access/'+uidFor('456'),{schoolId:other});
+ await assert.rejects(f.req(body,'B'),e=>e.status===403);
+ await assert.rejects(f.req({...reply,schoolId:other},'B'),e=>e.status===404);
+ await assert.rejects(f.req({action:'legacy/support/resolve',schoolId:school,complaintId}),e=>e.status===400);
+ const studentId=school+'_'+'d'.repeat(32);
+ f.documents.set('platform_complaints/'+studentId,{schoolId:school,source:'android',role:'student',audience:'school',message:'Student issue'});
+ await assert.rejects(f.req({...reply,complaintId:studentId}),e=>e.status===404);
+ f.documents.delete('platform_monitor_access/'+uidFor('123'));
+ await assert.rejects(f.req(reply),e=>e.status===403);
+});

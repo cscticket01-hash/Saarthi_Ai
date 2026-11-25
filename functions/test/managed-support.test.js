@@ -23,6 +23,7 @@ test('school complaint creation is durable and idempotent; foreign school cannot
  await f.call(reply);await f.call(reply);
  const thread=await f.call({action:'managed/support/thread',complaintId:id});assert.equal(thread.messages.length,1);assert.equal(thread.messages[0].role,'school');
  await assert.rejects(f.call({...reply,message:'Changed retry'}),e=>e.status===409);
+ await assert.rejects(f.call({...reply,messageId:time+'_'+'e'.repeat(32)}),e=>e.status===429);
  assert.equal(f.sent.length,0,'support never calls school Drive or uploads operational data');
 });
 test('complaint history paginates beyond 50 records and validates identifiers',async()=>{
@@ -35,10 +36,28 @@ test('complaint history paginates beyond 50 records and validates identifiers',a
 test('only the owning school resolves student complaints; reopening clears the retention clock',async()=>{
  const f=setup();f.docs.set('platform_complaints/'+id,{schoolId:A,audience:'school',message:'Student complaint',status:'open',createdAt:time});
  await assert.rejects(f.call({action:'managed/support/resolve',complaintId:id,status:'resolved'},'B'),e=>e.status===404);
+ await assert.rejects(f.call({action:'managed/support/reply',complaintId:id,messageId:time+'_'+'c'.repeat(32),message:'Wrong channel'}),e=>e.status===404);
  await f.call({action:'managed/support/resolve',complaintId:id,status:'resolved',reply:'Fixed'});
  assert.equal(f.docs.get('platform_complaints/'+id).resolvedAt.getTime(),time);
  await f.call({action:'managed/support/resolve',complaintId:id,status:'open'});
  assert.equal(f.docs.get('platform_complaints/'+id).resolvedAt,null);
  f.docs.get('platform_complaints/'+id).purging=true;
  await assert.rejects(f.call({action:'managed/support/resolve',complaintId:id,status:'open'}),e=>e.status===404);
+});
+
+test('private screenshot and revision receipt are school scoped and not in list/thread payload',async()=>{
+ const f=setup();
+ const png='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aW1kAAAAASUVORK5CYII=';
+ const body={action:'managed/support/createWithScreenshot',complaintId:id,message:'Screenshot issue',screenshot:png};
+ const ack=await f.call(body);assert.equal(ack.screenshotSha256.length,64);
+ await f.call(body);
+ const list=await f.call({action:'managed/support/list'});assert.equal(list.complaints[0].hasScreenshot,true);assert(!JSON.stringify(list).includes(png));
+ const unchanged=await f.call({action:'managed/support/list',ifRevision:list.revision});assert.equal(unchanged.unchanged,true);assert.equal(unchanged.complaints,undefined);
+ const thread=await f.call({action:'managed/support/thread',complaintId:id});assert(!JSON.stringify(thread).includes(png));
+ const attachment=await f.call({action:'managed/support/attachment',complaintId:id});assert.equal(attachment.screenshot,png);
+ await assert.rejects(f.call({action:'managed/support/attachment',complaintId:id},'B'),e=>e.status===404);
+ const key='f'.repeat(64);
+ assert.deepEqual((await f.call({action:'managed/support/readReceipts',keys:[key],marked:[key]})).read,[key]);
+ assert.deepEqual((await f.call({action:'managed/support/readReceipts',keys:[key],marked:[]},'A-new-pc')).read,[key]);
+ assert.deepEqual((await f.call({action:'managed/support/readReceipts',keys:[key],marked:[]},'B')).read,[]);
 });
