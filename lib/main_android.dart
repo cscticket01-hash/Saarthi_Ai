@@ -1,4 +1,5 @@
 import 'mobile/complaint_screen.dart';
+import 'notice_time.dart';
 import 'liquid_glass_theme.dart';
 import 'qr_authentication_engine.dart';
 
@@ -1184,7 +1185,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
       const SizedBox(height: 14),
       if (_list(_data['notices']).isEmpty)
         _card(const Text('No notices from your school yet.')),
-      ..._list(_data['notices']).map(
+      ...sortedNoticeRows(_list(_data['notices'])).map(
         (n) => _card(
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1200,6 +1201,12 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
               Text(
                 n['description']?.toString() ?? n['message']?.toString() ?? '',
               ),
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(noticeDateLabel(n), style: Theme.of(context).textTheme.bodySmall),
+              ),
+              if (noticeEditLabel(n) case final String edited)
+                Text(edited, style: Theme.of(context).textTheme.bodySmall),
               if (n['category'] != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 10),

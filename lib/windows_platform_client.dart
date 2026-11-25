@@ -15,6 +15,7 @@ import 'windows_firebase_sync.dart';
 import 'windows_local_firestore.dart';
 import 'windows_local_settings.dart';
 import 'windows_notice_delivery.dart';
+import 'notice_time.dart';
 
 class WindowsLicenseState {
   const WindowsLicenseState(
@@ -409,7 +410,11 @@ class WindowsPlatformClient {
         (db.activeProfileIdentity['schoolSyncId'] != saved['schoolId'] || !await db.localPersistenceEnabled())) {
       throw StateError('Current school durable notice storage is unavailable.');
     }
-    await db.collection('school_notices').doc(id).set({...data,
+    final noticeRef = db.collection('school_notices').doc(id);
+    final existing = await noticeRef.get();
+    if (origin != db.activeProfileId) throw StateError('School changed. Reopen notices.');
+    final payload = noticeSaveTimes(existing.data(), data, DateTime.now().millisecondsSinceEpoch);
+    await noticeRef.set({...payload,
       if(saved['managed']==true) 'schoolId':saved['schoolId'],
       'deliveryStatus':saved['managed']==true?'sync_pending':'notification_pending'});
     watch.stop();

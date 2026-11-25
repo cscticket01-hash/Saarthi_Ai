@@ -1,4 +1,5 @@
 import 'windows_person_fields.dart';
+import 'notice_time.dart';
 import 'windows_payment_confirmation.dart';
 import 'windows_person_avatar.dart';
 import 'india_address_fields.dart';
@@ -3942,17 +3943,6 @@ void _handleLoginBack(bool didPop) {
     }
   }
 
-  String _formatTimestamp(dynamic timestamp) {
-    if (timestamp is Timestamp) {
-      final date = timestamp.toDate();
-      final day = date.day.toString().padLeft(2, '0');
-      final month = date.month.toString().padLeft(2, '0');
-      final year = date.year.toString();
-      return '$day/$month/$year';
-    }
-    return '';
-  }
-
   String _studentInitial(String? value) {
     if (value == null || value.trim().isEmpty) return 'S';
     return value.trim().substring(0, 1).toUpperCase();
@@ -4333,7 +4323,8 @@ errorBuilder: (context, error, stackTrace) {
                         title: notice['title']?.toString() ?? 'Notice',
                         description: notice['description']?.toString() ?? '',
                         category: notice['category']?.toString() ?? 'General',
-                        date: _formatTimestamp(notice['timestamp']),
+                        date: noticeDateLabel(notice),
+                        edited: noticeEditLabel(notice),
                       );
                     },
                   );
@@ -4346,7 +4337,7 @@ errorBuilder: (context, error, stackTrace) {
     );
   }
 
-  Widget _buildNoticeCard({required String title, required String description, required String category, required String date}) {
+  Widget _buildNoticeCard({required String title, required String description, required String category, required String date, String? edited}) {
     final accent = _categoryColor(category);
     final categoryIcon = _categoryIcon(category);
     return Container(
@@ -4383,11 +4374,12 @@ errorBuilder: (context, error, stackTrace) {
                         children: [
                            Icon(Icons.calendar_today_rounded, size: 11, color: WindowsAppearance.foreground(Colors.white30)),
                           const SizedBox(width: 4),
-                          Text(date, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white30), fontSize: 9.5)),
+                          Flexible(child: Text(date, translate: false, style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white60), fontSize: 10))),
                         ],
                       ),
                   ],
                 ),
+                if (edited != null) Text(edited, translate: false, style: TextStyle(fontSize: 10, color: WindowsAppearance.foreground(Colors.white54))),
                 const SizedBox(height: 7),
                 Text(title, maxLines: 2, overflow: TextOverflow.ellipsis, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 14, fontWeight: FontWeight.w700, height: 1.25)),
                 if (description.isNotEmpty) ...[
@@ -4888,12 +4880,10 @@ void _handleLoginBack(bool didPop) {
     setState(() => _isSavingNotice = true);
     try {
 
-      final now = DateTime.now().millisecondsSinceEpoch;
       final id = _editingNoticeId ?? 'NOTICE-${DateTime.now().microsecondsSinceEpoch}-${Random.secure().nextInt(1 << 30)}';
       // An edited announcement is a new notification, avoiding old FCM-job dedupe.
       final result = await WindowsPlatformClient.instance.publishNotice(id, {
         'title': title, 'description': description, 'category': _noticeCategory,
-        'timestamp': now, 'lastEdited': now,
       });
 
       if (!mounted) return;
@@ -6769,7 +6759,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                                           ),
                                         ),
                                         Text(
-                                          'Notice ${index + 1}',
+                                          noticeDateLabel(data), translate: false,
                                           style:  TextStyle(fontFamily: 'Segoe UI', 
                                             color: WindowsAppearance.foreground(Colors.white24),
                                             fontSize: 8.8,
@@ -6778,6 +6768,8 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                                         ),
                                       ],
                                     ),
+                                    if (noticeEditLabel(data) case final String edited)
+                                      Text(edited, translate: false, style: TextStyle(fontSize: 10, color: WindowsAppearance.foreground(Colors.white60))),
                                     const SizedBox(height: 6),
                                     Text(data['title']?.toString() ?? 'Untitled Notice', translate: false,
                                       maxLines: 2,
@@ -7178,13 +7170,14 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
         ),
         content: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 520),
-          child: Text(data['description']?.toString() ?? '', translate: false,
-            style:  TextStyle(fontFamily: 'Segoe UI', 
-              color: WindowsAppearance.foreground(Colors.white70),
-              fontSize: 12,
-              height: 1.6,
-            ),
-          ),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(noticeDateLabel(data), translate: false, style: TextStyle(fontSize: 11, color: WindowsAppearance.foreground(Colors.white60))),
+            if (noticeEditLabel(data) case final String edited)
+              Text(edited, translate: false, style: TextStyle(fontSize: 11, color: WindowsAppearance.foreground(Colors.white60))),
+            const SizedBox(height: 8),
+            Text(data['description']?.toString() ?? '', translate: false,
+              style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white70), fontSize: 12, height: 1.6)),
+          ]),
         ),
         actions: [
           TextButton(
