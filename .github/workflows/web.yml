@@ -97,6 +97,257 @@ jobs:
       # =========================================================
       - name: Verify latest installer selection
         run: flutter test test/release_download_test.dart
+      # Only this explicit download refresh waits for the requested signed/public releases.
+      - name: Resolve and verify latest published Windows and Android installers
+        if: contains(github.event.head_commit.message, '[refresh-app-downloads]')
+        timeout-minutes: 45
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUIRED_WINDOWS_SHA: 29f839c53356a3a40431dad113d6d55640d6149c
+          REQUIRED_ANDROID_SHA: 9758ebd721d81a9f4c8a6a6313f2022d53b53636
+        run: |
+          node --input-type=module <<'NODE'
+          import {readFile,writeFile} from 'node:fs/promises';
+          import {setTimeout as delay} from 'node:timers/promises';
+          import {selectInstaller} from './scripts/stage-web-downloads.mjs';
+          const repo='cscticket01-hash/Saarthi_Ai';
+          const headers={Authorization:'Bearer '+process.env.GH_TOKEN,Accept:'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'};
+          async function api(path){
+            const r=await fetch('https://api.github.com/repos/'+repo+path,{headers,signal:AbortSignal.timeout(30000)});
+            if(!r.ok)throw Error('GitHub metadata request failed: '+r.status);
+            return r.json();
+          }
+          const config=JSON.parse(await readFile('firebase.json','utf8'));
+          const deadline=Date.now()+42*60*1000;
+          const policies={
+            windows:{route:'/downloads/windows.exe',required:process.env.REQUIRED_WINDOWS_SHA,name:v=>'Vidya_Saarthi_Setup_'+v+'.exe'},
+            android:{route:'/downloads/android.apk',required:process.env.REQUIRED_ANDROID_SHA,name:v=>'Vidya-Saarthi-v'+v+'.apk'}
+          };
+          const version=tag=>tag.split('-v')[1].split('.').map(Number);
+          const compareVersion=(a,b)=>{for(let i=0;i<3;i++)if(a[i]!==b[i])return a[i]-b[i];return 0;};
+          async function resolve(){
+            const releases=[];
+            for(let page=1;page<=5;page++){
+              const batch=await api('/releases?per_page=100&page='+page);
+              releases.push(...batch);if(batch.length<100)break;
+            }
+            const result={};
+            for(const [platform,policy] of Object.entries(policies)){
+              const pattern=new RegExp('^'+platform+'-v[0-9]+[.][0-9]+[.][0-9]+
+
+      - name: Build Web
+        env:
+          SAARTHI_SCHOOL_CLOUD_URL: ${{ vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
+        run: |
+          flutter build web \
+            --release \
+            --base-href "/" \
+            --dart-define=SAARTHI_SCHOOL_CLOUD_URL="$SAARTHI_SCHOOL_CLOUD_URL"
+
+      # =========================================================
+      # BLOCK COMMON INSPECT / VIEW SOURCE SHORTCUTS
+      # =========================================================
+      - name: Add Browser Inspect Protection
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          index_file = Path("build/web/index.html")
+
+          if not index_file.exists():
+              raise SystemExit("build/web/index.html not found")
+
+          html = index_file.read_text(encoding="utf-8")
+
+          marker = "<!-- VIDYA_SAARTHI_INSPECT_PROTECTION -->"
+
+          protection = r'''
+          <!-- VIDYA_SAARTHI_INSPECT_PROTECTION -->
+          <script>
+          (() => {
+            // Block right-click menus while preserving keyboard clipboard actions.
+            document.addEventListener('contextmenu', function(event) {
+              event.preventDefault();
+            }, true);
+
+            // Disable common browser developer-tool shortcuts.
+            document.addEventListener('keydown', function(event) {
+              const key = (event.key || '').toLowerCase();
+
+              // Clipboard shortcuts belong to the focused field/selection.
+              if ((event.ctrlKey || event.metaKey) &&
+                  !event.altKey && ['a', 'c', 'v', 'x'].includes(key)) {
+                return;
+              }
+
+              // F12
+              if (event.key === 'F12') {
+                event.preventDefault();
+                event.stopPropagation();
+                return false;
+              }
+
+              // Ctrl + Shift + I / J / C / K
+              if (
+                event.ctrlKey &&
+                event.shiftKey &&
+                ['i', 'j', 'c', 'k'].includes(key)
+              ) {
+                event.preventDefault();
+                event.stopPropagation();
+                return false;
+              }
+
+              // Ctrl + U = View Source
+              if (event.ctrlKey && key === 'u') {
+                event.preventDefault();
+                event.stopPropagation();
+                return false;
+              }
+
+              // Mac equivalents
+              if (
+                event.metaKey &&
+                event.altKey &&
+                ['i', 'j', 'c'].includes(key)
+              ) {
+                event.preventDefault();
+                event.stopPropagation();
+                return false;
+              }
+
+              if (event.metaKey && key === 'u') {
+                event.preventDefault();
+                event.stopPropagation();
+                return false;
+              }
+            }, true);
+          })();
+          </script>
+          '''
+
+          if marker not in html:
+              if "</body>" in html:
+                  html = html.replace(
+                      "</body>",
+                      protection + "\n</body>"
+                  )
+              else:
+                  html += protection
+
+              index_file.write_text(
+                  html,
+                  encoding="utf-8"
+              )
+
+              print("Inspect protection added successfully.")
+          else:
+              print("Inspect protection already exists.")
+          PY
+
+      # =========================================================
+      # ADD PUBLIC OAUTH BRANDING PAGES
+      # These remain plain HTML so Google can access them without login.
+      # =========================================================
+      - name: Add Public OAuth Pages
+        run: |
+          mkdir -p build/web/home build/web/privacy
+          cp oauth-public/home/index.html build/web/home/index.html
+          cp oauth-public/privacy/index.html build/web/privacy/index.html
+          cp googleb7106cab4c8a4975.html build/web/googleb7106cab4c8a4975.html
+          test -f build/web/home/index.html
+          test -f build/web/privacy/index.html
+          test -f build/web/googleb7106cab4c8a4975.html
+
+      # =========================================================
+      # VERIFY BUILD
+      # =========================================================
+      - name: Version Flutter scripts to prevent stale website layouts
+        run: |
+          python -m unittest discover -s scripts -p "test_version_web_entrypoints.py"
+          python scripts/version-web-entrypoints.py
+
+      - name: Verify Built Assets
+        run: |
+          test -f build/web/index.html
+          test -f build/web/assets/assets/school_logo.png
+          test -f build/web/assets/assets/principal_sign.png
+          test -f build/web/assets/assets/whatsapp.png
+
+          grep -q "VIDYA_SAARTHI_INSPECT_PROTECTION" build/web/index.html
+
+          echo "===== BUILD READY ====="
+          echo "===== INSPECT PROTECTION FOUND ====="
+
+      # =========================================================
+      # CREATE FIREBASE SERVICE ACCOUNT FILE
+      # =========================================================
+      - name: Configure Firebase Credentials
+        run: |
+          echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}' > "$RUNNER_TEMP/firebase-service-account.json"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/firebase-service-account.json" >> "$GITHUB_ENV"
+
+      # =========================================================
+      # INSTALL FIREBASE CLI
+      # =========================================================
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools
+
+      # =========================================================
+      # DEPLOY ONLY VIDYASAARTHI HOSTING SITE
+      # =========================================================
+      - name: Verify and deploy free central Firebase rules
+        if: "!contains(github.event.head_commit.message, '[hosting-only]')"
+        run: |
+          npm --prefix functions install
+          npm --prefix functions test
+          node .github/scripts/configure_platform_auth.cjs
+          firebase deploy --project saarthi-ai-df12b --only firestore:rules
+
+      - name: Deploy to Firebase Hosting
+        run: |
+          firebase deploy \
+            --project saarthi-ai-df12b \
+            --only hosting:vidyasaarthi
+);
+              const candidates=releases.filter(r=>!r.draft&&!r.prerelease&&r.published_at&&pattern.test(r.tag_name))
+                .map(r=>({...r,assets:(r.assets||[]).filter(a=>a.name===policy.name(r.tag_name.split('-v')[1])&&a.state==='uploaded'&&a.size>10000&&/^sha256:[a-f0-9]{64}$/.test(a.digest||'')&&a.browser_download_url==='https://github.com/'+repo+'/releases/download/'+r.tag_name+'/'+a.name)}));
+              const a=selectInstaller(candidates,platform);
+              if(!a)return null;
+              const release=candidates.find(r=>r.tag_name===a.tag);
+              const source=release.target_commitish;
+              if(!/^[a-f0-9]{40}$/.test(source||''))return null;
+              if(source!==policy.required){
+                const ancestry=await api('/compare/'+policy.required+'...'+source);
+                if(!['ahead','identical'].includes(ancestry.status))return null;
+              }
+              const tag=await api('/git/ref/tags/'+encodeURIComponent(a.tag));
+              let target=tag.object;
+              if(target.type==='tag')target=(await api('/git/tags/'+target.sha)).object;
+              if(target.type!=='commit'||target.sha!==source)throw Error('Release source/tag mismatch: '+a.tag);
+              const existing=config.hosting.redirects.find(r=>r.source===policy.route);
+              if(!existing)throw Error('Missing existing download redirect');
+              const oldTag=new URL(existing.destination).pathname.split('/').at(-2);
+              if(compareVersion(version(a.tag),version(oldTag))<0)throw Error('Refusing download version regression');
+              result[platform]={route:policy.route,destination:a.browser_download_url,tag:a.tag,source,digest:a.digest};
+            }
+            return result;
+          }
+          let selected=null;
+          while(Date.now()<deadline){
+            selected=await resolve();
+            if(selected)break;
+            console.log('Waiting for both requested public installer releases; current live redirects unchanged.');
+            await delay(60000);
+          }
+          if(!selected)throw Error('Required public installers not verified; no Hosting deployment.');
+          for(const item of Object.values(selected)){
+            config.hosting.redirects.find(r=>r.source===item.route).destination=item.destination;
+            console.log('Verified '+item.tag+' source '+item.source+' '+item.digest);
+          }
+          await writeFile('firebase.json',JSON.stringify(config,null,2)+'\n');
+          NODE
+
       - name: Verify download routing bypasses sleeping Render broker
         run: node scripts/check_download_redirects.cjs
 
