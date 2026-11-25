@@ -984,7 +984,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   return schoolAdminSecurity.handle(b,m);
  }
  if(action==='managed/repair-knowledge/pull'){if(!lease(m).allowed)fail(403,'School licence is inactive');return {success:true,schoolId:m.schoolId,...await repairKnowledge.pull(m,b.observation||{})};}
- if(['managed/support/list','managed/support/create','managed/support/createWithScreenshot','managed/support/thread','managed/support/reply','managed/support/resolve','managed/support/attachment','managed/support/readReceipts'].includes(action))return createManagedSupport({db,now,fail})(action,b,m);
+ if(['managed/support/list','managed/support/changes','managed/support/create','managed/support/createWithScreenshot','managed/support/thread','managed/support/reply','managed/support/resolve','managed/support/attachment','managed/support/readReceipts'].includes(action))return createManagedSupport({db,now,fail})(action,b,m);
  // A restored Firebase session predates enrollment on existing PCs. Optional
  // directory admission is background metadata, never a new school-data gate.
  if(action==='managed/session'&&deviceEnrollmentEnabled&&!deviceManagementEnabled&&!deviceAccessEnforced)

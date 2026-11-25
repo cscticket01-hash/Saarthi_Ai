@@ -1,8 +1,9 @@
 'use strict';
 const {expired}=require('./complaint-retention');
+const {supportFeed}=require('./support-change-feed');
 const {createHash}=require('node:crypto');
 const sha=v=>createHash('sha256').update(v).digest('hex');
-const SUPPORT_ACTIONS=['list','create','createWithScreenshot','thread','reply','resolve','attachment','readReceipts'].map(x=>'managed/support/'+x);
+const SUPPORT_ACTIONS=['list','changes','create','createWithScreenshot','thread','reply','resolve','attachment','readReceipts'].map(x=>'managed/support/'+x);
 function createManagedSupport({db,now,fail}) {
  const text=(value)=>{const s=String(value||'').trim();if(s.length<3||s.length>3000)fail(400,'Use 3–3000 characters');return s;};
  const id=(value)=>{if(typeof value!=='string'||!/^[-_a-zA-Z0-9]{1,120}$/.test(value))fail(400,'Invalid complaint identity');return value;};
@@ -11,6 +12,11 @@ function createManagedSupport({db,now,fail}) {
  async function page(query,cursor){if(cursor!==undefined)query=query.startAfter(id(cursor));const rows=(await query.limit(51).get()).docs;return {rows:rows.slice(0,50).map(plain),cursor:rows.length>50?rows[49].id:null};}
  return async (action,b,m)=>{
   const schoolId=m.schoolId;
+  if(action==='managed/support/changes'){
+   if(b.cursor!==undefined&&(typeof b.cursor!=='string'||!(/^[a-f0-9-]{36}:[0-9]{1,15}$/).test(b.cursor)))fail(400,'Invalid support cursor');
+   const result=await supportFeed(db,plain,now).changes(schoolId,b.cursor);
+   return {success:true,schoolId,...result};
+  }
   if(action==='managed/support/list'){
    const p=await page(db.collection('platform_complaints').where('schoolId','==',schoolId).orderBy('__name__'),b.cursor);
    if(p.rows.some(r=>r.schoolId!==schoolId))fail(502,'Complaint school identity mismatch');

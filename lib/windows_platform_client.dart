@@ -83,13 +83,14 @@ class WindowsPlatformClient {
     }
     const actions = {'school/bind':'platform_bind', 'school/heartbeat':'platform_heartbeat',
       'installation/status':'platform_status', 'license/activate':'platform_activate',
-      'school/notice':'platform_notice', 'complaint/create':'platform_complaint'};
+      'school/notice':'platform_notice', 'complaint/create':'platform_complaint',
+      'support/create':'platform_support_create','support/list':'platform_support_list','support/thread':'platform_support_thread','support/announcements':'platform_support_announcements'};
     if (!actions.containsKey(action)) throw ArgumentError('Unknown platform action');
     var response = await http.post(url,
       headers:{'Content-Type':'text/plain;charset=utf-8'},
       body:jsonEncode({'action':actions[action], 'schoolProjectId':remote.projectId,
         'schoolAdminIdToken':await WindowsFirebaseRemote.freshIdToken(),
-        for(final k in ['key','version','noticeId','message','deviceFingerprint']) if(body.containsKey(k)) k:body[k],
+        for(final k in ['key','version','noticeId','message','deviceFingerprint','complaintId','cursor','audience']) if(body.containsKey(k)) k:body[k],
       })).timeout(const Duration(seconds: 30));
     if(response.isRedirect && response.headers['location'] != null) {
       final redirect = Uri.parse(response.headers['location']!);

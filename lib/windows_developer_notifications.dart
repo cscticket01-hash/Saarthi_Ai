@@ -25,6 +25,9 @@ class DeveloperInbox extends ChangeNotifier {
   final Map<String,String> _read = {};
   final Set<String> _pendingRead = {};
   Map<String,Map<String,dynamic>> _complaintPages = {};
+  String? _supportCursor;
+  Map<String,Map<String,dynamic>> _supportRows = {};
+  DateTime? _feedRetryAfter;
   DateTime? _lastSupportPoll;
   int _receiptSweepOffset=0;
   String? _profile, _school, _uid;
@@ -207,6 +210,59 @@ class DeveloperInbox extends ChangeNotifier {
     return Map<String, dynamic>.from(result);
   }
 
+  Future<List<Map<String,dynamic>>> _fetchComplaints(SchoolSupportClient support) async {
+    if(readComplaints==null && (_feedRetryAfter==null||DateTime.now().isAfter(_feedRetryAfter!))){
+      try{
+        final response=await support.call('managed/support/changes',{
+          if(_supportCursor!=null)'cursor':_supportCursor,
+        });
+        if(response['fallback']!=true){
+          final cursor=response['cursor'],reset=response['reset'],rows=response['complaints'],removed=response['removed'];
+          if(cursor is! String||!RegExp(r'^[a-f0-9-]{36}:[0-9]{1,15}$').hasMatch(cursor)||
+            reset is! bool||rows is! List||removed is! List||(!reset&&_supportCursor==null))throw StateError('Invalid support changes.');
+          final merged=reset?<String,Map<String,dynamic>>{}:Map<String,Map<String,dynamic>>.of(_supportRows);
+          for(final id in removed){if(id is! String)throw StateError('Invalid removed ticket.');merged.remove(id);}
+          for(final raw in rows){
+            if(raw is! Map||raw['schoolId']!=_school||raw['id'] is! String)throw StateError('Foreign support ticket.');
+            merged[raw['id'] as String]=Map<String,dynamic>.from(raw);
+          }
+          if(merged.length>500)throw StateError('Support feed exceeds limit.');
+          if(!current||_disposed)throw StateError('School changed.');
+          _supportRows=merged;_supportCursor=cursor;_complaintPages={};_feedRetryAfter=null;
+          return merged.values.toList();
+        }
+      }catch(_){/* older server or lost listener; use authoritative paginated list */}
+      _supportCursor=null;_supportRows={};
+      _feedRetryAfter=DateTime.now().add(const Duration(minutes:5));
+    }
+    final result=<Map<String,dynamic>>[];
+    final nextPages=<String,Map<String,dynamic>>{};
+    final seen=<String>{};
+    String? cursor;
+    do{
+      final pageKey=cursor??'';
+      if(!seen.add(pageKey))throw StateError('Repeated ticket cursor.');
+      final previousPage=_complaintPages[pageKey];
+      final revision=previousPage?['revision'];
+      final out=readComplaints!=null?await readComplaints!(cursor):await support.call('managed/support/list',{
+        if(cursor!=null)'cursor':cursor,
+        if(revision is String)'ifRevision':revision,
+      });
+      if(!current||_disposed)throw StateError('School changed.');
+      final pageRows=out['unchanged']==true ? (previousPage?['complaints']) : out['complaints'];
+      if(pageRows is! List)throw StateError('Invalid conditional ticket response.');
+      if(out['unchanged']==true && (out['revision']!=(previousPage?['revision']) || out['cursor']!=(previousPage?['cursor'])))throw StateError('Ticket revision mismatch.');
+      nextPages[pageKey]={'complaints':pageRows,'revision':out['revision'],'cursor':out['cursor']};
+      for(final raw in pageRows){
+        if(raw is! Map||raw['schoolId']!=_school||raw['id'] is! String)throw StateError('Foreign support ticket.');
+        result.add(Map<String,dynamic>.from(raw));
+      }
+      cursor=out['cursor'] as String?;
+    }while(cursor!=null);
+    _complaintPages=nextPages;
+    return result;
+  }
+
   Future<void> refresh({bool more = false, bool announcementsOnly = false}) async {
     if (busy || !current || _disposed || _school == null || _school!.isEmpty)
       return;
@@ -268,27 +324,9 @@ class DeveloperInbox extends ChangeNotifier {
       if ((readPage == null || readComplaints != null) && !more && !announcementsOnly) {
         final support = SchoolSupportClient();
         final tickets = <Map<String,dynamic>>[];
-        String? cursor;
-        final nextPages=<String,Map<String,dynamic>>{};
-        final seen=<String>{};
-        do {
-          final pageKey=cursor??'';
-          if(!seen.add(pageKey))throw StateError('Repeated ticket cursor.');
-          final previousPage=_complaintPages[pageKey];
-          final out = readComplaints != null
-              ? await readComplaints!(cursor)
-              : await support.call('managed/support/list', {
-                  if (cursor != null) 'cursor': cursor,
-                  if(previousPage?['revision'] is String)'ifRevision':previousPage!['revision'],
-                });
-          if (!current || _disposed) return;
-          final pageRows=out['unchanged']==true
-            ? previousPage?['complaints'] : out['complaints'];
-          if(pageRows is! List)throw StateError('Invalid conditional ticket response.');
-          if(out['unchanged']==true && (out['revision']!=previousPage?['revision'] || out['cursor']!=previousPage?['cursor']))throw StateError('Ticket revision mismatch.');
-          nextPages[pageKey]={'complaints':pageRows,'revision':out['revision'],'cursor':out['cursor']};
-          for (final raw in pageRows) {
-            final row = Map<String, dynamic>.from(raw as Map);
+        final complaintRows=await _fetchComplaints(support);
+        if(!current||_disposed)return;
+        for(final row in complaintRows){
             if (row['schoolId'] != _school)
               throw StateError('Complaint school mismatch.');
             if (complaintExpired(row)) continue;
@@ -321,11 +359,8 @@ class DeveloperInbox extends ChangeNotifier {
               'message':
                   '${row['message']}\n\nClass: ${row['studentClass']} • Roll: ${row['rollNo']}\nDevice (reported): ${row['device']}\nDevice ID: ${row['deviceId']}\nApp: ${row['version']}',
             });
-          }
-          cursor = out['cursor'] as String?;
-        } while (cursor != null);
+        }
         if (!current || _disposed) return;
-        _complaintPages=nextPages;
         _tickets = tickets..sort((a,b) => complaintMillis(b['createdAt']).compareTo(complaintMillis(a['createdAt'])));
         final live = updates.map((row) => row['key']).toSet();
         for (final row

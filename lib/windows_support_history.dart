@@ -13,14 +13,20 @@ import 'windows_appearance.dart';
 import 'windows_local_firestore.dart' as local;
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_connect/managed_school_session.dart';
+import 'windows_firebase_sync.dart';
+import 'windows_platform_client.dart';
 
 class SchoolSupportClient {
   SchoolSupportClient({this.readIdentity, this.request});
   final Future<Map<String,dynamic>> Function()? readIdentity;
   final Future<Map<String,dynamic>> Function(String school, String action, Map<String,dynamic> body)? request;
   final String _profile = local.FirebaseFirestore.instance.activeProfileId;
+  final _localSchool=local.FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'];
   String? _school, _uid;
   bool? _managed;
+  bool _scriptOnly=false;
+  bool get scriptOnly=>_scriptOnly;
+  bool ownsTicket(Map row)=>current&&_school!=null&&row['schoolId']==_school;
   static final _flushing = <String>{};
   static const _queue = '_windows_support_outbox';
   static final _attachmentKeys = <String,Future<support_crypto.SecretKey>>{};
@@ -70,31 +76,24 @@ class SchoolSupportClient {
     16,
     (_) => Random.secure().nextInt(256).toRadixString(16).padLeft(2, '0'),
   ).join();
-  bool get current =>
-      _profile == local.FirebaseFirestore.instance.activeProfileId &&
-      (_school == null ||
-          _school ==
-              local
-                  .FirebaseFirestore
-                  .instance
-                  .activeProfileIdentity['schoolSyncId']);
+  bool get current => _profile==local.FirebaseFirestore.instance.activeProfileId &&
+      _localSchool==local.FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'];
   Future<void> _bind() async {
-    final saved = await (readIdentity ?? CentralSchoolCloud.saved)();
-    if (local.FirebaseFirestore.instance.activeProfileId != _profile ||
-        saved.isEmpty ||
-        local
-                .FirebaseFirestore
-                .instance
-                .activeProfileIdentity['schoolSyncId'] !=
-            saved['schoolId'] ||
-        (_school != null &&
-            (_school != saved['schoolId'] || _uid != saved['uid'] || _managed != (saved['managed'] == true))))
+    var saved=await (readIdentity??CentralSchoolCloud.saved)();
+    var script=false;
+    if(saved.isEmpty&&readIdentity==null){
+      final remote=await WindowsFirebaseRemote.status();
+      if(!remote.authenticated||!RegExp(r'^[a-z][a-z0-9-]{4,61}[a-z0-9]$').hasMatch(remote.projectId)||
+          remote.schoolIdentity!=remote.projectId)throw StateError('Connect the original school administrator.');
+      saved={'schoolId':remote.projectId,'uid':sha256.convert(utf8.encode(remote.email.trim().toLowerCase())).toString(),'managed':false};
+      script=true;
+    }
+    if(!current||saved.isEmpty||(!script&&_localSchool!=saved['schoolId'])||
+      (_school!=null&&(_school!=saved['schoolId']||_uid!=saved['uid']||_managed!=(saved['managed']==true)||_scriptOnly!=script)))
       throw StateError('School account changed. Reopen complaint history.');
-    _school ??= saved['schoolId']?.toString();
-    _uid ??= saved['uid']?.toString();
-    _managed ??= saved['managed'] == true;
-    if (_school == null || _uid == null)
-      throw StateError('School login required');
+    _school??=saved['schoolId']?.toString();_uid??=saved['uid']?.toString();
+    _managed??=saved['managed']==true;_scriptOnly=script;
+    if(_school==null||_uid==null)throw StateError('School login required');
   }
 
   Future<Map<String, dynamic>> call(
@@ -105,6 +104,10 @@ class SchoolSupportClient {
     final Map<String,dynamic> out;
     if (request != null) {
       out = await request!(_school!, action, body);
+    } else if (_scriptOnly) {
+      const allowed={'managed/support/create','managed/support/list','managed/support/thread','managed/support/announcements'};
+      if(!allowed.contains(action))throw StateError('This support operation requires central school migration.');
+      out=await WindowsPlatformClient.instance.call(action.replaceFirst('managed/',''),{'projectId':_school,...body});
     } else if (_managed == true) {
       out = await ManagedSchoolSession.callForSchool(_school, action, body);
     } else {
@@ -131,6 +134,7 @@ class SchoolSupportClient {
     if (text.length < (complaintId == null ? 10 : 3) || text.length > 3000) {
       throw StateError('Invalid complaint or reply length.');
     }
+    if(_scriptOnly&&(screenshot!=null||complaintId!=null))throw StateError('Screenshot and conversation replies require central school migration.');
     if (screenshot != null && (complaintId != null || screenshot.length > 131072)) throw StateError('Invalid screenshot size.');
     final id = complaintId == null ? '${_school}_${randomId()}'
         : '${DateTime.now().millisecondsSinceEpoch}_${randomId()}';
@@ -189,6 +193,7 @@ class SchoolSupportClient {
           throw StateError('Complaint receipt identity could not be verified.');
         }
         await _bind();
+        if(_scriptOnly&&out['delivered']!=true)return;
         await local.WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(ref.delete);
       } catch (e) {
         await _bind();
@@ -444,7 +449,7 @@ class WindowsComplaintThreadState extends State<WindowsComplaintThread> {
     try {
       final localQueue = await widget.client.pending();
       if (mounted) setState(() => queued = localQueue.where((r) => r['kind'] == 'reply' && r['complaintId'] == complaint['id']).toList());
-      if (complaint['schoolId'] != local.FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] || !SchoolSupportClient.developerTicket(complaint)) throw StateError('School ticket identity mismatch.');
+      if (!widget.client.ownsTicket(complaint) || !SchoolSupportClient.developerTicket(complaint)) throw StateError('School ticket identity mismatch.');
       final out = await widget.client.call('managed/support/thread', {
         'complaintId': complaint['id'],
         if (more && cursor != null) 'cursor': cursor,
@@ -501,7 +506,7 @@ class WindowsComplaintThreadState extends State<WindowsComplaintThread> {
   @override
   Widget build(BuildContext context) {
     WindowsAppearance.watch(context);
-    if (!widget.client.current || complaint['schoolId'] != local.FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'])
+    if (!widget.client.current || (widget.client._school!=null && !widget.client.ownsTicket(complaint)))
       return const Scaffold(
         body: Center(child: Text('School changed. Reopen complaint history.')),
       );
@@ -554,7 +559,7 @@ class WindowsComplaintThreadState extends State<WindowsComplaintThread> {
           if (error != null)
             Text(error!, style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.orangeAccent))),
           for (final q in queued) Card(child: ListTile(title: Text(q['message'].toString()), subtitle: Text(q['delivery'] == 'failed' ? 'Failed — retained locally' : 'Pending — saved locally'))),
-          TextField(
+          if(widget.client.scriptOnly) const Text('Legacy ticket history is read-only. Upgrade the school connection to reply here.') else TextField(
             enabled: !busy,
             controller: message,
             maxLength: 3000,
@@ -562,7 +567,7 @@ class WindowsComplaintThreadState extends State<WindowsComplaintThread> {
             maxLines: 6,
             decoration: const InputDecoration(labelText: 'Reply to developer'),
           ),
-          FilledButton(
+          if(!widget.client.scriptOnly) FilledButton(
             onPressed: busy ? null : _send,
             child: const Text('Send reply'),
           ),
