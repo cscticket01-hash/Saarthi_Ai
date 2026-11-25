@@ -1,4 +1,5 @@
 import 'windows_appearance.dart';
+import 'windows_sync_system_health.dart';
 import 'liquid_glass_theme.dart';
 import 'windows_device_management.dart';
 import 'windows_student_import.dart';
@@ -107,7 +108,7 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     WindowsAppearance.watch(context);
-    return ListenableBuilder(
+    return WindowsSyncHealthSessionScope(child: ListenableBuilder(
       listenable: Listenable.merge([WindowsAppearance.mode, WindowsAppearance.brand, WindowsAppearance.changes]),
       builder: (context, _) => ValueListenableBuilder<String>(
         valueListenable: WindowsUiLanguage.changed,
@@ -160,7 +161,7 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
           ),
         ),
       ),
-    );
+    ));
   }
 }
 

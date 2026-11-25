@@ -173,6 +173,8 @@ void main() {
     },
   );
   testWidgets('activity shows only own-school measured stages and offers repair only for recoverable retained operations', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1440, 1100));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     engine.details.value = {
       'pending': 1, 'needsAttention': 1, 'items': const [],
       'activity': [

@@ -1017,7 +1017,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     );
   }
 
-  Future<SyncHealth> _schoolServiceHealth(String school, {required bool mobile}) async {
+  static Future<SyncHealth> _schoolServiceHealth(FirebaseFirestore db, String origin, String school, {required bool mobile}) async {
     if (school.isEmpty || db.activeProfileId != origin || !ManagedSchoolSession.enabled) {
       return SyncHealth.unknown;
     }
@@ -1163,6 +1163,23 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     final lastSync = details['lastVerifiedTransferAt'];
     final today = details['todayVerifiedReceipts'];
     final activeSchool = db.activeProfileIdentity['schoolSyncId'];
+    final profile = origin;
+    final database = db;
+    final syncEngine = engine;
+    final schoolId = activeSchool?.toString() ?? '';
+    bool currentSchool() => database.activeProfileId == profile &&
+        database.activeProfileIdentity['schoolSyncId'] == activeSchool;
+    Future<SyncHealth> schoolServer() => _schoolServiceHealth(database, profile, schoolId, mobile: false);
+    Future<SyncHealth> mobileServer() => _schoolServiceHealth(database, profile, schoolId, mobile: true);
+    Future<SyncHealth> selfRepair() async => switch (syncEngine.repairHealthFor(profile, schoolId)) {
+      true => SyncHealth.healthy,
+      false => SyncHealth.failed,
+      null => SyncHealth.unknown,
+    };
+    final healthMonitor = WindowsSyncHealthSessionScope.monitorFor(context,
+      identity: '$profile|$activeSchool', isCurrentSchool: currentSchool,
+      schoolServer: schoolServer, mobileServer: mobileServer, selfRepair: selfRepair,
+    );
     final nowMillis = DateTime.now().millisecondsSinceEpoch;
     final lastDeviceAckAt = ack is num && ack > 0 ? ack.toInt() : 0;
     final lastProviderVerifiedAt =
@@ -1200,16 +1217,12 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
           _syncSummary('System Health', '',
             Icons.health_and_safety_outlined, Colors.tealAccent, minHeight: 164,
             detail: WindowsSyncSystemHealth(
-              key: ValueKey('$origin|$activeSchool'),
-              isCurrentSchool: () => db.activeProfileId == origin &&
-                  db.activeProfileIdentity['schoolSyncId'] == activeSchool,
-              schoolServer: () => _schoolServiceHealth(activeSchool?.toString() ?? '', mobile: false),
-              mobileServer: () => _schoolServiceHealth(activeSchool?.toString() ?? '', mobile: true),
-              selfRepair: () async => switch (engine.repairHealthFor(origin, activeSchool?.toString() ?? '')) {
-                true => SyncHealth.healthy,
-                false => SyncHealth.failed,
-                null => SyncHealth.unknown,
-              },
+              key: ValueKey((origin, activeSchool, healthMonitor)),
+              monitor: healthMonitor,
+              isCurrentSchool: currentSchool,
+              schoolServer: schoolServer,
+              mobileServer: mobileServer,
+              selfRepair: selfRepair,
             )),
         ], equalHeight: true),
         const SizedBox(height: 12),
@@ -2395,11 +2408,15 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                         ? [
                             SizedBox(
                               height: (constraints.maxHeight - 2 * inset).clamp(0.0, double.infinity).toDouble(),
-                              child: FittedBox(
-                                alignment: Alignment.topCenter,
-                                fit: BoxFit.scaleDown,
-                                child: SizedBox(
-                                  width: (constraints.maxWidth - 2 * inset).clamp(0.0, double.infinity).toDouble(),
+                              // Keep the dashboard at its natural font/icon scale.
+                              // At short heights, paint only the visible viewport;
+                              // widening or growing the window reveals the same UI.
+                              child: ClipRect(
+                                key: const ValueKey('sync-overview-viewport'),
+                                child: OverflowBox(
+                                  alignment: Alignment.topCenter,
+                                  minHeight: 0,
+                                  maxHeight: double.infinity,
                                   child: Column(
                                     mainAxisSize: MainAxisSize.min,
                                     crossAxisAlignment: CrossAxisAlignment.stretch,

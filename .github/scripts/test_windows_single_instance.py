@@ -1,5 +1,8 @@
 import unittest
-from configure_windows_single_instance import configure, configure_window, MARKER, BACKGROUND_MARKER
+from configure_windows_single_instance import (
+    configure, configure_window, configure_minimum_size, MARKER,
+    BACKGROUND_MARKER, SIZE_MARKER, MIN_WIDTH_DIP, MIN_HEIGHT_DIP,
+)
 
 
 class InstanceGuardTests(unittest.TestCase):
@@ -36,6 +39,25 @@ class InstanceGuardTests(unittest.TestCase):
         result = configure(self.MAIN)
         self.assertLess(result.index('ERROR_ALREADY_EXISTS'), result.index('DartProject'))
         self.assertLess(result.index('return EXIT_SUCCESS;'), result.index('DartProject'))
+
+    def test_global_native_size_floor_is_dpi_aware_and_idempotent(self):
+        source = ('LRESULT Win32Window::MessageHandler(HWND hwnd, UINT const message, '
+                  'WPARAM const wparam, LPARAM const lparam) noexcept {\n'
+                  '  switch (message) {\n'
+                  '    case WM_SIZE: return 0;\n'
+                  '  } return DefWindowProc(hwnd, message, wparam, lparam); }')
+        result = configure_minimum_size(source)
+        self.assertEqual(result.count(SIZE_MARKER), 1)
+        self.assertIn('case WM_GETMINMAXINFO:', result)
+        self.assertIn('GetDpiForWindow', result)
+        self.assertIn(f'MulDiv({MIN_WIDTH_DIP},', result)
+        self.assertIn(f'MulDiv({MIN_HEIGHT_DIP},', result)
+        self.assertIn('ptMinTrackSize.x', result)
+        self.assertIn('ptMinTrackSize.y', result)
+        self.assertNotIn('ptMaxTrackSize', result)
+        self.assertEqual(configure_minimum_size(result), result)
+        with self.assertRaises(ValueError):
+            configure_minimum_size('unexpected template')
 
     def test_unknown_runner_fails_closed_without_rewriting(self):
         with self.assertRaises(ValueError):
