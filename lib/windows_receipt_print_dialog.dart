@@ -17,7 +17,8 @@ class WindowsReceiptPrintDialog extends StatefulWidget {
   const WindowsReceiptPrintDialog({super.key, required this.receipt,
     required this.title, required this.subtitle, required this.isCurrent,
     this.printers, this.printJob, this.previewBuilder,
-    this.openPrinterSettings, this.systemPrintJob, this.media, this.composeLayout});
+    this.openPrinterSettings, this.systemPrintJob, this.media, this.composeLayout,
+    this.capabilities,this.sidesJob,this.preserveActualSize=false});
   final Future<Uint8List> receipt;
   final String title, subtitle;
   final bool Function() isCurrent;
@@ -27,6 +28,9 @@ class WindowsReceiptPrintDialog extends StatefulWidget {
   final Future<bool> Function(Uint8List,PdfPageFormat)? systemPrintJob;
   final Widget Function(Uint8List)? previewBuilder;
   final Future<List<WindowsPrinterPaper>> Function(Printer)? media;
+  final Future<WindowsPrinterCapabilities> Function(Printer)? capabilities;
+  final Future<bool> Function(Printer,Uint8List,PdfPageFormat,WindowsDuplexMode)? sidesJob;
+  final bool preserveActualSize;
   final Future<Uint8List> Function(Uint8List,PdfPageFormat)? composeLayout;
   @override
   State<WindowsReceiptPrintDialog> createState() => _WindowsReceiptPrintDialogState();
@@ -44,6 +48,8 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
   List<WindowsPrinterPaper> driverMedia = [];
   bool loadingMedia = false;
   String? mediaError;
+  WindowsPrinterCapabilities? driverCaps;
+  WindowsDuplexMode sides=WindowsDuplexMode.driverDefault;
   int mediaGeneration = 0, layoutGeneration = 0;
   PdfPageFormat? originalFormat;
   Future<Uint8List>? layout;
@@ -53,7 +59,8 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
   Timer? layoutDelay;
   bool customPages = false, headersFooters=false, monochrome=false;
   int perSheet = 1;
-  String margins = 'None', scaling = 'Fit to page';
+  String margins = 'None';
+  late String scaling=widget.preserveActualSize?'Actual size':'Fit to page';
   bool expandedSettings = false;
   bool get locked => printing || savingPdf || openingSystemDialog;
   WindowsPrinterPaper? chosenStock;
@@ -85,14 +92,21 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
     final generation=++mediaGeneration;
     final matches=printers.where((p)=>p.url==selected).toList();
     if(matches.isEmpty){
-      if(mounted)setState((){driverMedia=[];loadingMedia=false;mediaError=null;});
+      if(mounted)setState((){driverMedia=[];driverCaps=null;sides=WindowsDuplexMode.driverDefault;loadingMedia=false;mediaError=null;});
       return;
     }
-    setState((){loadingMedia=true;driverMedia=[];mediaError=null;});
+    setState((){loadingMedia=true;driverMedia=[];driverCaps=null;sides=WindowsDuplexMode.driverDefault;mediaError=null;});
     try {
       final rows=await (widget.media?.call(matches.first) ??
         (widget.printers!=null?Future.value(WindowsPrinterMedia.standard):WindowsPrinterMedia.installed(matches.first.name)));
       if(mounted && generation==mediaGeneration && widget.isCurrent())setState(()=>driverMedia=rows);
+      // Capability failure must not hide an otherwise valid paper list.
+      if(widget.capabilities!=null || widget.printers==null){
+        try{
+          final caps=await (widget.capabilities?.call(matches.first)??WindowsPrinterMedia.capabilities(matches.first.name));
+          if(mounted&&generation==mediaGeneration&&widget.isCurrent())setState(()=>driverCaps=caps);
+        }catch(_){/* Driver-default printing remains available. */}
+      }
     }catch(_){
       if(mounted && generation==mediaGeneration)setState(()=>mediaError='Driver paper sizes unavailable. Refresh or use Windows system print dialog.');
     }finally{
@@ -154,7 +168,7 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
     super.didUpdateWidget(oldWidget);
     if (oldWidget.receipt != widget.receipt) {
       paper = 'A4'; landscape = false; paperChosen = false;
-      customPages=false;perSheet=1;margins='None';scaling='Fit to page';headersFooters=false;monochrome=false;
+      customPages=false;perSheet=1;margins='None';scaling=widget.preserveActualSize?'Actual size':'Fit to page';headersFooters=false;monochrome=false;
       sourcePaperLabel = null; originalFormat=null; chosenStock=null; layout=null; layoutGeneration++; layoutDelay?.cancel();
       pageFormatReady = widget.previewBuilder != null;
     }
@@ -241,11 +255,18 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
     if (matches.isEmpty) { setState(() => message = 'Select an available printer.'); return; }
     final printer = matches.first;
     final format = selectedFormat;
+    final mode=sides;
+    if(mode!=WindowsDuplexMode.driverDefault && (driverCaps==null ||
+      ((mode==WindowsDuplexMode.longEdge||mode==WindowsDuplexMode.shortEdge)&&!driverCaps!.canDuplex))){
+      setState(()=>message='Selected sides mode is not supported by this driver.');return;
+    }
     setState(() { printing = true; submitted = 0; message = ''; });
     try {
       for (var i = 0; i < count; i++) {
         if (!mounted || !widget.isCurrent()) throw StateError('School changed. Printing stopped.');
-        final accepted = await (widget.printJob ?? (printer, bytes, format) async =>
+        final accepted = mode!=WindowsDuplexMode.driverDefault
+          ? await (widget.sidesJob?.call(printer,bytes,format,mode) ?? WindowsPrinterMedia.printWithSides(printer,bytes,format,mode,title:widget.title,isCurrent:()=>mounted&&widget.isCurrent()))
+          : await (widget.printJob ?? (printer, bytes, format) async =>
           await Printing.directPrintPdf(printer: printer, name: widget.title,
             format: format, dynamicLayout: false, usePrinterSettings: false,
             onLayout: (_) async {
@@ -346,6 +367,7 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
           icon:const Icon(Icons.refresh,size:16),
           label:const Text('Refresh printers')),
       ]),
+      if(widget.preserveActualSize)const Text('ID card: Actual size preserves physical dimensions. Fit/Custom scale changes card size.',style:TextStyle(fontSize:11)),
       const SizedBox(height: 12),
       TextField(controller: copies, enabled: !locked && selected!=pdfDestination,
         keyboardType: TextInputType.number,
@@ -395,10 +417,25 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
             subtitle:const Text('Print-added header and sheet number'),onChanged:locked||source==null?null:(v)=>changeLayout(source,()=>headersFooters=v??false)),
           const Text('Background graphics: embedded document artwork is preserved. PDF/image backgrounds cannot safely be removed separately.',style:TextStyle(fontSize:11)),
           TextButton(onPressed:locked?null:(){setState((){
-            layoutGeneration++;layoutDelay?.cancel();layout=null;customPages=false;perSheet=1;margins='None';scaling='Fit to page';headersFooters=false;monochrome=false;paperChosen=false;chosenStock=null;
+            layoutGeneration++;layoutDelay?.cancel();layout=null;customPages=false;perSheet=1;margins='None';scaling=widget.preserveActualSize?'Actual size':'Fit to page';headersFooters=false;monochrome=false;paperChosen=false;chosenStock=null;
             paper='A4';landscape=false;
           });if(originalFormat!=null)acceptPageFormat(originalFormat);},child:const Text('Reset to original layout')),
-          const Text('Duplex, colour hardware mode, tray and other driver-specific options: Windows system print dialog.',style:TextStyle(fontSize:11)),
+          if(selected!=pdfDestination) ...[
+            DropdownButtonFormField<WindowsDuplexMode>(value:sides,decoration:const InputDecoration(labelText:'Print on both sides'),
+              items:[
+                const DropdownMenuItem(value:WindowsDuplexMode.driverDefault,child:Text('Driver default')),
+                if(driverCaps!=null) const DropdownMenuItem(value:WindowsDuplexMode.singleSided,child:Text('Single-sided')),
+                if(driverCaps?.canDuplex==true) ...const [
+                  DropdownMenuItem(value:WindowsDuplexMode.longEdge,child:Text('Double-sided • Long edge')),
+                  DropdownMenuItem(value:WindowsDuplexMode.shortEdge,child:Text('Double-sided • Short edge')),
+                ],
+              ],
+              onChanged:locked||loadingMedia||driverCaps==null?null:(v){if(v!=null)setState(()=>sides=v);}),
+            if(driverCaps==null)const Text('Driver options not verified. Use Windows system print dialog.',style:TextStyle(fontSize:11))
+            else if(!driverCaps!.canDuplex)const Text('Installed printer does not report automatic duplex.',style:TextStyle(fontSize:11)),
+            if(sides!=WindowsDuplexMode.driverDefault)const Text('Explicit sides uses the installed driver with 300 dpi sheets. Check hardware margins; no automatic retry.',style:TextStyle(fontSize:11)),
+          ],
+          const Text('Printer tray and hardware-specific settings: Windows system print dialog.',style:TextStyle(fontSize:11)),
         ]),
       Text(sourcePaperLabel==null?'Original document':'Original document: ${sourcePaperLabel!}'),
       if(layout!=null)const Text('Changed layout uses a print-only 300 dpi rendering. Original file is unchanged.',style:TextStyle(fontSize:11)),

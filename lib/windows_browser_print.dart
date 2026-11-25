@@ -8,14 +8,14 @@ import 'windows_print_layout.dart';
 /// Opens the shared in-app print dialog; no browser tabs or saved temp files.
 class WindowsBrowserPrint {
   static Future<void> open(BuildContext context, Uint8List pdf,
-      {String title='Print document', bool Function()? isCurrent}) async {
+      {String title='Print document', bool Function()? isCurrent,bool preserveActualSize=false}) async {
     final db=FirebaseFirestore.instance,profile=db.activeProfileId;
     final school=db.activeProfileIdentity['schoolSyncId'];
     bool current()=>db.activeProfileId==profile &&
       db.activeProfileIdentity['schoolSyncId']==school && (isCurrent?.call()??true);
     if(!context.mounted || !current())return;
     await showDialog<void>(context:context,builder:(_)=>WindowsReceiptPrintDialog(
-      receipt:Future.value(pdf),title:title,subtitle:'Print preview',isCurrent:current));
+      receipt:Future.value(pdf),title:title,subtitle:'Print preview',isCurrent:current,preserveActualSize:preserveActualSize));
   }
 
   static Future<void> openImages(BuildContext context,
@@ -29,6 +29,6 @@ class WindowsBrowserPrint {
     if(!current())return;
     final pdf=await WindowsPrintLayout.fromImages(pages,actualSize:actualSize);
     if(!context.mounted||!current())return;
-    await open(context,pdf,title:title,isCurrent:current);
+    await open(context,pdf,title:title,isCurrent:current,preserveActualSize:actualSize);
   }
 }

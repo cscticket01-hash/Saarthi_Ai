@@ -55,6 +55,29 @@ void main() {
     expect(find.widgetWithText(FilledButton,'Print'),findsNothing);
     expect(jobs,0);
   });
+  testWidgets('driver-supported duplex is submitted as one explicit mode without default print',(tester)async{
+    await tester.binding.setSurfaceSize(const Size(1200,1000));
+    addTearDown(()=>tester.binding.setSurfaceSize(null));
+    final original=Uint8List.fromList([1,2,3]);
+    var defaultCalls=0;final submitted=<WindowsDuplexMode>[];
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:WindowsReceiptPrintDialog(
+      receipt:Future.value(original),title:'Sides',subtitle:'School',isCurrent:()=>true,
+      printers:()async=>[printer],media:(_)async=>const [WindowsPrinterPaper('A4',210,297)],
+      capabilities:(_)async=>const WindowsPrinterCapabilities(canDuplex:true,supportsColor:true),
+      previewBuilder:(_)=>const SizedBox(),
+      printJob:(_,__,___)async{defaultCalls++;return true;},
+      sidesJob:(_,bytes,format,mode)async{expect(identical(bytes,original),isTrue);submitted.add(mode);return true;},
+    ))));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('More settings'));
+    await tester.tap(find.text('More settings'));await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Driver default'));
+    await tester.tap(find.text('Driver default'));await tester.pumpAndSettle();
+    await tester.tap(find.text('Double-sided • Long edge').last);await tester.pumpAndSettle();
+    await tester.ensureVisible(find.widgetWithText(FilledButton,'Print'));
+    await tester.tap(find.widgetWithText(FilledButton,'Print'));await tester.pumpAndSettle();
+    expect(defaultCalls,0);expect(submitted,[WindowsDuplexMode.longEdge]);
+  });
   test('paper layout geometry preserves aspect and rejects invalid pages and clipping',(){
     expect(WindowsPrintLayout.parseRange('1,3-5,3'),{1,3,4,5});
     expect(()=>WindowsPrintLayout.parseRange('4-2'),throwsFormatException);
