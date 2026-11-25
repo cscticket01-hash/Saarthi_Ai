@@ -3,7 +3,7 @@ const {expired}=require('./complaint-retention');
 const {supportFeed}=require('./support-change-feed');
 const {createHash}=require('node:crypto');
 const sha=v=>createHash('sha256').update(v).digest('hex');
-const SUPPORT_ACTIONS=['list','changes','create','createWithScreenshot','thread','reply','resolve','attachment','readReceipts'].map(x=>'managed/support/'+x);
+const SUPPORT_ACTIONS=['list','changes','create','createWithScreenshot','thread','reply','resolve','markResolved','attachment','readReceipts'].map(x=>'managed/support/'+x);
 function createManagedSupport({db,now,fail}) {
  const text=(value)=>{const s=String(value||'').trim();if(s.length<3||s.length>3000)fail(400,'Use 3–3000 characters');return s;};
  const id=(value)=>{if(typeof value!=='string'||!/^[-_a-zA-Z0-9]{1,120}$/.test(value))fail(400,'Invalid complaint identity');return value;};
@@ -86,6 +86,18 @@ function createManagedSupport({db,now,fail}) {
    const a=file.exists?file.data():null;
    if(!a||a.schoolId!==schoolId||typeof a.base64!=='string'||a.base64.length>131072||a.sha256!==v.screenshotSha256||sha(Buffer.from(a.base64,'base64'))!==v.screenshotSha256)fail(404,'Screenshot unavailable');
    return {success:true,schoolId,complaintId,screenshot:a.base64,screenshotSha256:v.screenshotSha256};
+  }
+  // Only the owning school may close its own Windows support ticket.
+  if(action==='managed/support/markResolved'){
+   const complaint=await db.runTransaction(async tx=>{
+    const current=await tx.get(ref),v=current.data();
+    if(!current.exists||!legacyTicket(v)||v.schoolId!==schoolId||v.audience==='school'||v.source!=='windows'||v.role!=='admin'||v.purging||expired(v,now()))fail(404,'Support ticket unavailable');
+    if(v.status==='resolved'&&millis(v.resolvedAt)>0)return plain({id:complaintId,data:()=>v});
+    const update={status:'resolved',resolvedAt:new Date(now()),updatedAt:new Date(now())};
+    tx.set(ref,update,{merge:true});
+    return plain({id:complaintId,data:()=>({...v,...update})});
+   });
+   return {success:true,schoolId,complaintId,status:'resolved',complaint};
   }
   if(action==='managed/support/resolve'){
    await db.runTransaction(async tx=>{

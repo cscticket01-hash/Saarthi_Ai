@@ -85,7 +85,7 @@ class WindowsPlatformClient {
       'installation/status':'platform_status', 'license/activate':'platform_activate',
       'school/notice':'platform_notice', 'complaint/create':'platform_complaint',
       'support/create':'platform_support_create','support/list':'platform_support_list','support/thread':'platform_support_thread','support/announcements':'platform_support_announcements',
-      'support/createWithScreenshot':'platform_support_create_screenshot','support/reply':'platform_support_reply','support/attachment':'platform_support_attachment','support/readReceipts':'platform_support_read_receipts'};
+      'support/createWithScreenshot':'platform_support_create_screenshot','support/reply':'platform_support_reply','support/markResolved':'platform_support_mark_resolved','support/attachment':'platform_support_attachment','support/readReceipts':'platform_support_read_receipts'};
     if (!actions.containsKey(action)) throw ArgumentError('Unknown platform action');
     var response = await http.post(url,
       headers:{'Content-Type':'text/plain;charset=utf-8'},

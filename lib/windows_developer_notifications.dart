@@ -26,6 +26,12 @@ class DeveloperInbox extends ChangeNotifier {
   List<Map<String, dynamic>> messages = [];
   List<Map<String,dynamic>>? _tickets;
   List<Map<String,dynamic>>? get supportTickets => current ? _tickets : null;
+  // Reuse existing ticket counters with the server-confirmed status.
+  void acceptResolvedTicket(Map<String,dynamic> row) {
+    if (!current || _disposed || row['schoolId'] != _school || row['status'] != 'resolved' || _tickets == null) return;
+    _tickets = _tickets!.map((ticket) => ticket['id'] == row['id'] ? row : ticket).toList();
+    _notify();
+  }
   final Map<String,String> _read = {};
   final Set<String> _pendingRead = {};
   Map<String,Map<String,dynamic>> _complaintPages = {};
@@ -627,7 +633,7 @@ class _DeveloperInboxScreenState extends State<DeveloperInboxScreen> {
                                   unawaited(inbox.markRead(m));
                                   if (DeveloperInbox.kind(m) == 'support') {
                                     await Navigator.of(context).push(MaterialPageRoute(builder: (_) =>
-                                      WindowsComplaintThread(client: SchoolSupportClient(), complaint: {
+                                      WindowsComplaintThread(client: SchoolSupportClient(), onResolved: inbox.acceptResolvedTicket, complaint: {
                                         ...m, 'id': m['complaintId'], 'message': m['ticketMessage'],
                                       })));
                                     return;

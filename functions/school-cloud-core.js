@@ -4,7 +4,7 @@ const {createManagedSupport,SUPPORT_ACTIONS}=require('./managed-support');
 const schoolPattern = /^vs-[a-f0-9]{32}$/;
 // Original Apps Script uses its existing provisioned monitor account.
 // This route grants support operations only, never a central school session.
-const LEGACY_SUPPORT_ACTIONS=['createWithScreenshot','reply','attachment','readReceipts'].map(a=>'legacy/support/'+a);
+const LEGACY_SUPPORT_ACTIONS=['createWithScreenshot','reply','markResolved','attachment','readReceipts'].map(a=>'legacy/support/'+a);
 async function authorizeLegacySupport(auth,db,token,expected,projectId){
  let user;try{user=await auth.verifyIdToken(token,true);}catch(_){deny(401,'School monitoring login expired or revoked');}
  if(user.admin===true||user.developer===true)deny(403,'Use the school monitoring identity');

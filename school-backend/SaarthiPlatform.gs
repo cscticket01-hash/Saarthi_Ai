@@ -88,6 +88,7 @@ function VS_platformAdmin(b){
  if(b.action==='platform_support_thread')return VS_legacySupportThread(b);
  if(b.action==='platform_support_create_screenshot')return VS_legacySupportBroker(b,'createWithScreenshot');
  if(b.action==='platform_support_reply')return VS_legacySupportBroker(b,'reply');
+ if(b.action==='platform_support_mark_resolved')return VS_legacySupportBroker(b,'markResolved');
  if(b.action==='platform_support_attachment')return VS_legacySupportBroker(b,'attachment');
  if(b.action==='platform_support_read_receipts')return VS_legacySupportBroker(b,'readReceipts');
  if(b.action==='platform_support_announcements')return VS_legacySupportAnnouncements(b);
@@ -152,7 +153,7 @@ function VS_legacySupportId(id){
 // The original school administrator has already passed VS_requireAdmin.
 // Never accept a caller-supplied broker URL or return the monitor token.
 function VS_legacySupportBroker(b,operation){
- const allowed={createWithScreenshot:['complaintId','message','version','screenshot'],reply:['complaintId','messageId','message'],attachment:['complaintId'],readReceipts:['keys','marked']};
+ const allowed={createWithScreenshot:['complaintId','message','version','screenshot'],reply:['complaintId','messageId','message'],markResolved:['complaintId'],attachment:['complaintId'],readReceipts:['keys','marked']};
  if(!Object.prototype.hasOwnProperty.call(allowed,operation))throw new Error('Invalid support operation');
  const school=VS_project(),body={action:'legacy/support/'+operation,schoolId:school};
  allowed[operation].forEach(k=>{if(b[k]!==undefined)body[k]=b[k];});
