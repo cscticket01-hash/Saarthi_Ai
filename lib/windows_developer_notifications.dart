@@ -16,7 +16,6 @@ import 'windows_local_firestore.dart' as local;
 class DeveloperInbox extends ChangeNotifier {
   DeveloperInbox({this.readPage, this.readComplaints, this.playNotificationSound});
   final Future<void> Function()? playNotificationSound;
-  bool _receiptSyncRunning = false;
   bool _soundBaselineEstablished = false;
   final Future<Map<String, dynamic>> Function(String audience, String? cursor)?
   readPage;
@@ -56,9 +55,7 @@ class DeveloperInbox extends ChangeNotifier {
   bool isRead(Map m) => _read[m['key']] == receiptRevision(m);
 
   Future<void> _syncReadReceipts() async {
-    if(readPage!=null || readComplaints!=null || !current || _disposed || _receiptSyncRunning) return;
-    _receiptSyncRunning = true;
-    try {
+    if(readPage!=null || readComplaints!=null || !current || _disposed) return;
     final support=SchoolSupportClient();
     final rows=messages.where((m)=>!complaintExpired(m)).toList();
     // Each exchange is bounded; recent alerts first, with pending older reads included.
@@ -84,15 +81,14 @@ class DeveloperInbox extends ChangeNotifier {
       for(final key in returned.cast<String>()){
         final row=candidates[key]!;
         if(!messages.any((m)=>m['key']==row['key']&&receiptRevision(m)==key))continue;
-        await local.WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() => _db.collection('_windows_developer_inbox_read').doc(row['key'] as String).set({
+        await _db.collection('_windows_developer_inbox_read').doc(row['key'] as String).set({
           'readAt':DateTime.now().millisecondsSinceEpoch,'revision':key,'pending':false,
-        }));
+        });
         if(!current||_disposed)return;
         _read[row['key'] as String]=key;
         _pendingRead.remove(key);
       }
     }
-    } finally { _receiptSyncRunning = false; }
   }
   static String kind(Map row) => row['kind'] == 'support' ? 'support' :
       row['complaintId'] != null ? 'student' : 'announcement';
@@ -441,8 +437,12 @@ class DeveloperInbox extends ChangeNotifier {
           final previous = existing[m['key']];
           if (previous == null) continue;
           final changedContent=receiptRevision(previous)!=receiptRevision(m);
-          // Receipts are revision-specific; do not delete a concurrently saved newer read.
-          if (changedContent) _pendingRead.remove(receiptRevision(previous));
+          if (changedContent && _read.containsKey(m['key'])) {
+            if (!current || _disposed) return;
+            await _db.collection('_windows_developer_inbox_read').doc(m['key'] as String).delete();
+            _read.remove(m['key']);
+            _pendingRead.remove(receiptRevision(previous));
+          }
         }
       }
       if (!current || _disposed) return;
@@ -457,7 +457,7 @@ class DeveloperInbox extends ChangeNotifier {
       _sort();
       final changedRevisions = changed.where((m) =>
         existing[m['key']] == null || receiptRevision(existing[m['key']]!) != receiptRevision(m)).toList();
-      if(!announcementsOnly || changedRevisions.isNotEmpty) {
+      if(!announcementsOnly) {
         try{await _syncReadReceipts();}catch(_){/* retain local read receipts for retry */}
       }
       if (!current || _disposed) return;
@@ -501,16 +501,15 @@ class DeveloperInbox extends ChangeNotifier {
         !messages.any((m) => m['key'] == message['key'] && receiptRevision(m)==receiptRevision(message)))
       return;
     try {
-      final key = message['key'] as String, revision = receiptRevision(message);
-      await local.WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() => _db
+      await _db
           .collection('_windows_developer_inbox_read')
-          .doc(key)
-          .set({'readAt': DateTime.now().millisecondsSinceEpoch,'revision':revision,'pending':true}));
-      if (!current || _disposed || !messages.any((m) => m['key'] == key && receiptRevision(m) == revision)) return;
-      _read[key]=revision;
-      _pendingRead.add(revision);
+          .doc(message['key'] as String)
+          .set({'readAt': DateTime.now().millisecondsSinceEpoch,'revision':receiptRevision(message),'pending':true});
+      if (!current || _disposed) return;
+      _read[message['key'] as String]=receiptRevision(message);
+      _pendingRead.add(receiptRevision(message));
       _notify();
-      if (sync) unawaited(_flushReadQuietly());
+      if (sync) await _flushReadQuietly();
     } catch (_) {
       if (current && !_disposed) {
         error = 'Read status could not be saved. Try again.';
