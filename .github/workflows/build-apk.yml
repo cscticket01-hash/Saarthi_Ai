@@ -1,3 +1,4 @@
+# User-authorized Android notice date/time release after verified PR #424 (2026-11-25).
 # User-authorized Android publication of reviewed PR #419 source; no Windows rebuild.
 # Explicit user-authorized UI-only native Android Liquid Glass release after PR #342; backend backup gates unchanged.
 # Release request: publish reviewed Cloudflare-first UI improvements from PR #277.
