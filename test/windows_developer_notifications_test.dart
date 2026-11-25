@@ -70,6 +70,41 @@ void main() {
       cached.dispose();
     },
   );
+  test('Warm Bell plays only for new unread revisions after startup, not refresh, paging or restart', () async {
+    var newest = false, sounds = 0;
+    final inbox = DeveloperInbox(
+      playNotificationSound: () async { sounds++; },
+      readPage: (audience, cursor) async => {
+        'documents': [note(audience, cursor == null ? 'first' : 'older'),
+          if (newest && cursor == null) note(audience, 'new')],
+        if (cursor == null) 'nextPageToken': 'next',
+      },
+    );
+    await inbox.initialize();
+    expect(sounds, 0);
+    await inbox.refresh();
+    expect(sounds, 0);
+    newest = true;
+    await inbox.refresh();
+    expect(sounds, 1);
+    await inbox.refresh();
+    await inbox.refresh(more: true);
+    expect(sounds, 1);
+    await inbox.markAllLoadedRead();
+    expect(inbox.unread, 0);
+    expect(inbox.messages.length, 6);
+    inbox.dispose();
+    final restarted = DeveloperInbox(
+      playNotificationSound: () async { sounds++; },
+      readPage: (audience, cursor) async => {
+        'documents': [note(audience, 'first'), note(audience, 'new')],
+      },
+    );
+    await restarted.initialize();
+    expect(restarted.unread, 0);
+    expect(sounds, 1);
+    restarted.dispose();
+  });
   testWidgets('notification inbox opens full developer message', (
     tester,
   ) async {
@@ -85,6 +120,7 @@ void main() {
     await tester.tap(find.text('Developer message').first);
     await tester.pumpAndSettle();
     expect(find.text('Synthetic developer notification body'), findsOneWidget);
+    expect(inbox.unread, 1); // Read when opened, not after closing the detail.
     inbox.dispose();
     await tester.pumpWidget(const SizedBox());
   });

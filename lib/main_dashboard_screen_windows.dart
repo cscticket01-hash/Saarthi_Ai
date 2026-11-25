@@ -51,6 +51,7 @@ import 'windows_ui_localization.dart';
 import 'windows_preferences_reset.dart';
 import 'windows_school_operations.dart';
 import 'windows_developer_notifications.dart';
+import 'windows_notification_sound.dart';
 import 'windows_staff_payroll.dart';
 import 'windows_school_identity.dart';
 import 'windows_document_templates.dart';
@@ -9633,6 +9634,8 @@ class SettingsScreen extends StatelessWidget {
         const WindowsAppUpdateCard(),
         const SizedBox(height: 12),
         const WindowsSyncStatusCard(),
+        const SizedBox(height: 12),
+        const WindowsNotificationSoundCard(),
         FutureBuilder<Map<String,dynamic>>(
           future:CentralSchoolCloud.saved(),
           builder:(context,snapshot) {
