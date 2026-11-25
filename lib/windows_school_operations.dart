@@ -1,4 +1,6 @@
 import 'windows_support_history.dart';
+import 'dart:io' show Platform;
+import 'notice_time.dart';
 import 'windows_appearance.dart';
 import 'promotion_session_policy.dart';
 import 'windows_admin_security.dart';
@@ -435,7 +437,9 @@ class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
     });
     try {
       final account = await CentralSchoolCloud.saved();
-      final text = 'Subject: $subject\nCategory: $_category\n\n$body';
+      String os = 'Windows';
+      try { if (Platform.isWindows) os = Platform.operatingSystemVersion; } catch (_) {}
+      final text = 'Subject: $subject\nCategory: $_category\nApp: ${WindowsPlatformClient.version}\nOS: $os\n\n$body';
       if (text.length > 3000) throw StateError('Total complaint is too long.');
       bool sent = true;
       if (account['managed'] == true) {
@@ -466,7 +470,7 @@ class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
       child: Align(
         alignment: Alignment.topLeft,
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 620),
+          constraints: const BoxConstraints(maxWidth: 820),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -478,6 +482,41 @@ class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
               const Text(
                 'Tell us which screen had a problem and what happened.',
               ),
+              const SizedBox(height: 16),
+              AnimatedBuilder(animation: _inbox, builder: (context, _) {
+                final tickets = _inbox.supportTickets;
+                return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Wrap(spacing: 8, runSpacing: 8, children: [
+                    for (final entry in ['Total','Open','In progress','Resolved'])
+                      SizedBox(width: 145, child: Card(child: Padding(
+                        padding: const EdgeInsets.all(12), child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(entry),
+                            Text(tickets == null ? '—' : '${entry == 'Total' ? tickets.length : tickets.where((r) => r['status'] == entry.toLowerCase().replaceAll(' ','_')).length}',
+                              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                          ],
+                        ),
+                      ))),
+                  ]),
+                  if (tickets == null || _inbox.error != null)
+                    const Text('Ticket totals require a verified refresh; cached information may be stale.'),
+                  if (tickets != null && tickets.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Row(children: [
+                      const Expanded(child: Text('Recent tickets', style: TextStyle(fontWeight: FontWeight.bold))),
+                      TextButton(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const WindowsComplaintHistory())), child: const Text('View history')),
+                    ]),
+                    for (final ticket in tickets.take(3))
+                      Card(child: ListTile(
+                        title: Text(ticket['message']?.toString().split('\n').first ?? 'Support ticket', maxLines: 1, overflow: TextOverflow.ellipsis),
+                        subtitle: Text('${ticket['status']} • ${formatNoticeIst(noticeMillis(ticket['createdAt']))}'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) =>
+                          WindowsComplaintThread(client: SchoolSupportClient(), complaint: ticket))),
+                      )),
+                  ],
+                ]);
+              }),
               const SizedBox(height: 22),
               TextField(controller: _subject, enabled: !_busy, maxLength: 120,
                 decoration: const InputDecoration(labelText: 'Subject')),
@@ -497,9 +536,10 @@ class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
                 maxLength: 2800,
                 decoration: const InputDecoration(
                   labelText: 'Your complaint',
-                  hintText: 'Describe the issue. Do not include passwords.',
+                  hintText: 'Describe the issue. Do not include passwords or student personal data.',
                 ),
               ),
+              const Text('App version and Windows version are included. Do not include credentials or private school records.'),
               if (_error != null)
                 Text(_error!, style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.redAccent))),
               const SizedBox(height: 18),

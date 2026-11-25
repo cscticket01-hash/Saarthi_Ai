@@ -11,6 +11,9 @@ import 'windows_connect/central_school_cloud.dart';
 import 'windows_connect/managed_school_session.dart';
 
 class SchoolSupportClient {
+  SchoolSupportClient({this.readIdentity, this.request});
+  final Future<Map<String,dynamic>> Function()? readIdentity;
+  final Future<Map<String,dynamic>> Function(String school, String action, Map<String,dynamic> body)? request;
   final String _profile = local.FirebaseFirestore.instance.activeProfileId;
   String? _school, _uid;
   static final _flushing = <String>{};
@@ -28,7 +31,7 @@ class SchoolSupportClient {
                   .instance
                   .activeProfileIdentity['schoolSyncId']);
   Future<void> _bind() async {
-    final saved = await CentralSchoolCloud.saved();
+    final saved = await (readIdentity ?? CentralSchoolCloud.saved)();
     if (local.FirebaseFirestore.instance.activeProfileId != _profile ||
         saved['managed'] != true ||
         local
@@ -50,7 +53,7 @@ class SchoolSupportClient {
     Map<String, dynamic> body,
   ) async {
     await _bind();
-    final out = await ManagedSchoolSession.callForSchool(_school, action, body);
+    final out = await (request != null ? request!(_school!, action, body) : ManagedSchoolSession.callForSchool(_school, action, body));
     await _bind();
     if (out['success'] != true || out['schoolId'] != _school)
       throw StateError('Complaint response could not be verified.');
@@ -238,7 +241,7 @@ class _WindowsComplaintHistoryState extends State<WindowsComplaintHistory> {
       final page = await client.page(cursor: more ? cursor : null);
       if (!mounted) return;
       setState(() {
-        if (!more) rows.clear();
+        if (!more && page['cursor'] == null) rows.clear();
         for (final r in page['rows'] as List<Map<String,dynamic>>) rows[r['id'] as String] = r;
         cursor = page['cursor'] as String?;
         error = null;
@@ -304,13 +307,11 @@ class _WindowsComplaintHistoryState extends State<WindowsComplaintHistory> {
                   'Ticket ${r['id']}\n${_date(r['createdAt'])} • ${r['status'] ?? 'open'}',
                 ),
                 trailing: const Icon(Icons.chevron_right),
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) =>
-                        WindowsComplaintThread(client: client, complaint: r),
-                  ),
-                ),
+                onTap: () async {
+                  await Navigator.push(context, MaterialPageRoute(
+                    builder: (_) => WindowsComplaintThread(client: client, complaint: r)));
+                  if (mounted) await _load();
+                },
               ),
             ),
           if (cursor != null)
@@ -369,6 +370,7 @@ class WindowsComplaintThreadState extends State<WindowsComplaintThread> {
     try {
       final localQueue = await widget.client.pending();
       if (mounted) setState(() => queued = localQueue.where((r) => r['kind'] == 'reply' && r['complaintId'] == complaint['id']).toList());
+      if (complaint['schoolId'] != local.FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] || !SchoolSupportClient.developerTicket(complaint)) throw StateError('School ticket identity mismatch.');
       final out = await widget.client.call('managed/support/thread', {
         'complaintId': complaint['id'],
         if (more && cursor != null) 'cursor': cursor,
@@ -409,7 +411,7 @@ class WindowsComplaintThreadState extends State<WindowsComplaintThread> {
   @override
   Widget build(BuildContext context) {
     WindowsAppearance.watch(context);
-    if (!widget.client.current)
+    if (!widget.client.current || complaint['schoolId'] != local.FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'])
       return const Scaffold(
         body: Center(child: Text('School changed. Reopen complaint history.')),
       );

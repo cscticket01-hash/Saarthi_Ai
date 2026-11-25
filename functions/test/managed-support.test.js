@@ -23,6 +23,7 @@ test('school complaint creation is durable and idempotent; foreign school cannot
  await f.call(reply);await f.call(reply);
  const thread=await f.call({action:'managed/support/thread',complaintId:id});assert.equal(thread.messages.length,1);assert.equal(thread.messages[0].role,'school');
  await assert.rejects(f.call({...reply,message:'Changed retry'}),e=>e.status===409);
+ await assert.rejects(f.call({...reply,messageId:time+'_'+'e'.repeat(32)}),e=>e.status===429);
  assert.equal(f.sent.length,0,'support never calls school Drive or uploads operational data');
 });
 test('complaint history paginates beyond 50 records and validates identifiers',async()=>{
@@ -35,6 +36,7 @@ test('complaint history paginates beyond 50 records and validates identifiers',a
 test('only the owning school resolves student complaints; reopening clears the retention clock',async()=>{
  const f=setup();f.docs.set('platform_complaints/'+id,{schoolId:A,audience:'school',message:'Student complaint',status:'open',createdAt:time});
  await assert.rejects(f.call({action:'managed/support/resolve',complaintId:id,status:'resolved'},'B'),e=>e.status===404);
+ await assert.rejects(f.call({action:'managed/support/reply',complaintId:id,messageId:time+'_'+'c'.repeat(32),message:'Wrong channel'}),e=>e.status===404);
  await f.call({action:'managed/support/resolve',complaintId:id,status:'resolved',reply:'Fixed'});
  assert.equal(f.docs.get('platform_complaints/'+id).resolvedAt.getTime(),time);
  await f.call({action:'managed/support/resolve',complaintId:id,status:'open'});

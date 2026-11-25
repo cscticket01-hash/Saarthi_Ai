@@ -19,6 +19,8 @@ class DeveloperInbox extends ChangeNotifier {
   final _client = http.Client();
   final Map<String, String?> _cursors = {};
   List<Map<String, dynamic>> messages = [];
+  List<Map<String,dynamic>>? _tickets;
+  List<Map<String,dynamic>>? get supportTickets => current ? _tickets : null;
   Set<String> _read = {};
   String? _profile, _school, _uid;
   bool busy = false, _disposed = false, _loaded = false;
@@ -203,6 +205,7 @@ class DeveloperInbox extends ChangeNotifier {
       if (!current || _disposed) return;
       if ((readPage == null || readComplaints != null) && !more) {
         final support = SchoolSupportClient();
+        final tickets = <Map<String,dynamic>>[];
         String? cursor;
         do {
           final out = readComplaints != null
@@ -217,6 +220,7 @@ class DeveloperInbox extends ChangeNotifier {
               throw StateError('Complaint school mismatch.');
             if (complaintExpired(row)) continue;
             if (row['audience'] != 'school') {
+              tickets.add(row);
               final note = row['developerNote']?.toString().trim() ?? '';
               final status = row['status']?.toString() ?? 'open';
               if (note.isEmpty && status == 'open') continue;
@@ -247,6 +251,8 @@ class DeveloperInbox extends ChangeNotifier {
           }
           cursor = out['cursor'] as String?;
         } while (cursor != null);
+        if (!current || _disposed) return;
+        _tickets = tickets..sort((a,b) => complaintMillis(b['createdAt']).compareTo(complaintMillis(a['createdAt'])));
         final live = updates.map((row) => row['key']).toSet();
         for (final row
             in messages
@@ -292,7 +298,7 @@ class DeveloperInbox extends ChangeNotifier {
           final previous = existing[m['key']];
           if (previous == null || m['complaintId'] == null) continue;
           final changedContent = previous['message'] != m['message'] ||
-              previous['status'] != m['status'] ||
+              (previous['status'] != m['status'] && (kind(m) != 'support' || m['status'] != 'open')) ||
               (kind(m) == 'support' && previous['developerUpdatedAt'] != m['developerUpdatedAt']);
           if (changedContent && _read.contains(m['key'])) {
             if (!current || _disposed) return;
@@ -406,7 +412,7 @@ class _DeveloperInboxScreenState extends State<DeveloperInboxScreen> {
                           itemCount: visible.length + 1,
                           itemBuilder: (context, index) {
                             if (index == visible.length)
-                              return inbox.hasMore
+                              return inbox.hasMore && _tab == 'announcement'
                                   ? TextButton(
                                       onPressed: inbox.busy
                                           ? null
@@ -437,6 +443,7 @@ class _DeveloperInboxScreenState extends State<DeveloperInboxScreen> {
                                 ),
                                 trailing: read ? null : const Badge(),
                                 onTap: () async {
+                                  if (!inbox.current) return;
                                   if (DeveloperInbox.kind(m) == 'support') {
                                     await Navigator.of(context).push(MaterialPageRoute(builder: (_) =>
                                       WindowsComplaintThread(client: SchoolSupportClient(), complaint: {
