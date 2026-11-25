@@ -85,7 +85,7 @@ function VS_platformAdmin(b){
  if(b.action==='platform_complaint')return VS_queueComplaint(b,'admin','windows');
  if(b.action==='platform_support_create')return VS_legacySupportCreate(b);
  if(b.action==='platform_support_list')return VS_legacySupportList(b);
- if(b.action==='platform_support_thread')return VS_legacySupportBroker(b,'thread');
+ if(b.action==='platform_support_thread')return VS_legacySupportThread(b);
  if(b.action==='platform_support_create_screenshot')return VS_legacySupportBroker(b,'createWithScreenshot');
  if(b.action==='platform_support_reply')return VS_legacySupportBroker(b,'reply');
  if(b.action==='platform_support_attachment')return VS_legacySupportBroker(b,'attachment');
@@ -152,7 +152,7 @@ function VS_legacySupportId(id){
 // The original school administrator has already passed VS_requireAdmin.
 // Never accept a caller-supplied broker URL or return the monitor token.
 function VS_legacySupportBroker(b,operation){
- const allowed={createWithScreenshot:['complaintId','message','version','screenshot'],thread:['complaintId','cursor'],reply:['complaintId','messageId','message'],attachment:['complaintId'],readReceipts:['keys','marked']};
+ const allowed={createWithScreenshot:['complaintId','message','version','screenshot'],reply:['complaintId','messageId','message'],attachment:['complaintId'],readReceipts:['keys','marked']};
  if(!Object.prototype.hasOwnProperty.call(allowed,operation))throw new Error('Invalid support operation');
  const school=VS_project(),body={action:'legacy/support/'+operation,schoolId:school};
  allowed[operation].forEach(k=>{if(b[k]!==undefined)body[k]=b[k];});
@@ -193,7 +193,7 @@ function VS_legacySupportThread(b){
  const raw=VS_central('post','platform_complaints/'+row.id+':runQuery',{structuredQuery:query},token)||[];
  const docs=raw.filter(r=>r.document).map(r=>VS_doc(r.document));
  if(docs.some(r=>r.schoolId!==school))throw new Error('Message school mismatch');
- return {schoolId:school,complaint:VS_legacySupportPublic(row),messages:docs.slice(0,50),cursor:docs.length>50?docs[49].id:null,readOnly:true};
+ return {schoolId:school,complaint:VS_legacySupportPublic(row),messages:docs.slice(0,50),cursor:docs.length>50?docs[49].id:null,readOnly:false};
 }
 function VS_legacySupportAnnouncements(b){
  const school=VS_project(),audience=b.audience;
