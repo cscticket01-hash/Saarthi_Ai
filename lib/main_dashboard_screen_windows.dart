@@ -8008,23 +8008,69 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
     return '$label: $value';
   }
 
-  Widget _analyticsDropdownPill(String chart) => PopupMenuButton<int>(
-    tooltip: WindowsUiLanguage.translate('Select month'),
-    initialValue: _chartMonth(chart),
-    onSelected: (month) => setState(() => _chartMonths[chart] = month),
-    itemBuilder: (_) => [
-      const PopupMenuItem(value: -1, child: Text('All months')),
-      for (var i = 0; i < 12; i++) PopupMenuItem(value: i, child: Text('${WindowsUiLanguage.translate(_monthLabels[i])} ${i + 1 < _academicYearRolloverMonth ? _selectedYear + 1 : _selectedYear}', translate: false)),
-    ],
-    child: Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
-      decoration: BoxDecoration(color: WindowsAppearance.background(const Color(0xFF12313A)), borderRadius: BorderRadius.circular(8)),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Text(_chartMonth(chart) == -1 ? 'All months' : _periodLabel(_chartMonth(chart)), style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white70), fontSize: 10)),
-        const Icon(Icons.keyboard_arrow_down_rounded, size: 16),
-      ])));
+  Future<void> _pickAnalyticsMonth({String? chart}) async {
+    if (!_periodReady) return;
+    final year = _selectedYear, rollover = _academicYearRolloverMonth;
+    final observed = _observedMonth;
+    final selected = chart == null ? _selectedMonth : _chartMonth(chart);
+    final months = List<int>.generate(12, (i) => (rollover - 1 + i) % 12);
+    final picked = await showDialog<int>(context: context, builder: (ctx) {
+      WindowsAppearance.watch(ctx);
+      final scheme = Theme.of(ctx).colorScheme;
+      return AlertDialog(title: Text('Select month • ${_academicYear(year)}'),
+        content: SizedBox(width: 300, child: Column(mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          for (var row = 0; row < 4; row++) ...[
+            Row(children: [
+              for (var col = 0; col < 3; col++) ...[
+                if (col > 0) const SizedBox(width: 6),
+                Expanded(child: OutlinedButton(
+                  key: ValueKey('analytics-picker-month-${months[row * 3 + col]}'),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 9),
+                    backgroundColor: selected == months[row * 3 + col] ? scheme.primaryContainer : null,
+                    foregroundColor: selected == months[row * 3 + col] ? scheme.onPrimaryContainer : scheme.onSurface),
+                  onPressed: () => Navigator.pop(ctx, months[row * 3 + col]),
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    Text(_monthLabels[months[row * 3 + col]]),
+                    Text('${months[row * 3 + col] + 1 < rollover ? year + 1 : year}', style: const TextStyle(fontSize: 10)),
+                  ]))),
+              ],
+            ]),
+            if (row < 3) const SizedBox(height: 6),
+          ],
+          if (chart != null) ...[
+            const SizedBox(height: 10),
+            OutlinedButton(key: const ValueKey('analytics-picker-all-months'),
+              onPressed: () => Navigator.pop(ctx, -1), child: const Text('All months')),
+          ],
+        ])));
+    });
+    if (!mounted || picked == null || year != _selectedYear || rollover != _academicYearRolloverMonth ||
+        observed != _observedMonth || FirebaseFirestore.instance.activeProfileId != _analyticsProfile) return;
+    if (chart != null) {
+      setState(() => _chartMonths[chart] = picked);
+    } else if (picked != _selectedMonth) {
+      setState(() { _selectedMonth = picked; _chartMonths.clear(); _data = null; });
+      unawaited(_loadAnalytics());
+    }
+  }
+
+  Widget _analyticsDropdownPill(String chart) => TextButton(
+    onPressed: _periodReady ? () => _pickAnalyticsMonth(chart: chart) : null,
+    style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+      minimumSize: Size.zero, tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      backgroundColor: WindowsAppearance.background(const Color(0xFF12313A)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+    child: Row(mainAxisSize: MainAxisSize.min, children: [
+      Text(_chartMonth(chart) == -1 ? 'All months' : _periodLabel(_chartMonth(chart)),
+        style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white70), fontSize: 10)),
+      const Icon(Icons.keyboard_arrow_down_rounded, size: 16),
+    ]),
+  );
   List<T> _chartValues<T>(String chart, List<T> values) {
     final month = _chartMonth(chart);
-    return month == -1 ? values : [values[month]];
+    return month == -1 ? List<T>.generate(12, (i) => values[(_academicYearRolloverMonth - 1 + i) % 12]) : [values[month]];
   }
   List<String> _chartLabels(String chart) => _chartValues(chart, _monthLabels);
 
@@ -8211,22 +8257,14 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                                   ],
                                 ),
                               ),
-                              DropdownButtonHideUnderline(
-                                child: DropdownButton<int>(
-                                  key: const ValueKey('analytics-month'),
-                                  value: _selectedMonth,
-                                  dropdownColor: WindowsAppearance.resolve(const Color(0xFF12272F)),
-                                  style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 11),
-                                  items: [
-                                    for (var m = 0; m < 12; m++)
-                                      DropdownMenuItem<int>(value: m, child: Text(_periodLabel(m), translate: false)),
-                                  ],
-                                  onChanged: (month) {
-                                    if (month == null || month == _selectedMonth) return;
-                                    setState(() { _selectedMonth = month; _chartMonths.clear(); _data = null; });
-                                    _loadAnalytics();
-                                  },
-                                ),
+                              TextButton(
+                                key: const ValueKey('analytics-month'),
+                                onPressed: _periodReady ? () => _pickAnalyticsMonth() : null,
+                                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                                  Text(_periodLabel(_selectedMonth), translate: false,
+                                    style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 11)),
+                                  const Icon(Icons.keyboard_arrow_down_rounded, size: 16),
+                                ]),
                               ),
                               const SizedBox(width: 8),
                               DropdownButtonHideUnderline(
