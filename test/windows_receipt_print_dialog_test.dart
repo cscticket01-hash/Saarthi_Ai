@@ -33,6 +33,28 @@ class PaperSizePrinting extends MethodChannelPrinting {
 
 void main() {
   const printer = Printer(url: 'test-epson', name: 'EPSON L3110', isDefault: true, isAvailable: true);
+  test('black and white layout converts print pixels without changing source',(){
+    final image=img.Image(width:1,height:1)..setPixelRgba(0,0,255,40,10,255);
+    final original=img.encodePng(image);
+    final before=List<int>.of(original);
+    final output=img.decodePng(WindowsPrintLayout.grayscalePng(original))!;
+    final pixel=output.getPixel(0,0);
+    expect(pixel.r,pixel.g);expect(pixel.g,pixel.b);
+    expect(original,before);
+  });
+  testWidgets('no installed printer offers PDF destination, never sends print job',(tester)async{
+    await tester.binding.setSurfaceSize(const Size(1200,900));
+    addTearDown(()=>tester.binding.setSurfaceSize(null));
+    var jobs=0;
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:WindowsReceiptPrintDialog(
+      receipt:Future.value(Uint8List.fromList([1,2,3])),title:'PDF',subtitle:'School',isCurrent:()=>true,
+      printers:()async=>[],previewBuilder:(_)=>const SizedBox(),printJob:(_,__,___)async{jobs++;return true;},
+    ))));
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(FilledButton,'Save as PDF'),findsOneWidget);
+    expect(find.widgetWithText(FilledButton,'Print'),findsNothing);
+    expect(jobs,0);
+  });
   test('paper layout geometry preserves aspect and rejects invalid pages and clipping',(){
     expect(WindowsPrintLayout.parseRange('1,3-5,3'),{1,3,4,5});
     expect(()=>WindowsPrintLayout.parseRange('4-2'),throwsFormatException);

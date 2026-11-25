@@ -14,7 +14,9 @@ import 'windows_local_firestore.dart' as local;
 
 /// Developer messages and verified school complaints. Reads never enter the school sync outbox.
 class DeveloperInbox extends ChangeNotifier {
-  DeveloperInbox({this.readPage, this.readComplaints, this.playNotificationSound});
+  DeveloperInbox({this.readPage, this.readComplaints, this.playNotificationSound,this.exchangeReadReceipts});
+  // Injectable boundary for two independent profile/device regression tests.
+  final Future<Map<String,dynamic>> Function(List<String> keys,List<String> marked)? exchangeReadReceipts;
   final Future<void> Function()? playNotificationSound;
   bool _soundBaselineEstablished = false;
   final Future<Map<String, dynamic>> Function(String audience, String? cursor)?
@@ -64,7 +66,7 @@ class DeveloperInbox extends ChangeNotifier {
   bool isRead(Map m) => (m['complaintId'] != null && m['status']=='resolved') || _read[m['key']] == receiptRevision(m);
 
   Future<void> _syncReadReceipts() async {
-    if(readPage!=null || readComplaints!=null || !current || _disposed) return;
+    if((exchangeReadReceipts==null && (readPage!=null || readComplaints!=null)) || !current || _disposed) return;
     final support=SchoolSupportClient();
     final rows=messages.where((m)=>!complaintExpired(m)).toList();
     // Each exchange is bounded; recent alerts first, with pending older reads included.
@@ -83,7 +85,7 @@ class DeveloperInbox extends ChangeNotifier {
       if(!current||_disposed)return;
       final chunk=keys.skip(start).take(100).toList();
       final marked=chunk.where(_pendingRead.contains).toList();
-      final result=await support.call('managed/support/readReceipts',{'keys':chunk,'marked':marked});
+      final result=await (exchangeReadReceipts?.call(chunk,marked) ?? support.call('managed/support/readReceipts',{'keys':chunk,'marked':marked}));
       if(!current||_disposed)return;
       final returned=result['read'];
       if(returned is! List || returned.any((r)=>r is! String||!chunk.contains(r)))throw StateError('Invalid read receipt response.');

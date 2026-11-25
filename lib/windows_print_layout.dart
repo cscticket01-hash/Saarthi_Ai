@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import 'package:image/image.dart' as img;
 
 /// Print-only imposition. The source PDF is immutable. A changed layout is
 /// rendered at 300 dpi; unchanged PDFs can retain their original vector data.
@@ -53,22 +54,31 @@ class WindowsPrintLayout {
 
   static Future<Uint8List> compose(Uint8List source, PdfPageFormat paper, {
     required bool Function() isCurrent, String range='', int perSheet=1,
-    double marginMm=0, double? scale,
+    double marginMm=0, double? scale, bool headersFooters=false, bool monochrome=false,
   }) async {
     final requested = parseRange(range);
     final gridSize = grid(perSheet,paper.width>paper.height);
     final margin = marginMm*PdfPageFormat.mm;
+    // Optional print-added header/footer must never overlap document artwork.
+    final band=headersFooters?7*PdfPageFormat.mm:0.0;
     final cellW = (paper.width-2*margin)/gridSize.columns;
-    final cellH = (paper.height-2*margin)/gridSize.rows;
+    final cellH = (paper.height-2*margin-2*band)/gridSize.rows;
     if (marginMm<0 || cellW<=0 || cellH<=0) throw const FormatException('Margins exceed paper size.');
     final document = pw.Document();
     final cells = <pw.Widget>[];
-    var count=0, sourceIndex=0, encodedBytes=0;
+    var count=0, sourceIndex=0, encodedBytes=0, sheet=0;
     void flush() {
       if (cells.isEmpty) return;
       final pageCells = List<pw.Widget>.of(cells);
+      final pageNumber=++sheet;
       document.addPage(pw.Page(pageFormat:paper,margin:pw.EdgeInsets.zero,
-        build:(_)=>pw.Stack(children:[pw.SizedBox(width:paper.width,height:paper.height),...pageCells])));
+        build:(_)=>pw.Stack(children:[
+          pw.SizedBox(width:paper.width,height:paper.height),...pageCells,
+          if(headersFooters)pw.Positioned(left:margin+3*PdfPageFormat.mm,right:margin+3*PdfPageFormat.mm,top:margin+2*PdfPageFormat.mm,
+            child:pw.Text('Vidya Saarthi',style:const pw.TextStyle(fontSize:8))),
+          if(headersFooters)pw.Positioned(left:margin+3*PdfPageFormat.mm,right:margin+3*PdfPageFormat.mm,bottom:margin+2*PdfPageFormat.mm,
+            child:pw.Align(alignment:pw.Alignment.centerRight,child:pw.Text('Sheet $pageNumber',style:const pw.TextStyle(fontSize:8)))),
+        ])));
       cells.clear();
     }
     await for (final page in Printing.raster(source,dpi:dpi)) {
@@ -78,14 +88,15 @@ class WindowsPrintLayout {
       if (++count>100) throw const FormatException('Changed layout supports up to 100 pages. Select a page range.');
       final size=imageSize(sourceWidth:page.width*72/dpi,sourceHeight:page.height*72/dpi,
         cellWidth:cellW,cellHeight:cellH,scale:scale);
-      final png=await page.toPng();
+      final rendered=await page.toPng();
+      final png=monochrome?grayscalePng(rendered):rendered;
       if (!isCurrent()) throw StateError('Print cancelled or school changed.');
       encodedBytes+=png.length;
       if (encodedBytes>80*1024*1024) throw const FormatException('Print layout too large. Select fewer pages.');
       final index=cells.length;
       cells.add(pw.Positioned(
         left:margin+(index%gridSize.columns)*cellW+(cellW-size.width)/2,
-        top:margin+(index~/gridSize.columns)*cellH+(cellH-size.height)/2,
+        top:margin+band+(index~/gridSize.columns)*cellH+(cellH-size.height)/2,
         child:pw.Image(pw.MemoryImage(png),width:size.width,height:size.height,fit:pw.BoxFit.contain)));
       if (cells.length==perSheet) flush();
     }
@@ -93,6 +104,14 @@ class WindowsPrintLayout {
     flush();
     if (!isCurrent()) throw StateError('Print cancelled or school changed.');
     return document.save();
+  }
+
+  /// Grayscale is baked into the print-only image, so preview, PDF export
+  /// and printed artwork use the same colours without changing driver defaults.
+  static Uint8List grayscalePng(Uint8List png) {
+    final decoded=img.decodePng(png);
+    if(decoded==null)throw const FormatException('Could not render black and white output.');
+    return img.encodePng(img.grayscale(decoded));
   }
 
   /// Native card/report preview is only converted to temporary print bytes

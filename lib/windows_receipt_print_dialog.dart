@@ -51,7 +51,7 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
   final scaleController = TextEditingController(text:'100');
   final marginController = TextEditingController(text:'10');
   Timer? layoutDelay;
-  bool customPages = false;
+  bool customPages = false, headersFooters=false, monochrome=false;
   int perSheet = 1;
   String margins = 'None', scaling = 'Fit to page';
   bool expandedSettings = false;
@@ -126,7 +126,8 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
         if(scale!=null&&(!scale.isFinite||scale<10||scale>200))throw const FormatException('Enter scale from 10 to 200 percent.');
         final bytes=await (widget.composeLayout?.call(source,format) ??
           WindowsPrintLayout.compose(source,format,range:range,perSheet:perSheet,
-            marginMm:margin,scale:scale,isCurrent:()=>mounted&&widget.isCurrent()&&generation==layoutGeneration));
+            marginMm:margin,scale:scale,headersFooters:headersFooters,monochrome:monochrome,
+            isCurrent:()=>mounted&&widget.isCurrent()&&generation==layoutGeneration));
         pending.complete(bytes);
       }catch(e,st){pending.completeError(e,st);}
     }
@@ -153,7 +154,7 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
     super.didUpdateWidget(oldWidget);
     if (oldWidget.receipt != widget.receipt) {
       paper = 'A4'; landscape = false; paperChosen = false;
-      customPages=false;perSheet=1;margins='None';scaling='Fit to page';
+      customPages=false;perSheet=1;margins='None';scaling='Fit to page';headersFooters=false;monochrome=false;
       sourcePaperLabel = null; originalFormat=null; chosenStock=null; layout=null; layoutGeneration++; layoutDelay?.cancel();
       pageFormatReady = widget.previewBuilder != null;
     }
@@ -387,11 +388,17 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
             onChanged:locked||source==null?null:(v){if(v!=null)changeLayout(source,()=>scaling=v);}),
           if(scaling=='Custom')TextField(controller:scaleController,enabled:!locked,keyboardType:TextInputType.number,
             decoration:const InputDecoration(labelText:'Scale %'),onChanged:(_)=>changeLayout(source,(){},debounce:true)),
+          DropdownButtonFormField<bool>(value:monochrome,decoration:const InputDecoration(labelText:'Colour'),
+            items:const [DropdownMenuItem(value:false,child:Text('Original colours')),DropdownMenuItem(value:true,child:Text('Black & white'))],
+            onChanged:locked||source==null?null:(v){if(v!=null)changeLayout(source,()=>monochrome=v);}),
+          CheckboxListTile(contentPadding:EdgeInsets.zero,value:headersFooters,title:const Text('Headers and footers'),
+            subtitle:const Text('Print-added header and sheet number'),onChanged:locked||source==null?null:(v)=>changeLayout(source,()=>headersFooters=v??false)),
+          const Text('Background graphics: embedded document artwork is preserved. PDF/image backgrounds cannot safely be removed separately.',style:TextStyle(fontSize:11)),
           TextButton(onPressed:locked?null:(){setState((){
-            layoutGeneration++;layoutDelay?.cancel();layout=null;customPages=false;perSheet=1;margins='None';scaling='Fit to page';paperChosen=false;chosenStock=null;
+            layoutGeneration++;layoutDelay?.cancel();layout=null;customPages=false;perSheet=1;margins='None';scaling='Fit to page';headersFooters=false;monochrome=false;paperChosen=false;chosenStock=null;
             paper='A4';landscape=false;
           });if(originalFormat!=null)acceptPageFormat(originalFormat);},child:const Text('Reset to original layout')),
-          const Text('Colour, duplex, tray and driver-specific options: Windows system print dialog.',style:TextStyle(fontSize:11)),
+          const Text('Duplex, colour hardware mode, tray and other driver-specific options: Windows system print dialog.',style:TextStyle(fontSize:11)),
         ]),
       Text(sourcePaperLabel==null?'Original document':'Original document: ${sourcePaperLabel!}'),
       if(layout!=null)const Text('Changed layout uses a print-only 300 dpi rendering. Original file is unchanged.',style:TextStyle(fontSize:11)),

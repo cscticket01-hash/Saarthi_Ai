@@ -178,6 +178,41 @@ void main() {
       inbox.dispose();
     },
   );
+  test('independent device caches share read receipts after reconnect without sharing local storage', () async {
+    final serverReads=<String>{};
+    final firstProfile=db.activeProfileId;
+    var offline=false,newReply=false,sounds=0;
+    Future<Map<String,dynamic>> exchange(List<String> keys,List<String> marked) async {
+      if(offline)throw StateError('Offline');
+      serverReads.addAll(marked);
+      return {'read':keys.where(serverReads.contains).toList()};
+    }
+    DeveloperInbox device()=>DeveloperInbox(
+      readPage:(a,c)async=>{'documents':[note(a,'shared',title:newReply?'New revision':'Original message')]},
+      exchangeReadReceipts:exchange,playNotificationSound:()async{sounds++;});
+    final first=device();
+    await first.initialize();expect(first.unread,2);
+    offline=true;
+    await first.markAllLoadedRead();expect(first.unread,0);
+    expect(serverReads,isEmpty);
+    final localReads=await db.collection('_windows_developer_inbox_read').get();
+    expect(localReads.docs.length,2);
+    first.dispose();
+    offline=false;
+    final resumed=device();
+    await resumed.initialize();
+    expect(serverReads.length,2);expect(resumed.unread,0);
+    resumed.dispose();
+    await db.switchProfile('$firstProfile-second-device',identity:{'schoolSyncId':school});
+    expect((await db.collection('_windows_developer_inbox_read').get()).docs,isEmpty);
+    final second=device();
+    try{
+      await second.initialize();expect(second.unread,0);
+      expect((await db.collection('_windows_developer_inbox_read').get()).docs.length,2);
+      expect(sounds,0);
+      newReply=true;await second.refresh();expect(second.unread,2);expect(sounds,1);
+    }finally{second.dispose();}
+  });
   test('resolved ticket from another PC is not unread; a new developer reply can reopen it', () async {
     var resolved=false,revision=1,sounds=0;
     final now=DateTime.now().millisecondsSinceEpoch;
