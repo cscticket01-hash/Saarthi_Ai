@@ -6,7 +6,7 @@ const A='vs-'+'a'.repeat(32),B='vs-'+'b'.repeat(32),clientId='desktop.apps.googl
 function fixture(){
  const documents=new Map();
  const db={doc:path=>({path,get:async()=>snap(path),set:async value=>documents.set(path,value),create:async value=>{assert(!documents.has(path));documents.set(path,value);}}),
-  runTransaction:async run=>run({get:async ref=>snap(ref.path),create:(ref,value)=>{assert(!documents.has(ref.path));documents.set(ref.path,value);}})};
+  runTransaction:async run=>run({get:async ref=>snap(ref.path),create:(ref,value)=>{assert(!documents.has(ref.path));documents.set(ref.path,value);},set:(ref,value)=>documents.set(ref.path,value)})};
  function snap(path){return {exists:documents.has(path),data:()=>documents.get(path)};}
  const auth={verifyIdToken:async token=>{if(!['A','B'].includes(token))throw Error('invalid token');return {uid:token==='A'?uidFor('123'):uidFor('456')};},
   createCustomToken:async(uid,claims)=>{assert.equal(claims.admin,undefined);assert.equal(claims.developer,undefined);return 'custom-'+uid;}};
@@ -109,3 +109,15 @@ test('Setup diagnostics require active own-school authorization, reject secrets 
 });
 
 test('managed-only onboarding preserves existing schools but cannot self-create a tenant',async()=>{const f=fixture();const handle=createSchoolCloud({auth:f.auth,db:f.db,projectId:'central-project',clientIds:[clientId],fetchImpl:f.fetchImpl,allowNewSchools:false});const req=()=>handle({method:'POST',headers:{},body:{action:'onboard',schoolName:'School',googleAccessToken:'google-access-token'}});await assert.rejects(req(),e=>e.status===403);assert.equal(f.documents.size,0);f.seed();assert.equal((await req()).schoolId,A);f.documents.get('school_memberships/'+uidFor('123')).managed=true;await assert.rejects(req(),e=>e.status===403);});
+
+test('legacy central membership uses the same idempotent complaint ticket without managed-role impersonation',async()=>{
+ const f=fixture();f.seed();
+ const complaintId=A+'_'+'c'.repeat(32);
+ const body={action:'support/create',schoolId:A,complaintId,message:'Legacy central support'};
+ const first=await f.req(body);assert.equal(first.complaintId,complaintId);
+ await f.req(body);assert.equal(f.documents.get('platform_complaints/'+complaintId).schoolId,A);
+ await assert.rejects(f.req({...body,schoolId:B}),e=>e.status===403);
+ await assert.rejects(f.req({action:'support/thread',schoolId:B,complaintId},'B'),e=>e.status===404);
+ f.documents.set('school_memberships/'+uidFor('123'),{schoolId:A,role:'school_admin',active:true,managed:true});
+ await assert.rejects(f.req(body),e=>e.status===403);
+});

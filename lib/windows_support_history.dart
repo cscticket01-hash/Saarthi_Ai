@@ -2,6 +2,8 @@ import 'complaint_retention.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:crypto/crypto.dart';
+import 'package:cryptography/cryptography.dart' as support_crypto;
+import 'windows_secure_storage.dart';
 import 'notice_time.dart';
 import 'dart:math';
 
@@ -21,6 +23,49 @@ class SchoolSupportClient {
   bool? _managed;
   static final _flushing = <String>{};
   static const _queue = '_windows_support_outbox';
+  static final _attachmentKeys = <String,Future<support_crypto.SecretKey>>{};
+  static final _attachmentCipher = support_crypto.AesGcm.with256bits();
+
+  Future<support_crypto.SecretKey> _attachmentKey({required bool create}) async {
+    await _bind();
+    final scope=sha256.convert(utf8.encode(jsonEncode([_profile,_school,_uid]))).toString();
+    final name='vs_support_attachment_key_$scope';
+    final existing=_attachmentKeys[name];
+    if(existing!=null)return existing;
+    final future=()async{
+      final storage=const WindowsSecureStorage();
+      final raw=await storage.read(key:name);
+      if(raw!=null){
+        final bytes=base64Decode(raw);
+        if(bytes.length!=32)throw StateError('Support attachment key is unavailable.');
+        return support_crypto.SecretKey(bytes);
+      }
+      if(!create)throw StateError('Attachment belongs to another PC or local key is unavailable.');
+      final key=await _attachmentCipher.newSecretKey();
+      await storage.write(key:name,value:base64Encode(await key.extractBytes()));
+      return key;
+    }();
+    _attachmentKeys[name]=future;
+    try{return await future;}catch(_){_attachmentKeys.remove(name);rethrow;}
+  }
+
+  List<int> _attachmentAad(String id)=>utf8.encode(jsonEncode([_school,_uid,id]));
+
+  Future<Map<String,dynamic>> _sealScreenshot(String id,String screenshot)async{
+    final key=await _attachmentKey(create:true);
+    final box=await _attachmentCipher.encrypt(utf8.encode(screenshot),secretKey:key,aad:_attachmentAad(id));
+    return {'ciphertext':base64Encode(box.cipherText),'nonce':base64Encode(box.nonce),'mac':base64Encode(box.mac.bytes)};
+  }
+
+  Future<String?> _openQueuedScreenshot(Map<String,dynamic> row)async{
+    final raw=row['sealedScreenshot'];
+    if(raw==null)return row['screenshot'] as String?; // pre-release draft compatibility
+    if(raw is! Map)throw StateError('Invalid queued screenshot.');
+    final key=await _attachmentKey(create:false);
+    final box=support_crypto.SecretBox(base64Decode(raw['ciphertext'] as String),
+      nonce:base64Decode(raw['nonce'] as String),mac:support_crypto.Mac(base64Decode(raw['mac'] as String)));
+    return utf8.decode(await _attachmentCipher.decrypt(box,secretKey:key,aad:_attachmentAad(row['id'] as String)));
+  }
   static String randomId() => List.generate(
     16,
     (_) => Random.secure().nextInt(256).toRadixString(16).padLeft(2, '0'),
@@ -89,11 +134,13 @@ class SchoolSupportClient {
     if (screenshot != null && (complaintId != null || screenshot.length > 131072)) throw StateError('Invalid screenshot size.');
     final id = complaintId == null ? '${_school}_${randomId()}'
         : '${DateTime.now().millisecondsSinceEpoch}_${randomId()}';
+    final sealed=screenshot==null?null:await _sealScreenshot(id,screenshot);
+    await _bind();
     final ref = local.FirebaseFirestore.instance.collection(_queue).doc(id);
     await local.WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() => ref.set({
       'id': id, 'schoolId': _school, 'uid': _uid, 'complaintId': complaintId ?? id,
       'message': text, 'version': version, 'kind': complaintId == null ? 'create' : 'reply',
-      if (screenshot != null) 'screenshot': screenshot,
+      if (sealed != null) 'sealedScreenshot': sealed,
       'createdAt': DateTime.now().millisecondsSinceEpoch, 'delivery': 'pending',
     }));
     await _bind();
@@ -125,7 +172,12 @@ class SchoolSupportClient {
       await _bind();
       try {
         final create = row['kind'] == 'create';
-        final screenshot = row['screenshot'] as String?;
+        String? screenshot;
+        try{ screenshot=await _openQueuedScreenshot(row); }catch(_){
+          await _bind();
+          await local.WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>ref.set({'delivery':'failed','attachmentUnavailable':true},const local.SetOptions(merge:true)));
+          return;
+        }
         final out = await call(create ? (screenshot == null ? 'managed/support/create' : 'managed/support/createWithScreenshot') : 'managed/support/reply', {
           'complaintId': row['complaintId'],
           if (!create) 'messageId': id,
@@ -316,7 +368,7 @@ class _WindowsComplaintHistoryState extends State<WindowsComplaintHistory> {
             for (final q in queued) Card(child: ListTile(
               leading: Icon(q['delivery'] == 'failed' ? Icons.error_outline : Icons.schedule),
               title: Text(q['message'].toString()),
-              subtitle: Text(q['delivery'] == 'failed' ? 'Failed — retained locally' : 'Pending — saved locally'),
+              subtitle: Text(q['attachmentUnavailable']==true?'Failed — screenshot key unavailable on this PC':q['delivery'] == 'failed' ? 'Failed — retained locally' : 'Pending — saved locally'),
             )),
           ],
           if (items.isEmpty && queued.isEmpty && !busy)

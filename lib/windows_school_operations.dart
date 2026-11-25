@@ -489,7 +489,7 @@ class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
       final text = 'Subject: $subject\nCategory: $_category\nApp: ${WindowsPlatformClient.version}\nOS: $os\n\n$body';
       if (text.length > 3000) throw StateError('Total complaint is too long.');
       bool sent = true;
-      if (account.isNotEmpty) {
+      if (account.isNotEmpty && account['uid'] is String && account['schoolId']==FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']) {
         sent = await _support.send(text, WindowsPlatformClient.version, screenshot: _screenshot == null ? null : base64Encode(_screenshot!));
       } else {
         if(_screenshot != null) throw StateError('Screenshot requires a central school account.');

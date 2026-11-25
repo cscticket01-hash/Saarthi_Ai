@@ -26,6 +26,7 @@ class DeveloperInbox extends ChangeNotifier {
   final Set<String> _pendingRead = {};
   Map<String,Map<String,dynamic>> _complaintPages = {};
   DateTime? _lastSupportPoll;
+  int _receiptSweepOffset=0;
   String? _profile, _school, _uid;
   bool busy = false, _disposed = false, _loaded = false;
   String? error;
@@ -48,7 +49,12 @@ class DeveloperInbox extends ChangeNotifier {
     for(final m in rows.where((m)=>_pendingRead.contains(receiptRevision(m)))) {
       candidates[receiptRevision(m)]=m;
     }
-    for(final m in rows.take(100)) {candidates[receiptRevision(m)]=m;}
+    for(final m in rows.take(50)) {candidates[receiptRevision(m)]=m;}
+    if(rows.isNotEmpty){
+      final start=_receiptSweepOffset%rows.length;
+      for(var i=0;i<50&&i<rows.length;i++){final m=rows[(start+i)%rows.length];candidates[receiptRevision(m)]=m;}
+      _receiptSweepOffset=(start+50)%rows.length;
+    }
     final keys=candidates.keys.toList();
     for(var start=0;start<keys.length;start+=100){
       if(!current||_disposed)return;

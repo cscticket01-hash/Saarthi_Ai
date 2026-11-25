@@ -27,7 +27,18 @@ function createManagedSupport({db,now,fail}) {
    const keys=[...new Set(b.keys)],marked=new Set(b.marked);
    const receipt=k=>db.doc('platform_support_reads/'+schoolId+'/receipts/'+k);
    if(marked.size){
-    const batch=db.batch();for(const k of marked)batch.set(receipt(k),{schoolId,readAt:new Date(now())});await batch.commit();
+    const limit=db.doc('platform_support_limits/reads_'+schoolId);
+    await db.runTransaction(async tx=>{
+     const rate=await tx.get(limit);
+     const newKeys=[];
+     for(const k of marked){const existing=await tx.get(receipt(k));if(!existing.exists)newKeys.push(k);}
+     if(!newKeys.length)return;
+     const day=Math.floor(now()/86400000),v=rate.exists?rate.data():{};
+     const used=v.day===day?Number(v.count||0):0;
+     if(used+newKeys.length>2000)fail(429,'Support read receipt daily limit reached; local read status is retained');
+     for(const k of newKeys)tx.set(receipt(k),{schoolId,readAt:new Date(now())});
+     tx.set(limit,{day,count:used+newKeys.length});
+    });
    }
    const found=await Promise.all(keys.map(async k=>{const d=await receipt(k).get();return d.exists&&d.data().schoolId===schoolId?k:null;}));
    return {success:true,schoolId,read:found.filter(Boolean)};

@@ -49,4 +49,21 @@ void main() {
     await expectLater(client.flushPending(),throwsStateError);
     expect((await db.collection('_windows_support_outbox').get()).docs,isEmpty);
   });
+  test('queued screenshot is encrypted and delivery verifies its exact checksum', () async {
+    const screenshot='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aW1kAAAAASUVORK5CYII=';
+    final offline=SchoolSupportClient(readIdentity:identity,request:(_,a,b)async{throw StateError('Offline');});
+    expect(await offline.send('Support screenshot ticket','test',screenshot:screenshot),false);
+    final row=(await offline.pending()).single;
+    expect(row['sealedScreenshot'],isA<Map>());
+    expect(row.containsKey('screenshot'),false);
+    expect(row.toString(),isNot(contains(screenshot)));
+    final invalid=SchoolSupportClient(readIdentity:identity,request:(_,a,b)async{
+      expect(a,'managed/support/createWithScreenshot');
+      expect(b['screenshot'],screenshot);
+      return {'success':true,'schoolId':school,'complaintId':row['id'],'screenshotSha256':'wrong'};
+    });
+    await invalid.flushPending();
+    expect((await invalid.pending()).single['id'],row['id']);
+  });
+
 }
