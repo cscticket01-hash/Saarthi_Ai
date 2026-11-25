@@ -6,7 +6,7 @@ const A='vs-'+'a'.repeat(32),B='vs-'+'b'.repeat(32),clientId='desktop.apps.googl
 function fixture(){
  const documents=new Map();
  const db={doc:path=>({path,get:async()=>snap(path),set:async value=>documents.set(path,value),create:async value=>{assert(!documents.has(path));documents.set(path,value);}}),
-  runTransaction:async run=>run({get:async ref=>snap(ref.path),create:(ref,value)=>{assert(!documents.has(ref.path));documents.set(ref.path,value);},set:(ref,value)=>documents.set(ref.path,value)})};
+  runTransaction:async run=>run({get:async ref=>snap(ref.path),create:(ref,value)=>{assert(!documents.has(ref.path));documents.set(ref.path,value);},set:(ref,value,options)=>documents.set(ref.path,options?.merge===true?{...documents.get(ref.path),...value}:value)})};
  function snap(path){return {exists:documents.has(path),data:()=>documents.get(path)};}
  const auth={verifyIdToken:async token=>{if(!['A','B'].includes(token))throw Error('invalid token');return {uid:token==='A'?uidFor('123'):uidFor('456')};},
   createCustomToken:async(uid,claims)=>{assert.equal(claims.admin,undefined);assert.equal(claims.developer,undefined);return 'custom-'+uid;}};
@@ -133,7 +133,16 @@ test('legacy monitor uses existing private attachment and receipt owner, never f
  const attached=await f.req({action:'legacy/support/attachment',schoolId:school,complaintId});assert.equal(attached.screenshot,screenshot);
  const messageId='1795600000000_'+'f'.repeat(32);
  const reply={action:'legacy/support/reply',schoolId:school,complaintId,messageId,message:'More information'};
- assert.equal((await f.req(reply)).messageId,messageId);await f.req(reply);
+ assert.equal((await f.req(reply)).messageId,messageId);
+ const parent=f.documents.get('platform_complaints/'+complaintId);
+ assert.equal(parent.schoolId,school);
+ assert.equal(parent.source,'windows');
+ assert.equal(parent.role,'admin');
+ assert.equal(parent.message,body.message);
+ assert.equal(parent.screenshotSha256,first.screenshotSha256);
+ assert.equal((await f.req(reply)).messageId,messageId);
+ assert.equal([...f.documents.keys()].filter(p=>p.startsWith('platform_complaints/'+complaintId+'/messages/')).length,1);
+ assert.equal((await f.req({action:'legacy/support/attachment',schoolId:school,complaintId})).screenshot,screenshot);
  const key='a'.repeat(64);
  assert.deepEqual((await f.req({action:'legacy/support/readReceipts',schoolId:school,keys:[key],marked:[key]})).read,[key]);
  f.documents.set('platform_monitor_access/'+uidFor('456'),{schoolId:other});
