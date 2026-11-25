@@ -28,6 +28,7 @@ async function cleanupComplaints({db,now=Date.now,schoolId}){
     // Keep the locked parent until every message is gone. A failed child
     // cleanup remains discoverable and retryable on the next sweep.
     await db.recursiveDelete(db.collection('platform_complaints/'+snapshot.id+'/messages'));
+    if(snapshot.data().hasScreenshot===true)await db.recursiveDelete(db.collection('platform_complaints/'+snapshot.id+'/attachments'));
     await ref.delete();deleted++;
    }
   }

@@ -54,7 +54,8 @@ function createManagedSupport({db,now,fail}) {
     const old=await tx.get(ref),rate=await tx.get(limit);
     if(old.exists){if(old.data().schoolId!==schoolId||old.data().message!==message||(old.data().screenshotSha256||null)!==(screenshotSha256||null))fail(409,'Complaint identity already used');return;}
     if(rate.exists&&now()-Number(rate.data().lastSentAt?.toMillis?.()??rate.data().lastSentAt)<30000)fail(429,'Wait 30 seconds before sending another complaint');
-    tx.set(ref,{schoolId,source:'windows',role:'admin',message,status:'open',version:String(b.version||'').slice(0,32),createdAt:new Date(now()),supportHistoryVersion:1,...(screenshotBase64?{screenshotBase64,screenshotSha256,hasScreenshot:true}:{})});
+    tx.set(ref,{schoolId,source:'windows',role:'admin',message,status:'open',version:String(b.version||'').slice(0,32),createdAt:new Date(now()),supportHistoryVersion:1,...(screenshotBase64?{screenshotSha256,hasScreenshot:true}:{})});
+    if(screenshotBase64)tx.set(db.doc('platform_complaints/'+complaintId+'/attachments/screenshot'),{schoolId,base64:screenshotBase64,sha256:screenshotSha256});
     tx.set(limit,{lastSentAt:new Date(now()),complaintId});
    });
    return {success:true,schoolId,complaintId,...(screenshotSha256?{screenshotSha256}:{})};
@@ -62,8 +63,11 @@ function createManagedSupport({db,now,fail}) {
   const parent=await ref.get();if(!parent.exists||parent.data().schoolId!==schoolId||parent.data().purging||expired(parent.data(),now()))fail(404,'Complaint not found for this school');
   if(action==='managed/support/attachment'){
    const v=parent.data();
-   if(v.audience==='school'||v.hasScreenshot!==true||typeof v.screenshotBase64!=='string'||sha(Buffer.from(v.screenshotBase64,'base64'))!==v.screenshotSha256)fail(404,'Screenshot unavailable');
-   return {success:true,schoolId,complaintId,screenshot:v.screenshotBase64,screenshotSha256:v.screenshotSha256};
+   if(v.audience==='school'||v.hasScreenshot!==true)fail(404,'Screenshot unavailable');
+   const file=await db.doc('platform_complaints/'+complaintId+'/attachments/screenshot').get();
+   const a=file.exists?file.data():null;
+   if(!a||a.schoolId!==schoolId||typeof a.base64!=='string'||a.base64.length>131072||a.sha256!==v.screenshotSha256||sha(Buffer.from(a.base64,'base64'))!==v.screenshotSha256)fail(404,'Screenshot unavailable');
+   return {success:true,schoolId,complaintId,screenshot:a.base64,screenshotSha256:v.screenshotSha256};
   }
   if(action==='managed/support/resolve'){
    await db.runTransaction(async tx=>{

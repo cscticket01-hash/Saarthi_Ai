@@ -69,7 +69,7 @@ class SchoolSupportClient {
       try {
         final token = await CentralSchoolCloud.firebaseToken();
         await _bind();
-        out = await cloud.api({'action':action,'schoolId':_school,...body}, token:token);
+        out = await cloud.api({'action':action.replaceFirst('managed/',''),'schoolId':_school,...body}, token:token);
       } finally { cloud.close(); }
     }
     await _bind();

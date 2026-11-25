@@ -4925,7 +4925,7 @@ void _handleLoginBack(bool didPop) {
     _startPortalInactivityTimer();
     unawaited(_developerInbox.initialize());
     unawaited(_developerInbox.flushSupport());
-    _supportPoll = Timer.periodic(const Duration(minutes: 1), (_) => unawaited(_developerInbox.tick()));
+    _supportPoll = Timer.periodic(const Duration(seconds: 15), (_) => unawaited(_developerInbox.tick()));
 
     // Preload heavy/remote Admin data while dashboard is already visible.
     // Exam Center then opens immediately with warm data.

@@ -32,9 +32,11 @@ class DeveloperInbox extends ChangeNotifier {
   int get unread =>
       !current ? 0 : messages.where((m) => !isRead(m) && !complaintExpired(m)).length;
   bool get hasMore => _cursors.values.any((v) => v != null);
-  static String receiptRevision(Map m) => sha256.convert(utf8.encode(jsonEncode([
-    m['key'],m['title'],m['message'],m['status'],m['developerUpdatedAt'],m['createdAt'],
-  ]))).toString();
+  static String receiptRevision(Map m) => sha256.convert(utf8.encode(jsonEncode(
+    kind(m)=='support' && complaintMillis(m['developerUpdatedAt'])>0
+      ? [m['key'],m['developerUpdatedAt'],m['developerNote']]
+      : [m['key'],m['title'],m['message'],m['status'],m['createdAt']],
+  ))).toString();
   bool isRead(Map m) => _read[m['key']] == receiptRevision(m);
 
   Future<void> _syncReadReceipts() async {
@@ -78,7 +80,7 @@ class DeveloperInbox extends ChangeNotifier {
     try { await SchoolSupportClient().flushPending(); } catch (_) {}
   }
   Future<void> tick() async {
-    if (_disposed || !current) return;
+    if (_disposed || !current || busy) return;
     final due=_lastSupportPoll==null||DateTime.now().difference(_lastSupportPoll!)>=const Duration(minutes:1);
     if(due){
       _lastSupportPoll=DateTime.now();

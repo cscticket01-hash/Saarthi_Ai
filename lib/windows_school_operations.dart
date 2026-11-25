@@ -411,7 +411,7 @@ class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
     super.initState();
     if (_ownsInbox) {
       unawaited(_inbox.initialize());
-      _inboxTimer = Timer.periodic(const Duration(minutes: 1), (_) => unawaited(_inbox.tick()));
+      _inboxTimer = Timer.periodic(const Duration(seconds: 15), (_) => unawaited(_inbox.tick()));
       unawaited(_inbox.flushSupport());
     }
   }
