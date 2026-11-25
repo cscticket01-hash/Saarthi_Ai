@@ -1,7 +1,7 @@
 'use strict';
-const {createSchoolCloud} = require('../functions/school-cloud-core');
+const {createSchoolCloud,LEGACY_SUPPORT_ACTIONS} = require('../functions/school-cloud-core');
 const {randomUUID,createHash}=require('node:crypto');
-const ACTIONS=new Set(['onboard','status','migration/import','drive/link','profile/initialize','school/bind','license/activate','school/heartbeat','installation/status','school/notice','setup/diagnostic']);
+const ACTIONS=new Set(['onboard','status','migration/import','drive/link','profile/initialize','school/bind','license/activate','school/heartbeat','installation/status','school/notice','setup/diagnostic',...require('../functions/managed-support').SUPPORT_ACTIONS.map(a=>a.replace('managed/','')),...LEGACY_SUPPORT_ACTIONS]);
 const PROJECT = 'saarthi-ai-df12b';
 function isolatedTestSchool(env) {
   if(env.SAARTHI_ISOLATED_TEST_MODE===undefined||env.SAARTHI_ISOLATED_TEST_MODE==='false')return null;
@@ -84,7 +84,7 @@ function createHandler({handle,health,allowedOrigins=[],testSchoolId=null,runtim
         'auth/invalid-password':'Use a valid initial password of 12–128 characters.',
         'auth/insufficient-permission':'School creation is blocked by backend Firebase Auth permissions. The developer must grant the existing backend account permission to manage Firebase users.'
       };
-      const status=code==='auth/email-already-exists'?409:[400,401,403,405,409,429,502,503,504].includes(e.status)?e.status:503;
+      const status=code==='auth/email-already-exists'?409:[400,401,403,404,405,409,413,429,502,503,504].includes(e.status)?e.status:503;
       // Log every failure without exception text, request payloads or credentials.
       // Upstream Script failures must not masquerade as a central-service outage.
       const context=e.syncDiagnostic;
