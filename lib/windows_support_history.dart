@@ -105,7 +105,7 @@ class SchoolSupportClient {
     if (request != null) {
       out = await request!(_school!, action, body);
     } else if (_scriptOnly) {
-      const allowed={'managed/support/create','managed/support/list','managed/support/thread','managed/support/announcements'};
+      const allowed={'managed/support/create','managed/support/list','managed/support/thread','managed/support/announcements','managed/support/createWithScreenshot','managed/support/reply','managed/support/attachment','managed/support/readReceipts'};
       if(!allowed.contains(action))throw StateError('This support operation requires central school migration.');
       out=await WindowsPlatformClient.instance.call(action.replaceFirst('managed/',''),{'projectId':_school,...body});
     } else if (_managed == true) {
@@ -134,7 +134,6 @@ class SchoolSupportClient {
     if (text.length < (complaintId == null ? 10 : 3) || text.length > 3000) {
       throw StateError('Invalid complaint or reply length.');
     }
-    if(_scriptOnly&&(screenshot!=null||complaintId!=null))throw StateError('Screenshot and conversation replies require central school migration.');
     if (screenshot != null && (complaintId != null || screenshot.length > 131072)) throw StateError('Invalid screenshot size.');
     final id = complaintId == null ? '${_school}_${randomId()}'
         : '${DateTime.now().millisecondsSinceEpoch}_${randomId()}';
@@ -559,7 +558,7 @@ class WindowsComplaintThreadState extends State<WindowsComplaintThread> {
           if (error != null)
             Text(error!, style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.orangeAccent))),
           for (final q in queued) Card(child: ListTile(title: Text(q['message'].toString()), subtitle: Text(q['delivery'] == 'failed' ? 'Failed — retained locally' : 'Pending — saved locally'))),
-          if(widget.client.scriptOnly) const Text('Legacy ticket history is read-only. Upgrade the school connection to reply here.') else TextField(
+          TextField(
             enabled: !busy,
             controller: message,
             maxLength: 3000,
@@ -567,7 +566,7 @@ class WindowsComplaintThreadState extends State<WindowsComplaintThread> {
             maxLines: 6,
             decoration: const InputDecoration(labelText: 'Reply to developer'),
           ),
-          if(!widget.client.scriptOnly) FilledButton(
+          FilledButton(
             onPressed: busy ? null : _send,
             child: const Text('Send reply'),
           ),

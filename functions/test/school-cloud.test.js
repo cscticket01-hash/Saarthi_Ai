@@ -121,3 +121,28 @@ test('legacy central membership uses the same idempotent complaint ticket withou
  f.documents.set('school_memberships/'+uidFor('123'),{schoolId:A,role:'school_admin',active:true,managed:true});
  await assert.rejects(f.req(body),e=>e.status===403);
 });
+
+test('legacy monitor uses existing private attachment and receipt owner, never foreign or student tickets',async()=>{
+ const f=fixture(),school='original-school-one',other='original-school-two';
+ f.seed();f.documents.set('platform_monitor_access/'+uidFor('123'),{schoolId:school});
+ const complaintId=school+'_'+'e'.repeat(32);
+ const screenshot='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aW1kAAAAASUVORK5CYII=';
+ const body={action:'legacy/support/createWithScreenshot',schoolId:school,complaintId,message:'Original school screenshot',screenshot};
+ const first=await f.req(body);assert.equal(first.delivered,true);assert.equal(first.screenshotSha256.length,64);
+ assert.equal((await f.req(body)).screenshotSha256,first.screenshotSha256);
+ const attached=await f.req({action:'legacy/support/attachment',schoolId:school,complaintId});assert.equal(attached.screenshot,screenshot);
+ const messageId='1795600000000_'+'f'.repeat(32);
+ const reply={action:'legacy/support/reply',schoolId:school,complaintId,messageId,message:'More information'};
+ assert.equal((await f.req(reply)).messageId,messageId);await f.req(reply);
+ const key='a'.repeat(64);
+ assert.deepEqual((await f.req({action:'legacy/support/readReceipts',schoolId:school,keys:[key],marked:[key]})).read,[key]);
+ f.documents.set('platform_monitor_access/'+uidFor('456'),{schoolId:other});
+ await assert.rejects(f.req(body,'B'),e=>e.status===403);
+ await assert.rejects(f.req({...reply,schoolId:other},'B'),e=>e.status===404);
+ await assert.rejects(f.req({action:'legacy/support/resolve',schoolId:school,complaintId}),e=>e.status===400);
+ const studentId=school+'_'+'d'.repeat(32);
+ f.documents.set('platform_complaints/'+studentId,{schoolId:school,source:'android',role:'student',audience:'school',message:'Student issue'});
+ await assert.rejects(f.req({...reply,complaintId:studentId}),e=>e.status===404);
+ f.documents.delete('platform_monitor_access/'+uidFor('123'));
+ await assert.rejects(f.req(reply),e=>e.status===403);
+});

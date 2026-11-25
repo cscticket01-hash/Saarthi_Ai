@@ -15,7 +15,7 @@ test('the supplied full doPost denies anonymous legacy read/write/identity reque
 });
 test('free platform actions retain the existing complete school-admin and storage guards', () => {
   const s=school();s.prepare();
-  for(const action of ['platform_bind','platform_activate','platform_heartbeat','platform_notice','platform_complaint','platform_support_create','platform_support_list','platform_support_thread','platform_support_announcements']){
+  for(const action of ['platform_bind','platform_activate','platform_heartbeat','platform_notice','platform_complaint','platform_support_create','platform_support_list','platform_support_thread','platform_support_announcements','platform_support_create_screenshot','platform_support_reply','platform_support_attachment','platform_support_read_receipts']){
     assert.equal(s.post({action,key:'VS-'+'A'.repeat(32),message:'Problem'}).success,false);
   }
   let called=false;s.context.VS_platformAdmin=()=>{called=true;return {allowed:true};};

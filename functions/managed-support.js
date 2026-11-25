@@ -12,6 +12,7 @@ function createManagedSupport({db,now,fail}) {
  async function page(query,cursor){if(cursor!==undefined)query=query.startAfter(id(cursor));const rows=(await query.limit(51).get()).docs;return {rows:rows.slice(0,50).map(plain),cursor:rows.length>50?rows[49].id:null};}
  return async (action,b,m)=>{
   const schoolId=m.schoolId;
+  const legacyTicket=v=>!m.legacyMonitor||(v.source==='windows'&&v.role==='admin'&&v.audience!=='school');
   if(action==='managed/support/changes'){
    if(b.cursor!==undefined&&(typeof b.cursor!=='string'||!(/^[a-f0-9-]{36}:[0-9]{1,15}$/).test(b.cursor)))fail(400,'Invalid support cursor');
    const result=await supportFeed(db,plain,now).changes(schoolId,b.cursor);
@@ -69,7 +70,7 @@ function createManagedSupport({db,now,fail}) {
    }
    await db.runTransaction(async tx=>{
     const old=await tx.get(ref),rate=await tx.get(limit);
-    if(old.exists){if(old.data().schoolId!==schoolId||old.data().message!==message||(old.data().screenshotSha256||null)!==(screenshotSha256||null))fail(409,'Complaint identity already used');return;}
+    if(old.exists){if(!legacyTicket(old.data())||old.data().schoolId!==schoolId||old.data().message!==message||(old.data().screenshotSha256||null)!==(screenshotSha256||null))fail(409,'Complaint identity already used');return;}
     if(rate.exists&&now()-Number(rate.data().lastSentAt?.toMillis?.()??rate.data().lastSentAt)<30000)fail(429,'Wait 30 seconds before sending another complaint');
     tx.set(ref,{schoolId,source:'windows',role:'admin',message,status:'open',version:String(b.version||'').slice(0,32),createdAt:new Date(now()),supportHistoryVersion:1,...(screenshotBase64?{screenshotSha256,hasScreenshot:true}:{})});
     if(screenshotBase64)tx.set(db.doc('platform_complaints/'+complaintId+'/attachments/screenshot'),{schoolId,base64:screenshotBase64,sha256:screenshotSha256});
@@ -77,7 +78,7 @@ function createManagedSupport({db,now,fail}) {
    });
    return {success:true,schoolId,complaintId,...(screenshotSha256?{screenshotSha256}:{})};
   }
-  const parent=await ref.get();if(!parent.exists||parent.data().schoolId!==schoolId||parent.data().purging||expired(parent.data(),now()))fail(404,'Complaint not found for this school');
+  const parent=await ref.get();if(!parent.exists||!legacyTicket(parent.data())||parent.data().schoolId!==schoolId||parent.data().purging||expired(parent.data(),now()))fail(404,'Complaint not found for this school');
   if(action==='managed/support/attachment'){
    const v=parent.data();
    if(v.audience==='school'||v.hasScreenshot!==true)fail(404,'Screenshot unavailable');
@@ -107,7 +108,7 @@ function createManagedSupport({db,now,fail}) {
    const messageRef=db.doc('platform_complaints/'+complaintId+'/messages/'+messageId),limit=db.doc('platform_support_limits/reply_'+schoolId);
    await db.runTransaction(async tx=>{
     const current=await tx.get(ref),old=await tx.get(messageRef),rate=await tx.get(limit);
-    if(!current.exists||current.data().schoolId!==schoolId||current.data().audience==='school'||current.data().purging||expired(current.data(),now()))fail(404,'Complaint not found for this school');
+    if(!current.exists||!legacyTicket(current.data())||current.data().schoolId!==schoolId||current.data().audience==='school'||current.data().purging||expired(current.data(),now()))fail(404,'Complaint not found for this school');
     if(old.exists){if(old.data().schoolId!==schoolId||old.data().role!=='school'||old.data().message!==message)fail(409,'Reply identity already used');return;}
     if(rate.exists&&now()-millis(rate.data().lastSentAt)<3000)fail(429,'Wait 3 seconds before another reply');
     tx.set(limit,{lastSentAt:new Date(now())});

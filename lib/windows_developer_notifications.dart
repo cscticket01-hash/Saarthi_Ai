@@ -52,7 +52,7 @@ class DeveloperInbox extends ChangeNotifier {
   bool isRead(Map m) => _read[m['key']] == receiptRevision(m);
 
   Future<void> _syncReadReceipts() async {
-    if(readPage!=null || readComplaints!=null || _legacyScript || !current || _disposed) return;
+    if(readPage!=null || readComplaints!=null || !current || _disposed) return;
     final support=SchoolSupportClient();
     final rows=messages.where((m)=>!complaintExpired(m)).toList();
     // Each exchange is bounded; recent alerts first, with pending older reads included.

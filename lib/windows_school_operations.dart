@@ -1,4 +1,5 @@
 import 'windows_support_history.dart';
+import 'windows_firebase_sync.dart';
 import 'dart:io' show Platform;
 import 'dart:typed_data';
 import 'package:file_selector/file_selector.dart' as support_files;
@@ -431,7 +432,10 @@ class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
     setState(()=>_choosingScreenshot=true);
     try {
       final account=await CentralSchoolCloud.saved();
-      if(account.isEmpty) throw StateError('Screenshot requires a central school account.');
+      if(account.isEmpty){
+        final remote=await WindowsFirebaseRemote.status();
+        if(!remote.authenticated||remote.schoolIdentity!=remote.projectId)throw StateError('Connect the original school administrator before attaching a screenshot.');
+      }
       final file=await support_files.openFile(acceptedTypeGroups:[const support_files.XTypeGroup(label:'PNG screenshot',extensions:['png'])]);
       if(file==null || !mounted) return;
       if(await file.length()>5*1024*1024) throw StateError('Choose a PNG under 5 MB.');

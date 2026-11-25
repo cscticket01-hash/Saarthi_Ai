@@ -2,6 +2,17 @@
 const {createHash, randomUUID} = require('node:crypto');
 const {createManagedSupport,SUPPORT_ACTIONS}=require('./managed-support');
 const schoolPattern = /^vs-[a-f0-9]{32}$/;
+// Original Apps Script uses its existing provisioned monitor account.
+// This route grants support operations only, never a central school session.
+const LEGACY_SUPPORT_ACTIONS=['createWithScreenshot','thread','reply','attachment','readReceipts'].map(a=>'legacy/support/'+a);
+async function authorizeLegacySupport(auth,db,token,expected,projectId){
+ let user;try{user=await auth.verifyIdToken(token,true);}catch(_){deny(401,'School monitoring login expired or revoked');}
+ if(user.admin===true||user.developer===true)deny(403,'Use the school monitoring identity');
+ const ref=await db.doc('platform_monitor_access/'+user.uid).get();
+ const schoolId=ref.exists?ref.data().schoolId:null;
+ if(typeof schoolId!=='string'||!(/^[a-z][a-z0-9-]{4,61}[a-z0-9]$/).test(schoolId)||schoolPattern.test(schoolId)||schoolId===projectId||schoolId!==expected)deny(403,'Verified original school monitoring access required');
+ return {uid:user.uid,schoolId,legacyMonitor:true};
+}
 const uidFor = sub => 'g_' + createHash('sha256').update(sub).digest('hex');
 function deny(status, message) { const e = new Error(message); e.status = status; e.publicMessage = true; throw e; }
 function requireSchool(id) { if (!schoolPattern.test(id || '')) deny(400, 'Invalid school identity'); return id; }
@@ -36,7 +47,7 @@ function createSchoolCloud({auth, db, projectId, clientIds, fetchImpl = fetch, v
     if (req.method !== 'POST') deny(405, 'Use POST');
     const b = req.body;
     if (!b || typeof b !== 'object' || Array.isArray(b) || JSON.stringify(b).length > 262144) deny(400, 'Invalid request');
-    if (b.action !== 'migration/import' && !['support/createWithScreenshot','support/readReceipts'].includes(b.action) && JSON.stringify(b).length > 8192) deny(400,'Request is too large');
+    if (b.action !== 'migration/import' && !['support/createWithScreenshot','support/readReceipts','legacy/support/createWithScreenshot','legacy/support/readReceipts'].includes(b.action) && JSON.stringify(b).length > 8192) deny(400,'Request is too large');
     if (b.action === 'onboard') {
       if (Object.keys(b).some(k => !['action','googleAccessToken','schoolName','expectedSchoolId'].includes(k))) deny(400, 'Unknown onboarding field');
       const google = await verifyGoogle(b.googleAccessToken, clientIds, fetchImpl);
@@ -66,6 +77,12 @@ function createSchoolCloud({auth, db, projectId, clientIds, fetchImpl = fetch, v
     }
     const token = String(req.headers.authorization || '').match(/^Bearer (.+)$/)?.[1];
     if (!token) deny(401, 'School login required');
+    if(typeof b.action==='string'&&b.action.startsWith('legacy/support/')){
+      if(!LEGACY_SUPPORT_ACTIONS.includes(b.action))deny(400,'Unknown legacy support operation');
+      const monitor=await authorizeLegacySupport(auth,db,token,b.schoolId,projectId);
+      const result=await createManagedSupport({db,now:Date.now,fail:deny})(b.action.replace('legacy/','managed/'),b,monitor);
+      return {...result,delivered:true};
+    }
     const member = await authorizeSchool(auth, db, token, b.schoolId);
     if(typeof b.action==='string'&&b.action.startsWith('support/')&&SUPPORT_ACTIONS.includes('managed/'+b.action))return createManagedSupport({db,now:Date.now,fail:deny})('managed/'+b.action,b,member);
     if (b.action === 'setup/diagnostic') {
@@ -200,4 +217,4 @@ function createSchoolCloud({auth, db, projectId, clientIds, fetchImpl = fetch, v
     deny(400, 'Unknown school cloud action');
   };
 }
-module.exports = {createSchoolCloud, verifyGoogle, authorizeSchool, requireSchool, uidFor};
+module.exports = {createSchoolCloud, verifyGoogle, authorizeSchool, requireSchool, uidFor, LEGACY_SUPPORT_ACTIONS};

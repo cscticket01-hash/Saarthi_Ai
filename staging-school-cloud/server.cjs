@@ -1,7 +1,7 @@
 'use strict';
-const {createSchoolCloud} = require('../functions/school-cloud-core');
+const {createSchoolCloud,LEGACY_SUPPORT_ACTIONS} = require('../functions/school-cloud-core');
 const {randomUUID,createHash}=require('node:crypto');
-const ACTIONS=new Set(['onboard','status','migration/import','drive/link','profile/initialize','school/bind','license/activate','school/heartbeat','installation/status','school/notice','setup/diagnostic',...require('../functions/managed-support').SUPPORT_ACTIONS.map(a=>a.replace('managed/',''))]);
+const ACTIONS=new Set(['onboard','status','migration/import','drive/link','profile/initialize','school/bind','license/activate','school/heartbeat','installation/status','school/notice','setup/diagnostic',...require('../functions/managed-support').SUPPORT_ACTIONS.map(a=>a.replace('managed/','')),...LEGACY_SUPPORT_ACTIONS]);
 const PROJECT = 'saarthi-ai-df12b';
 function isolatedTestSchool(env) {
   if(env.SAARTHI_ISOLATED_TEST_MODE===undefined||env.SAARTHI_ISOLATED_TEST_MODE==='false')return null;
