@@ -323,6 +323,10 @@ void main() {
       if (find.byType(PopupMenuButton<int>).evaluate().length == 5) break;
     }
     final menus=find.byType(PopupMenuButton<int>);
+    for (final menu in tester.widgetList<PopupMenuButton<int>>(menus)) {
+      expect(menu.initialValue, DateTime.now().month - 1);
+    }
+    expect(find.byKey(const ValueKey('analytics-month')), findsOneWidget);
     expect(menus, findsNWidgets(5), reason: 'Analytics did not finish loading its five charts.');
     expect(find.byType(CircularProgressIndicator), findsNothing);
     await tester.tap(menus.at(1)); await tester.pumpAndSettle();
