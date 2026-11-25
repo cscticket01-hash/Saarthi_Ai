@@ -7,7 +7,7 @@ const {createDeveloperPasswordOtp}=require('./developer-password-otp');
 const {createSchoolSyncDelivery}=require('./school-sync-delivery');
 'use strict';
 const {createSchoolAdminSecurity}=require('./school-admin-security');
-const {createSchoolAppLockOtp}=require('./school-app-lock-otp');
+const {createSchoolAppLockRecovery}=require('./school-app-lock-recovery');
 const {createManagedSupport}=require('./managed-support');
 const {createManagedCardReader}=require('./managed-card-reader');
 const {createSchoolChangeFeed}=require('./school-change-feed');
@@ -154,7 +154,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
  const queue=createAttendanceQueue({store:legacyAttendanceStore,now,deliver:deliverAttendance,retryAtForSchool:school=>googlePressure.retryAt(googleQuotaScopes[school]||school,'SCRIPT_QUOTA_EXCEEDED')});
  const edgeEnabled=school=>cloudflareSync?.enabled(school)===true;
  const schoolAdminSecurity=createSchoolAdminSecurity({auth,db,now});
- const schoolAppLockOtp=createSchoolAppLockOtp({auth,db,now,fetchImpl});
+ const schoolAppLockRecovery=createSchoolAppLockRecovery({db,now});
  const liveSync=require('./live-sync').createLiveSync({edge:cloudflareSync,schools:liveSyncSchools,now});
  async function publishedBundleBytes(schoolId,bundleId,kind,id){
    const pointer=await liveSync.command(schoolId,{
@@ -970,9 +970,12 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
  const m=await identity(req,b.schoolId);
  m.edgeDeliveryVersion=b.edgeDeliveryVersion===1?1:0;
  const deviceDecision=await deviceAccess.authorize({req,body:b,identity:m,entitlement:lease(m)});if(deviceDecision.handled)return deviceDecision.result;
- if(action==='managed/app-lock/otp/send'||action==='managed/app-lock/otp/verify'){
+ if(action.startsWith('managed/app-lock/otp/')){
+  fail(400,'Email OTP App Lock recovery has been retired. Update the Windows app.');
+ }
+ if(action==='managed/app-lock/recovery/verify'||action==='managed/app-lock/recovery/consume'){
   if(!lease(m).allowed)fail(403,'School licence is inactive');
-  return schoolAppLockOtp(action,b,m,await deviceAccess.themeDevices(req,m));
+  return schoolAppLockRecovery(action,b,m,await deviceAccess.themeDevices(req,m));
  }
  if(action==='managed/admin/security'){
   if(!lease(m).allowed)fail(403,'School licence is inactive');
