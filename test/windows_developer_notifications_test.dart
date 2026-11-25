@@ -117,12 +117,24 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(home: DeveloperInboxScreen(inbox: inbox)),
     );
-    await tester.tap(find.text('Developer message').first);
-    await tester.pumpAndSettle();
-    expect(find.text('Synthetic developer notification body'), findsOneWidget);
-    expect(inbox.unread, 1); // Read when opened, not after closing the detail.
-    inbox.dispose();
-    await tester.pumpWidget(const SizedBox());
+    try {
+      await tester.runAsync(() async {
+        await tester.tap(find.text('Developer message').first);
+        // The receipt uses actual asynchronous local-storage I/O.
+        for (var i = 0; i < 100 && inbox.unread != 1; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
+        // Verify durable receipt, not just an optimistic badge.
+        final reads = await db.collection('_windows_developer_inbox_read').get();
+        expect(reads.docs, hasLength(1));
+      });
+      await tester.pumpAndSettle();
+      expect(find.text('Synthetic developer notification body'), findsOneWidget);
+      expect(inbox.unread, 1); // The detail is still open.
+    } finally {
+      await tester.pumpWidget(const SizedBox());
+      inbox.dispose();
+    }
   });
   test(
     'student complaints share the bell with class/device details and stale cached complaints disappear',

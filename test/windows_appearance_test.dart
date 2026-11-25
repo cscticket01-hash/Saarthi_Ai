@@ -9,6 +9,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../lib/windows_appearance.dart';
 import '../lib/windows_local_firestore.dart' as local;
@@ -36,7 +37,7 @@ Widget app(Widget home, {GlobalKey<NavigatorState>? navigatorKey}) =>
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final db=local.FirebaseFirestore.instance;
-  setUp(()=>FlutterSecureStorage.setMockInitialValues({}));
+  setUp(() { FlutterSecureStorage.setMockInitialValues({}); SharedPreferences.setMockInitialValues({}); });
   tearDown(() {
     WindowsAppearance.mode.value = ThemeMode.dark;
   });

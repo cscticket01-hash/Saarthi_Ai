@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../lib/main_dashboard_screen_windows.dart' show SettingsScreen;
 import '../lib/windows_settings_design.dart';
 import '../lib/windows_update_service.dart';
@@ -29,6 +30,7 @@ void main() {
   final originalError = engine.lastError;
   final originalRecovery = engine.recoveryDecision;
   setUp(() {
+    SharedPreferences.setMockInitialValues({});
     WindowsUpdateService.state.value = const WindowsUpdateRuntimeState(
       phase: WindowsUpdatePhase.upToDate, message: 'App already latest version par hai.');
     engine.lastSuccessfulSync = DateTime(2026, 10, 18, 22, 51, 38, 889, 664);

@@ -8057,6 +8057,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
   }
 
   Widget _analyticsDropdownPill(String chart) => TextButton(
+    key: ValueKey('analytics-chart-month-$chart'),
     onPressed: _periodReady ? () => _pickAnalyticsMonth(chart: chart) : null,
     style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
       minimumSize: Size.zero, tapTargetSize: MaterialTapTargetSize.shrinkWrap,

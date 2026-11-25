@@ -47,8 +47,9 @@ class _WindowsNotificationSoundCardState extends State<WindowsNotificationSoundC
   void initState() { super.initState(); _load(); }
   Future<void> _load() async {
     try {
-      final enabled = await WindowsNotificationSound.enabled();
-      final volume = await WindowsNotificationSound.volume();
+      final preferences = await SharedPreferences.getInstance().timeout(const Duration(seconds: 5));
+      final enabled = preferences.getBool(WindowsNotificationSound.enabledKey) ?? true;
+      final volume = (preferences.getInt(WindowsNotificationSound.volumeKey) ?? 70).clamp(0, 100).toInt();
       if (mounted) setState(() { _enabled = enabled; _volume = volume; _loading = false; });
     } catch (_) {
       if (mounted) setState(() { _loading = false; _error = 'Could not load sound settings.'; });
@@ -78,7 +79,7 @@ class _WindowsNotificationSoundCardState extends State<WindowsNotificationSoundC
     child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       const Text('Notification Sound', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
       const Text('Warm Bell • Ding Dong'),
-      if (_loading) const LinearProgressIndicator() else ...[
+      if (_loading) const Text('Loading sound preferences…') else ...[
         SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('Play sound for new notifications'),
           value: _enabled, onChanged: _saving ? null : (v) => _save(enabled: v)),
         Text('Volume: $_volume%'),
