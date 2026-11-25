@@ -6,7 +6,12 @@ class WindowsPrinterPaper {
   const WindowsPrinterPaper(this.name,this.widthMm,this.heightMm);
   final String name;
   final double widthMm,heightMm;
-  PdfPageFormat get format => PdfPageFormat(widthMm*PdfPageFormat.mm,heightMm*PdfPageFormat.mm);
+  PdfPageFormat get format => switch(name) {
+    'A4' when widthMm==210 && heightMm==297 => PdfPageFormat.a4,
+    'Legal' when widthMm==215.9 && heightMm==355.6 => PdfPageFormat.legal,
+    'Letter' when widthMm==215.9 && heightMm==279.4 => PdfPageFormat.letter,
+    _ => PdfPageFormat(widthMm*PdfPageFormat.mm,heightMm*PdfPageFormat.mm),
+  };
   String get label => '$name (${widthMm.round()} × ${heightMm.round()} mm)';
 }
 
@@ -22,7 +27,7 @@ class WindowsPrinterMedia {
     WindowsPrinterPaper('Executive',184.15,266.7),
   ];
   static Future<List<WindowsPrinterPaper>> installed(String name) async {
-    if (!Platform.isWindows) return standard;
+    if (!Platform.isWindows) throw UnsupportedError('Windows printer driver required.');
     // Pass printer identity through the environment, not a shell expression.
     final result = await Process.run('powershell.exe',[
       '-NoProfile','-NonInteractive','-Command',
@@ -46,7 +51,7 @@ class WindowsPrinterMedia {
       if(label.isEmpty)continue;
       final stock=match.isNotEmpty?match.first:WindowsPrinterPaper(label,width,height);
       final key=stock.name;
-      if(resultPapers.containsKey(key) && (resultPapers[key]!.widthMm-width).abs()>1) {
+      if(resultPapers.containsKey(key) && ((resultPapers[key]!.widthMm-width).abs()>1 || (resultPapers[key]!.heightMm-height).abs()>1)) {
         final unique='$label ${width.round()}x${height.round()}';
         resultPapers[unique]=WindowsPrinterPaper(unique,width,height);
       } else { resultPapers[key]=stock; }

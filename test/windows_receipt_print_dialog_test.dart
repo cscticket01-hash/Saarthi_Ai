@@ -8,6 +8,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:pdf/pdf.dart';
 import 'package:printing/printing.dart';
 import '../lib/windows_receipt_print_dialog.dart';
+import '../lib/windows_print_layout.dart';
+import '../lib/windows_printer_media.dart';
 
 // Synthetic OS raster boundary: physical geometry comes from raster dimensions;
 // preview pixels are tiny because this test verifies settings, not printer hardware.
@@ -31,6 +33,38 @@ class PaperSizePrinting extends MethodChannelPrinting {
 
 void main() {
   const printer = Printer(url: 'test-epson', name: 'EPSON L3110', isDefault: true, isAvailable: true);
+  test('paper layout geometry preserves aspect and rejects invalid pages and clipping',(){
+    expect(WindowsPrintLayout.parseRange('1,3-5,3'),{1,3,4,5});
+    expect(()=>WindowsPrintLayout.parseRange('4-2'),throwsFormatException);
+    expect(WindowsPrintLayout.grid(6,false),(columns:2,rows:3));
+    final size=WindowsPrintLayout.imageSize(sourceWidth:200,sourceHeight:100,cellWidth:100,cellHeight:100);
+    expect(size.width,100);expect(size.height,50);
+    expect(()=>WindowsPrintLayout.imageSize(sourceWidth:200,sourceHeight:100,cellWidth:100,cellHeight:100,scale:100),throwsFormatException);
+    expect(WindowsPrinterMedia.standard.firstWhere((p)=>p.name=='Legal').format.height,PdfPageFormat.legal.height);
+  });
+  testWidgets('driver stock selection prepares one shared layout for preview and printing',(tester)async{
+    await tester.binding.setSurfaceSize(const Size(1200,1000));
+    addTearDown(()=>tester.binding.setSurfaceSize(null));
+    final original=Uint8List.fromList([1,2,3]),prepared=Uint8List.fromList([4,5,6]);
+    Uint8List? sent;PdfPageFormat? sentFormat;
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:WindowsReceiptPrintDialog(
+      receipt:Future.value(original),title:'Print test',subtitle:'School',isCurrent:()=>true,
+      printers:()async=>[printer],media:(_)async=>const [WindowsPrinterPaper('A4',210,297),WindowsPrinterPaper('FLS',220,330)],
+      composeLayout:(bytes,format)async{expect(identical(bytes,original),isTrue);expect(format.width,220*PdfPageFormat.mm);return prepared;},
+      previewBuilder:(bytes)=>Text(identical(bytes,prepared)?'Prepared preview':'Original preview'),
+      printJob:(_,bytes,format)async{sent=bytes;sentFormat=format;return true;}
+    ))));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('A4 (210 × 297 mm)'));
+    await tester.tap(find.text('A4 (210 × 297 mm)'));await tester.pumpAndSettle();
+    expect(find.text('Legal (216 × 356 mm)'),findsNothing);
+    await tester.tap(find.text('FLS (220 × 330 mm)').last);await tester.pumpAndSettle();
+    expect(find.text('Prepared preview'),findsOneWidget);
+    await tester.ensureVisible(find.widgetWithText(FilledButton,'Print'));
+    await tester.tap(find.widgetWithText(FilledButton,'Print'));await tester.pumpAndSettle();
+    expect(identical(sent,prepared),isTrue);expect(sentFormat!.height,330*PdfPageFormat.mm);
+    expect(original,[1,2,3]);
+  });
   for(final landscape in [false,true]) {
     testWidgets('Legal ${landscape?'landscape':'portrait'} preview selects matching printer stock without another raster', (tester) async {
       tester.view.devicePixelRatio=1;
@@ -100,7 +134,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Full page preview'), findsOneWidget);
     expect(find.text('Save PDF'), findsOneWidget);
-    expect(find.widgetWithText(TextButton, 'Cancel'), findsNothing);
+    expect(find.widgetWithText(TextButton, 'Cancel'), findsOneWidget);
     expect(find.text('A4 (210 × 297 mm)'), findsOneWidget);
     expect(calls, isEmpty);
     await tester.enterText(find.byType(TextField), '2');

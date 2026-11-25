@@ -61,7 +61,7 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
     final base = selected == null || selected == pdfDestination || widget.printers != null && widget.media == null
       ? WindowsPrinterMedia.standard : driverMedia;
     final items = {for(final p in base)p.name:p};
-    if(chosenStock!=null)items.putIfAbsent(paper,()=>chosenStock!);
+    if(chosenStock!=null)items[paper]=chosenStock!;
     for(final p in WindowsPrinterMedia.standard) {
       if(p.name==paper) items.putIfAbsent(p.name,()=>p);
     }
@@ -153,6 +153,7 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
     super.didUpdateWidget(oldWidget);
     if (oldWidget.receipt != widget.receipt) {
       paper = 'A4'; landscape = false; paperChosen = false;
+      customPages=false;perSheet=1;margins='None';scaling='Fit to page';
       sourcePaperLabel = null; originalFormat=null; chosenStock=null; layout=null; layoutGeneration++; layoutDelay?.cancel();
       pageFormatReady = widget.previewBuilder != null;
     }
@@ -178,7 +179,8 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
       if (paperChosen) return;
       pageFormatReady = matched != null;
       if (matched != null) {
-        paper = matched!; chosenStock=null;
+        paper = matched!;
+        chosenStock=paper=='Original'?null:WindowsPrinterMedia.standard.firstWhere((p)=>p.name==paper);
         landscape = format!.width > format.height;
       } else {
         message = 'Could not identify the original paper size. Select paper size before printing.';
@@ -262,7 +264,7 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
   PdfPageFormat paperFormat(String value){
     if(value=='Original'&&originalFormat!=null){final f=originalFormat!;return f.width<=f.height?f:PdfPageFormat(f.height,f.width);}
     if(chosenStock?.name==value)return chosenStock!.format;
-    for(final p in [...driverMedia,...WindowsPrinterMedia.standard]){if(p.name==value)return p.format;}
+    for(final p in [...WindowsPrinterMedia.standard,...driverMedia]){if(p.name==value)return p.format;}
     return PdfPageFormat.a4;
   }
 
@@ -404,6 +406,7 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
         icon:const Icon(Icons.print_outlined),
         label:Text(openingSystemDialog?'Opening Windows print dialog…'
           :'More printers / system print dialog')),
+      TextButton(onPressed:locked?null:()=>Navigator.maybePop(context),child:const Text('Cancel')),
       TextButton.icon(
         onPressed: locked || bytes == null || !widget.isCurrent()
             ? null : () => savePdf(bytes),
@@ -431,7 +434,7 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
               output.hasError&&changing?Center(child:Text('Layout unavailable: ${output.error}')):
               printable==null?const Center(child:CircularProgressIndicator()):
               widget.previewBuilder?.call(printable)??FittedDocumentPreview(bytes:printable,
-                onPageFormat:changing?null:acceptPageFormat);
+                showPaperOutline:true,onPageFormat:changing?null:acceptPageFormat);
             return LayoutBuilder(builder:(context,limits)=>limits.maxWidth>=760
               ? Row(crossAxisAlignment: CrossAxisAlignment.stretch,children:[
                 Expanded(child:preview),const VerticalDivider(width:1),SizedBox(width:310,child:settings(snapshot.data,printable))])

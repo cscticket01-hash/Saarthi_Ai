@@ -8,7 +8,8 @@ import 'package:pdf/pdf.dart';
 /// viewport. Multi-page documents keep the normal page navigation/scrolling.
 /// Raster scaling is display-only; the original PDF remains unchanged.
 class FittedDocumentPreview extends StatefulWidget {
-  const FittedDocumentPreview({super.key, required this.bytes, this.onPageFormat});
+  const FittedDocumentPreview({super.key, required this.bytes, this.onPageFormat,this.showPaperOutline=false});
+  final bool showPaperOutline;
   final Uint8List bytes;
   /// First-page physical dimensions from the existing preview raster, not a second render.
   final ValueChanged<PdfPageFormat?>? onPageFormat;
@@ -66,6 +67,9 @@ class _FittedDocumentPreviewState extends State<FittedDocumentPreview> {
       if (snapshot.data!.isEmpty)
         return const Center(child: Text('Document has no pages.'));
       if (snapshot.data!.length == 1) {
+        if(widget.showPaperOutline)return ColoredBox(color:const Color(0xFF263036),child:Padding(
+          padding:const EdgeInsets.all(16),child:Center(child:Image.memory(snapshot.data!.first,
+            fit:BoxFit.contain,semanticLabel:'Complete document preview',gaplessPlayback:true))));
         return Padding(
           padding: const EdgeInsets.all(12),
           child: SizedBox.expand(
