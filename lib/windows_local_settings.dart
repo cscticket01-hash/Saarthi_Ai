@@ -18,8 +18,11 @@ class WindowsLocalSecurity {
 
   static String? _adminId;
   static String? _adminPassword;
+  static _AppLockRecoveryGrant? _recoveryGrant;
+  static int _recoveryEpoch = 0;
 
   static Future<void> initialize() async {
+    cancelAppLockRecovery();
     final saved=await CentralSchoolCloud.saved();
     _schoolSuffix=saved['managed']==true?'_${saved['schoolId']}':'';
     _adminId = (await _secure.read(key: _adminIdKey))?.trim();
@@ -42,6 +45,7 @@ class WindowsLocalSecurity {
       configured ? _adminId! : 'Local Administrator';
 
   static Future<void> clearAppLock() async {
+    cancelAppLockRecovery();
     await _secure.delete(key: _adminIdKey);
     await _secure.delete(key: _adminPasswordKey);
     _adminId = null;
@@ -85,37 +89,100 @@ class WindowsLocalSecurity {
     );
   }
 
-  static Future<void> recoverWithEmailOtp({
-    required String schoolId, required String otp, required String newPassword,
+  // Verification is scoped to the existing school account and active PC.
+  // A typed School ID is never a credential and is never used to switch schools.
+  static void cancelAppLockRecovery() {
+    _recoveryEpoch++;
+    _recoveryGrant = null;
+  }
+
+  static Future<void> verifySchoolForAppLockRecovery({
+    required String schoolId, required String adminPassword,
   }) async {
-    if (!configured || _schoolSuffix != '_$schoolId' ||
-        newPassword.length < 6 || newPassword.length > 128) {
-      throw StateError('Valid school and new App Lock password required.');
-    }
+    cancelAppLockRecovery();
+    final epoch = _recoveryEpoch;
+    final id = schoolId.trim();
     final saved = await CentralSchoolCloud.saved();
-    if (saved['managed'] != true || saved['schoolId'] != schoolId) {
-      throw StateError('School changed.');
+    if (!configured || !RegExp(r'^vs-[a-f0-9]{32}$').hasMatch(id) ||
+        saved['managed'] != true || saved['schoolId'] != id ||
+        saved['uid'] is! String || (saved['uid'] as String).isEmpty ||
+        _schoolSuffix != '_$id' || adminPassword.isEmpty ||
+        adminPassword.length > 128 || epoch != _recoveryEpoch) {
+      throw StateError('Enter this school’s ID and independent Admin Password.');
     }
     final key = _adminPasswordKey;
-    final result = await ManagedSchoolSession.callForSchool(schoolId,
-      'managed/app-lock/otp/verify', {'otp': otp});
-    if (result['success'] != true || result['verified'] != true ||
-        result['schoolId'] != schoolId) {
-      throw StateError('Recovery code is incorrect.');
-    }
+    final currentPassword = _adminPassword;
+    final elapsed = Stopwatch()..start();
+    final result = await ManagedSchoolSession.callForSchool(id,
+      'managed/app-lock/recovery/verify',
+      {'recoverySchoolId': id, 'adminPassword': adminPassword});
     final current = await CentralSchoolCloud.saved();
-    if (current['schoolId'] != schoolId || current['uid'] != saved['uid'] ||
-        _adminPasswordKey != key || !configured) {
-      throw StateError('School changed.');
+    final token = result['approvalToken'];
+    if (result['success'] != true || result['authorized'] != true ||
+        result['schoolId'] != id || token is! String ||
+        !RegExp(r'^[a-f0-9]{64}$').hasMatch(token) ||
+        epoch != _recoveryEpoch || current['managed'] != true ||
+        current['schoolId'] != id || current['uid'] != saved['uid'] ||
+        _adminPasswordKey != key || _adminPassword != currentPassword ||
+        elapsed.elapsed >= const Duration(minutes: 2)) {
+      throw StateError('School verification failed or expired. Try again.');
     }
-    await _secure.write(key: key, value: newPassword);
-    if (_adminPasswordKey == key) _adminPassword = newPassword;
+    _recoveryGrant = _AppLockRecoveryGrant(
+      schoolId: id, uid: saved['uid'] as String, storageKey: key,
+      previousPassword: currentPassword!, token: token, elapsed: elapsed,
+      adminDigest: sha256.convert(utf8.encode(adminPassword)).toString());
+  }
+
+  static Future<void> recoverWithSchoolApproval({
+    required String newPassword, required String confirmPassword,
+  }) async {
+    final grant = _recoveryGrant;
+    if (newPassword != confirmPassword || newPassword.length < 6 ||
+        newPassword.length > 128) {
+      throw StateError('Enter matching App Lock passwords (6–128 characters).');
+    }
+    if (grant == null || !configured ||
+        grant.elapsed.elapsed >= const Duration(minutes: 2) ||
+        grant.storageKey != _adminPasswordKey ||
+        grant.previousPassword != _adminPassword) {
+      cancelAppLockRecovery();
+      throw StateError('Verify School ID and Admin Password again.');
+    }
+    if (sha256.convert(utf8.encode(newPassword)).toString() == grant.adminDigest) {
+      throw StateError('App Lock must be different from Admin Password.');
+    }
+    // Consume locally before awaiting the server. Never reuse an approval.
+    cancelAppLockRecovery();
+    final epoch = _recoveryEpoch;
+    final before = await CentralSchoolCloud.saved();
+    if (before['managed'] != true || before['schoolId'] != grant.schoolId ||
+        before['uid'] != grant.uid || epoch != _recoveryEpoch) {
+      throw StateError('School changed. Verify again.');
+    }
+    final result = await ManagedSchoolSession.callForSchool(grant.schoolId,
+      'managed/app-lock/recovery/consume',
+      {'recoverySchoolId': grant.schoolId, 'approvalToken': grant.token});
+    final current = await CentralSchoolCloud.saved();
+    if (result['success'] != true || result['authorized'] != true ||
+        result['schoolId'] != grant.schoolId ||
+        current['managed'] != true || current['schoolId'] != grant.schoolId ||
+        current['uid'] != grant.uid || epoch != _recoveryEpoch ||
+        grant.storageKey != _adminPasswordKey ||
+        grant.previousPassword != _adminPassword || !configured) {
+      throw StateError('Recovery authorization expired or school changed.');
+    }
+    // Only the local App Lock is changed, not Firebase or Admin Password.
+    await _secure.write(key: grant.storageKey, value: newPassword);
+    if (_adminPasswordKey == grant.storageKey && epoch == _recoveryEpoch) {
+      _adminPassword = newPassword;
+    }
   }
 
   static Future<void> _writeCredentials({
     required String adminId,
     required String password,
   }) async {
+    cancelAppLockRecovery();
     final cleanId = adminId.trim();
 
     if (cleanId.length < 3) {
@@ -164,6 +231,16 @@ class WindowsLocalSecurity {
     }
     return difference == 0;
   }
+}
+
+class _AppLockRecoveryGrant {
+  _AppLockRecoveryGrant({
+    required this.schoolId, required this.uid, required this.storageKey,
+    required this.previousPassword, required this.token,
+    required this.elapsed, required this.adminDigest,
+  });
+  final String schoolId, uid, storageKey, previousPassword, token, adminDigest;
+  final Stopwatch elapsed;
 }
 
 class WindowsExternalConnections {
