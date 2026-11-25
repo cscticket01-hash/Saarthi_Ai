@@ -149,6 +149,12 @@ test('legacy monitor uses existing private attachment and receipt owner, never f
  await assert.rejects(f.req(body,'B'),e=>e.status===403);
  await assert.rejects(f.req({...reply,schoolId:other},'B'),e=>e.status===404);
  await assert.rejects(f.req({action:'legacy/support/resolve',schoolId:school,complaintId}),e=>e.status===400);
+ const close={action:'legacy/support/markResolved',schoolId:school,complaintId};
+ await assert.rejects(f.req({...close,schoolId:other},'B'),e=>e.status===404);
+ const closed=await f.req(close);
+ assert.equal(closed.delivered,true);assert.equal(closed.status,'resolved');assert.equal(closed.complaint.id,complaintId);
+ assert.equal((await f.req(close)).complaint.resolvedAt,closed.complaint.resolvedAt);
+ assert.equal((await f.req({action:'legacy/support/attachment',schoolId:school,complaintId})).screenshot,screenshot);
  const studentId=school+'_'+'d'.repeat(32);
  f.documents.set('platform_complaints/'+studentId,{schoolId:school,source:'android',role:'student',audience:'school',message:'Student issue'});
  await assert.rejects(f.req({...reply,complaintId:studentId}),e=>e.status===404);
