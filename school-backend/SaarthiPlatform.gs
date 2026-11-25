@@ -157,7 +157,7 @@ function VS_legacySupportPublic(row){
 }
 function VS_legacySupportList(b){
  const school=VS_project(),token=VS_legacySupportToken(),query={from:[{collectionId:'platform_complaints'}],
-  where:{fieldFilter:{field:{fieldPath:'schoolId'},op:'EQUAL',value:VS_encode(school)}},
+  where:{compositeFilter:{op:'AND',filters:[['schoolId',school],['source','windows'],['role','admin']].map(pair=>({fieldFilter:{field:{fieldPath:pair[0]},op:'EQUAL',value:VS_encode(pair[1])}}))}},
   orderBy:[{field:{fieldPath:'__name__'},direction:'ASCENDING'}],limit:51};
  if(b.cursor!=null)query.startAt={values:[{referenceValue:'projects/'+VS_CENTRAL_PROJECT+'/databases/(default)/documents/platform_complaints/'+VS_legacySupportId(b.cursor)}],before:false};
  const raw=VS_central('post',':runQuery',{structuredQuery:query},token)||[];

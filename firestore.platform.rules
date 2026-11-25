@@ -103,7 +103,13 @@ service cloud.firestore {
     match /platform_complaints/{complaint} {
       // Legacy Apps Script uses its existing school-scoped monitoring identity.
       // An unrestricted query is still denied; caller must constrain schoolId.
-      allow get, list: if monitor(resource.data.schoolId);
+      // Stable IDs also authorize an exact missing-document lookup for an
+      // idempotent create. Existing foreign records must still be denied.
+      allow get: if request.auth != null &&
+        exists(/databases/$(database)/documents/platform_monitor_access/$(request.auth.uid)) &&
+        complaint.matches('^' + get(/databases/$(database)/documents/platform_monitor_access/$(request.auth.uid)).data.schoolId + '_[a-f0-9]{32}$') &&
+        (!exists(/databases/$(database)/documents/platform_complaints/$(complaint)) || monitor(resource.data.schoolId));
+      allow list: if monitor(resource.data.schoolId) && resource.data.source == 'windows' && resource.data.role == 'admin';
       match /messages/{message} {
         allow read: if monitor(get(/databases/$(database)/documents/platform_complaints/$(complaint)).data.schoolId) &&
           get(/databases/$(database)/documents/platform_complaints/$(complaint)).data.source == 'windows' &&

@@ -170,7 +170,9 @@ test('legacy support readback and scoped history do not permit foreign tickets o
  await seed('platform_complaints/'+a+'/messages/reply',{schoolId:'school-one',role:'developer',message:'Reply'});
  await assertSucceeds(getDoc(doc(school(),'platform_complaints/'+a)));
  await assertFails(getDoc(doc(school(),'platform_complaints/'+b)));
- await assertSucceeds(getDocs(query(collection(school(),'platform_complaints'),where('schoolId','==','school-one'))));
+ await assertSucceeds(getDoc(doc(school(),'platform_complaints/school-one_'+'c'.repeat(32))));
+ await assertFails(getDocs(query(collection(school(),'platform_complaints'),where('schoolId','==','school-one'))));
+ await assertSucceeds(getDocs(query(collection(school(),'platform_complaints'),where('schoolId','==','school-one'),where('source','==','windows'),where('role','==','admin'))));
  await assertFails(getDocs(query(collection(school(),'platform_complaints'),where('schoolId','==','school-two'))));
  await assertSucceeds(getDocs(collection(school(),'platform_complaints/'+a+'/messages')));
  await assertFails(getDocs(collection(school('school-two-monitor'),'platform_complaints/'+a+'/messages')));

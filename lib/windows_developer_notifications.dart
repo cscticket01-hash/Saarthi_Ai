@@ -1,6 +1,7 @@
 import 'complaint_retention.dart';
 import 'notice_time.dart';
 import 'windows_support_history.dart';
+import 'windows_firebase_sync.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:crypto/crypto.dart';
@@ -31,6 +32,13 @@ class DeveloperInbox extends ChangeNotifier {
   DateTime? _lastSupportPoll;
   int _receiptSweepOffset=0;
   String? _profile, _school, _uid;
+  Object? _profileSchool;
+  bool _legacyScript=false;
+  Future<void> _requireLegacyIdentity() async {
+    final remote=await WindowsFirebaseRemote.status();
+    if(!current||!remote.authenticated||remote.projectId!=_school||remote.schoolIdentity!=_school||
+      sha256.convert(utf8.encode(remote.email.trim().toLowerCase())).toString()!=_uid)throw StateError('School account changed.');
+  }
   bool busy = false, _disposed = false, _loaded = false;
   String? error;
   int get unread =>
@@ -44,7 +52,7 @@ class DeveloperInbox extends ChangeNotifier {
   bool isRead(Map m) => _read[m['key']] == receiptRevision(m);
 
   Future<void> _syncReadReceipts() async {
-    if(readPage!=null || readComplaints!=null || !current || _disposed) return;
+    if(readPage!=null || readComplaints!=null || _legacyScript || !current || _disposed) return;
     final support=SchoolSupportClient();
     final rows=messages.where((m)=>!complaintExpired(m)).toList();
     // Each exchange is bounded; recent alerts first, with pending older reads included.
@@ -100,7 +108,7 @@ class DeveloperInbox extends ChangeNotifier {
   }
   bool get current =>
       _profile == _db.activeProfileId &&
-      _school == _db.activeProfileIdentity['schoolSyncId'];
+      _profileSchool == _db.activeProfileIdentity['schoolSyncId'];
   void _notify() {
     if (!_disposed) notifyListeners();
   }
@@ -108,10 +116,19 @@ class DeveloperInbox extends ChangeNotifier {
   Future<void> initialize() async {
     try {
       _profile = _db.activeProfileId;
-      _school = _db.activeProfileIdentity['schoolSyncId']?.toString();
+      _profileSchool = _db.activeProfileIdentity['schoolSyncId'];
+      _school = _profileSchool?.toString();
       final saved = await CentralSchoolCloud.saved();
       if (!current || _disposed) return;
       _uid = saved['uid']?.toString();
+      if(saved.isEmpty&&readPage==null){
+        final remote=await WindowsFirebaseRemote.status();
+        if(!current||_disposed)return;
+        if(remote.authenticated&&remote.schoolIdentity==remote.projectId&&RegExp(r'^[a-z][a-z0-9-]{4,61}[a-z0-9]$').hasMatch(remote.projectId)){
+          _legacyScript=true;_school=remote.projectId;
+          _uid=sha256.convert(utf8.encode(remote.email.trim().toLowerCase())).toString();
+        }
+      }
       final cached = await _db.collection('_windows_developer_inbox').get();
       if (!current || _disposed) return;
       messages = cached.docs
@@ -179,6 +196,12 @@ class DeveloperInbox extends ChangeNotifier {
   );
   Future<Map<String, dynamic>> _page(String audience, String? cursor) async {
     if (readPage != null) return readPage!(audience, cursor);
+    if(_legacyScript){
+      await _requireLegacyIdentity();
+      final out=await SchoolSupportClient().call('managed/support/announcements',{'audience':audience,if(cursor!=null)'cursor':cursor});
+      await _requireLegacyIdentity();
+      return out;
+    }
     final saved = await CentralSchoolCloud.saved();
     if (!current ||
         saved['schoolId'] != _school ||
@@ -211,7 +234,7 @@ class DeveloperInbox extends ChangeNotifier {
   }
 
   Future<List<Map<String,dynamic>>> _fetchComplaints(SchoolSupportClient support) async {
-    if(readComplaints==null && (_feedRetryAfter==null||DateTime.now().isAfter(_feedRetryAfter!))){
+    if(readComplaints==null && !_legacyScript && (_feedRetryAfter==null||DateTime.now().isAfter(_feedRetryAfter!))){
       try{
         final response=await support.call('managed/support/changes',{
           if(_supportCursor!=null)'cursor':_supportCursor,
@@ -277,7 +300,8 @@ class DeveloperInbox extends ChangeNotifier {
         final page = await _page(audience, more ? _cursors[audience] : null);
         if (!current || _disposed) return;
         final saved = await CentralSchoolCloud.saved();
-        if (readPage == null &&
+        if(_legacyScript)await _requireLegacyIdentity();
+        if (readPage == null && !_legacyScript &&
             (saved['uid'] != _uid || saved['schoolId'] != _school))
           throw StateError('School account changed. Reopen notifications.');
         final docs = page['documents'] ?? [];
@@ -325,6 +349,7 @@ class DeveloperInbox extends ChangeNotifier {
         final support = SchoolSupportClient();
         final tickets = <Map<String,dynamic>>[];
         final complaintRows=await _fetchComplaints(support);
+        if(_legacyScript)await _requireLegacyIdentity();
         if(!current||_disposed)return;
         for(final row in complaintRows){
             if (row['schoolId'] != _school)
