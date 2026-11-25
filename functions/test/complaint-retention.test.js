@@ -17,3 +17,13 @@ test('cleanup scopes schools and locks before recursively deleting the complaint
  await assert.rejects(cleanupComplaints({db,now,schoolId:'A'}),/interrupted message cleanup/);assert(rows.has('a'),'parent survives child failure so next sweep retries');
  await cleanupComplaints({db,now,schoolId:'A'});assert.deepEqual(removed,['a']);assert(rows.has('b'));assert(rows.has('c'));assert.equal(rows.get('d').resolvedAt.toISOString(),'2026-10-22T00:00:00.000Z');
 });
+
+test('attachment retention deletes private screenshot before removing parent',async()=>{
+ const row={schoolId:'A',status:'resolved',resolvedAt:new Date('2026-01-01'),hasScreenshot:true};
+ const paths=[];
+ const db={doc:path=>({path,delete:async()=>paths.push(path)}),collection:path=>{
+  let cursor='';const q={path,where:()=>q,orderBy:()=>q,startAfter:v=>{cursor=v;return q;},limit:()=>q,get:async()=>({docs:cursor?[]:[{id:'case',data:()=>row}]})};return q;
+ },runTransaction:async fn=>fn({get:async()=>({exists:true,data:()=>row}),set:()=>{}}),recursiveDelete:async r=>paths.push(r.path)};
+ await cleanupComplaints({db,now:()=>Date.parse('2026-11-25')});
+ assert.deepEqual(paths,['platform_complaints/case/messages','platform_complaints/case/attachments','platform_complaints/case']);
+});
