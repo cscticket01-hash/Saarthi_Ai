@@ -7373,7 +7373,8 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
     _checkAnalyticsProfile();
     final snapshot = await FirebaseFirestore.instance.collection('school_expenses').get();
     _checkAnalyticsProfile();
-    return snapshot.docs.map((d) => <String,dynamic>{...d.data(), 'id': d.id}).toList();
+    return windowsExpenseHistory(snapshot.docs.map((d) => <String,dynamic>{...d.data(), 'expenseId': d.id}),
+      schoolId: FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']?.toString() ?? '');
   }
 
   double _analyticsNumber(dynamic value) {
@@ -7653,10 +7654,9 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
       final expensesByMonth = List<double>.filled(12, 0);
       
       for (final record in expenses) {
-        final amount = _analyticsAmount(record, const ['amount', 'value']);
-        
-        final month = _analyticsMonth(record);
-        if (month != null) expensesByMonth[month] += amount;
+        final date = windowsExpenseDate(record);
+        if (date == null || WindowsAcademicYearSettings.startYear(date, _academicYearRolloverMonth) != _selectedYear) continue;
+        expensesByMonth[date.month - 1] += windowsExpensePaise(record) / 100;
       }
 
       
@@ -23732,6 +23732,7 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
   bool _loading = true;
   String? _error;
   String _historyQuery = '';
+  StreamSubscription<QuerySnapshot<Map<String,dynamic>>>? _expenseSubscription;
 
   @override
   void initState() {
@@ -23739,7 +23740,23 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
     _expenseProfile = FirebaseFirestore.instance.activeProfileId;
     _expenseSchool = FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']?.toString() ?? '';
     _load();
+    unawaited(_watchManagedExpenses());
   }
+
+  Future<void> _watchManagedExpenses() async {
+    try {
+      if (widget.call != null || !await WindowsSchoolExpenseSync.enabled || !mounted) return;
+      _checkExpenseProfile();
+      _expenseSubscription = FirebaseFirestore.instance.collection('school_expenses').snapshots().listen((snapshot) {
+        if (!mounted) return;
+        try { _checkExpenseProfile(); } catch (_) { return; }
+        setState(() { _items..clear()..addAll(snapshot.docs.map((d) => {...d.data(), 'expenseId': d.id})); _loading = false; });
+      }, onError: (Object error) { if (mounted) setState(() => _error = 'Expense refresh unavailable. Use Refresh to retry.'); });
+    } catch (_) { /* manual refresh remains available */ }
+  }
+
+  @override
+  void dispose() { _expenseSubscription?.cancel(); super.dispose(); }
 
   Future<Map<String, dynamic>> _call(Map<String, dynamic> body) async {
     _checkExpenseProfile();
@@ -23781,7 +23798,7 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
       _checkExpenseProfile();
       if (!mounted || generation != _expenseLoadGeneration) return;
       setState(() {
-        _items..clear()..addAll(local.docs.map((d) => {'expenseId': d.id, ...d.data()}));
+        _items..clear()..addAll(local.docs.map((d) => {...d.data(), 'expenseId': d.id}));
         _loading = false;
       });
       // Cloud-first list replacement would hide an unsynced local expense.
@@ -23817,6 +23834,8 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
   Future<void> _addExpense() async {
     _checkExpenseProfile();
     final intent = WindowsExpenseIntent();
+    DateTime expenseDate = DateTime.now();
+    String? validationError;
     final title = TextEditingController();
     final amount = TextEditingController();
     final paidTo = TextEditingController();
@@ -23835,23 +23854,35 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                TextField(controller: title, decoration: const InputDecoration(labelText: 'Expense Title')),
+                TextField(controller: title, enabled: !saving, maxLength: 160, decoration: const InputDecoration(labelText: 'Expense Title')),
+                const SizedBox(height: 6),
+                Align(alignment: Alignment.centerLeft, child: OutlinedButton.icon(
+                  icon: const Icon(Icons.calendar_today_outlined),
+                  label: Text('Expense Date: ${expenseDate.toIso8601String().split('T').first}'),
+                  onPressed: saving ? null : () async {
+                    final now = DateTime.now();
+                    final selected = await showDatePicker(context: ctx, initialDate: expenseDate,
+                      firstDate: DateTime(2000), lastDate: now);
+                    if (selected != null && ctx.mounted) setDlg(() => expenseDate = selected);
+                  },
+                )),
                 const SizedBox(height: 10),
                 Row(children: [
-                  Expanded(child: TextField(controller: amount, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'Amount ₹'))),
+                  Expanded(child: TextField(controller: amount, enabled: !saving, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'Amount ₹', hintText: '0.00'))),
                   const SizedBox(width: 10),
                   Expanded(child: DropdownButtonFormField<String>(
                     value: category,
                     decoration: const InputDecoration(labelText: 'Category'),
                     items: const ['General','Electricity','Salary','Maintenance','Stationery','Transport','Event','Other']
                         .map((e) => DropdownMenuItem(value:e, child:Text(e))).toList(),
-                    onChanged: (v) { if (v != null) setDlg(() => category = v); },
+                    onChanged: saving ? null : (v) { if (v != null) setDlg(() => category = v); },
                   )),
                 ]),
                 const SizedBox(height: 10),
-                TextField(controller: paidTo, decoration: const InputDecoration(labelText: 'Paid To / Vendor')),
+                TextField(controller: paidTo, enabled: !saving, decoration: const InputDecoration(labelText: 'Paid To / Vendor')),
                 const SizedBox(height: 10),
-                TextField(controller: note, maxLines: 2, decoration: const InputDecoration(labelText: 'Note')),
+                TextField(controller: note, enabled: !saving, maxLines: 2, decoration: const InputDecoration(labelText: 'Note')),
+                if (validationError != null) Text(validationError!, style: TextStyle(color: Theme.of(ctx).colorScheme.error)),
               ],
             ),
           ),
@@ -23860,17 +23891,20 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
             FilledButton(
               onPressed: saving ? null : () async {
                 final value = double.tryParse(amount.text.trim());
-                if (title.text.trim().isEmpty || value == null || !value.isFinite || value <= 0) return;
-                setDlg(() => saving = true);
+                if (title.text.trim().isEmpty || value == null || !WindowsExpenseIntent.validAmount(value)) {
+                  setDlg(() => validationError = 'Enter a title and a positive amount with up to two decimal places.');
+                  return;
+                }
+                setDlg(() { saving = true; validationError = null; });
                 try {
                   _checkExpenseProfile();
                   final result=await _call(intent.prepare(title: title.text, category: category,
-                    amount: value, paidTo: paidTo.text, note: note.text));
+                    amount: value, paidTo: paidTo.text, note: note.text, expenseDate: expenseDate));
                   if (ctx.mounted) Navigator.pop(ctx, true);
                   if (mounted && result['cloudSyncPending'] == true) {
                     ScaffoldMessenger.of(this.context).showSnackBar(
                       const SnackBar(content: Text(
-                        'Expense saved locally. Google cloud delta sync queued; confirmation pending.')));
+                        'Expense saved locally. Cloud sync confirmation pending.')));
                   }
                 } catch (e) {
                   if (ctx.mounted) {
@@ -23911,8 +23945,8 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
         body: const Center(child: Text('School changed. Reopen expenses.')));
     }
     final items = windowsExpenseHistory(_items, schoolId: _expenseSchool,
-      query: widget.history ? _historyQuery : '');
-    final total = items.fold<double>(0, (sum, item) => sum + (double.tryParse(item['amount']?.toString() ?? '') ?? 0));
+      query: _historyQuery);
+    final total = items.fold<int>(0, (sum, item) => sum + windowsExpensePaise(item)) / 100;
     return Scaffold(
       backgroundColor: WindowsAppearance.background(const Color(0xFF0B141A)),
       appBar: AppBar(
@@ -23935,17 +23969,17 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
               child: Column(
                 children:[
                   Row(children:[
-                    _WindowsMetricCard(icon:Icons.account_balance_wallet_rounded, label:widget.history && _historyQuery.trim().isNotEmpty ? 'Matching Expenses' : 'Total Expenses', value:'₹${total.toStringAsFixed(2)}', color:WindowsAppearance.foreground(Colors.amberAccent)),
+                    _WindowsMetricCard(icon:Icons.account_balance_wallet_rounded, label:_historyQuery.trim().isNotEmpty ? 'Matching Expenses' : 'Total Expenses', value:'₹${total.toStringAsFixed(2)}', color:WindowsAppearance.foreground(Colors.amberAccent)),
                     const SizedBox(width:12),
-                    _WindowsMetricCard(icon:Icons.receipt_long_rounded, label:widget.history && _historyQuery.trim().isNotEmpty ? 'Matching Entries' : 'Entries', value:'${items.length}', color:WindowsAppearance.foreground(const Color(0xFF69C2FF))),
+                    _WindowsMetricCard(icon:Icons.receipt_long_rounded, label:_historyQuery.trim().isNotEmpty ? 'Matching Entries' : 'Entries', value:'${items.length}', color:WindowsAppearance.foreground(const Color(0xFF69C2FF))),
                   ]),
                   if (_error != null) Padding(padding:const EdgeInsets.all(10), child:Text(_error!, style:TextStyle(fontFamily: 'Segoe UI', color:WindowsAppearance.foreground(Colors.redAccent)))),
                   const SizedBox(height:14),
-                  if (widget.history) Padding(
+                  Padding(
                     padding: const EdgeInsets.only(bottom: 14),
                     child: TextField(
                       decoration: const InputDecoration(prefixIcon: Icon(Icons.search_rounded),
-                        labelText: 'Search expense history', hintText: 'Title, category, vendor, date or note'),
+                        labelText: 'Search expenses', hintText: 'Title, category, vendor, date or note'),
                       onChanged: (value) => setState(() => _historyQuery = value),
                     ),
                   ),

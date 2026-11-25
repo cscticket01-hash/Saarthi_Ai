@@ -5,6 +5,18 @@ import '../lib/windows_exam_history_records.dart';
 import 'dart:convert';
 
 void main() {
+  test('expense date can precede save time; money is validated in paise', () {
+    final intent = WindowsExpenseIntent(createdAt: DateTime(2026,11,25));
+    final record = intent.prepare(title: 'Paper', category: 'Stationery', amount: 12.34,
+      paidTo: 'Vendor', note: '', expenseDate: DateTime(2026,10,23));
+    expect(record['dateText'], '2026-10-23');
+    expect(record['timestamp'], DateTime(2026,11,25).millisecondsSinceEpoch);
+    expect(windowsExpenseDate(record), DateTime(2026,10,23));
+    expect(windowsExpensePaise(record), 1234);
+    expect(WindowsExpenseIntent.validAmount(12.345), false);
+    expect(WindowsExpenseIntent.validAmount(double.infinity), false);
+    expect(windowsExpensePaise({'amount': 'NaN'}), 0);
+  });
   test('exam history scopes sessions, search, results and deleted rows', () {
     final rows = <Map<String, dynamic>>[
       {

@@ -16,16 +16,23 @@ class WindowsExpenseIntent {
   late final String expenseId;
   Map<String, dynamic>? _submitted;
 
+  static bool validAmount(num amount) {
+    if (!amount.isFinite || amount <= 0 || amount > 999999999.99) return false;
+    final paise = amount * 100;
+    return (paise - paise.round()).abs() < 0.0001 && paise.round() > 0;
+  }
+
   Map<String, dynamic> prepare({required String title, required String category,
-      required double amount, required String paidTo, required String note}) {
-    if (title.trim().isEmpty || !amount.isFinite || amount <= 0) {
+      required double amount, required String paidTo, required String note, DateTime? expenseDate}) {
+    if (title.trim().isEmpty || !validAmount(amount)) {
       throw ArgumentError('Enter a title and a finite positive expense amount.');
     }
+    final date = expenseDate ?? capturedAt;
     final payload = <String, dynamic>{
       'action': 'save_school_expense', 'expenseId': expenseId,
-      'title': title.trim(), 'category': category, 'amount': amount,
+      'title': title.trim(), 'category': category, 'amount': (amount * 100).round() / 100,
       'paidTo': paidTo.trim(), 'note': note.trim(),
-      'dateText': capturedAt.toIso8601String().split('T').first,
+      'dateText': DateTime(date.year, date.month, date.day).toIso8601String().split('T').first,
       'timestamp': capturedAt.millisecondsSinceEpoch,
     };
     if (_submitted != null && jsonEncode(payload) != jsonEncode(_submitted)) {
