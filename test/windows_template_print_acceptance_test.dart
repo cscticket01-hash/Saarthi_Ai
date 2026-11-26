@@ -1,4 +1,7 @@
 import 'dart:io';
+import 'dart:async';
+import 'dart:typed_data';
+import '../lib/windows_template_thumbnail_queue.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -7,6 +10,56 @@ import 'package:pdf/widgets.dart' as pw;
 /// Passing does NOT certify a specific school's physical paper/printer.
 void main(){
   TestWidgetsFlutterBinding.ensureInitialized();
+  test('rapid category switching skips obsolete renders and serializes native jobs',() async{
+    final first=WindowsTemplateThumbnailQueue(),second=WindowsTemplateThumbnailQueue();
+    final entered=Completer<void>(),release=Completer<void>();
+    var running=0,maxRunning=0,obsolete=0,latest=0;
+    Future<Uint8List?> run(bool Function() valid)async{
+      running++;
+      if(running>maxRunning)maxRunning=running;
+      entered.complete();
+      await release.future;
+      running--;
+      return Uint8List.fromList([1]);
+    }
+    final old=first.request('initial',run,current:()=>true);
+    await entered.future;
+    final pending=<Future<Uint8List?>>[];
+    for(var i=0;i<100;i++){
+      first.clear();
+      pending.add(first.request('tab-$i',(_)async{
+        obsolete++;
+        return Uint8List.fromList([2]);
+      },current:()=>true));
+    }
+    first.clear();
+    final active=first.request('latest',(_)async{
+      running++;if(running>maxRunning)maxRunning=running;
+      latest++;running--;return Uint8List.fromList([3]);
+    },current:()=>true);
+    final same=first.request('latest',(_)async=>throw StateError('duplicate render'),current:()=>true);
+    expect(identical(active,same),isTrue);
+    final reopened=second.request('reopened',(_)async{
+      running++;if(running>maxRunning)maxRunning=running;
+      running--;return Uint8List.fromList([4]);
+    },current:()=>true);
+    expect(running,1);
+    release.complete();
+    expect(await old,isNull);
+    expect((await Future.wait(pending)).every((v)=>v==null),isTrue);
+    expect(await active,[3]);expect(await reopened,[4]);
+    expect(obsolete,0);expect(latest,1);expect(maxRunning,1);
+  });
+
+  test('thumbnail failure does not poison next category or screen',() async{
+    final queue=WindowsTemplateThumbnailQueue();
+    expect(await queue.request('bad',(_)async=>throw StateError('raster failed'),current:()=>true),isNull);
+    queue.clear();
+    expect(await queue.request('good',(_)async=>Uint8List.fromList([9]),current:()=>true),[9]);
+    queue.clear();
+    expect(await queue.request('closed',(_)async=>throw StateError('must not run'),current:()=>false),isNull);
+  });
+
   test('produce full US Legal 8.5 by 14 inch printer calibration proof',() async {
     final format=PdfPageFormat.legal;
     expect((format.width-8.5*PdfPageFormat.inch).abs(),lessThan(.01));
