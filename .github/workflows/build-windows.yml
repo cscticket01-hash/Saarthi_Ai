@@ -1,3 +1,4 @@
+# User-authorized Windows publication of merged PRs #433 and #434; physical native crash root-cause verification remains pending.
 # Owner-authorized PR #431 Windows publication after verified PR #432 Render backend rollout; physical acceptance remains operator pending.
 # User-authorized publication of PR #427 Windows fixes after PR #428 backend rollout.
 # User-authorized Windows publication of merged PR #425 after live Render backport PR #426; legacy school Apps Script update remains separate.
