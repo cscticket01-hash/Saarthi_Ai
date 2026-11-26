@@ -44,11 +44,15 @@ extension SchoolTemplateKindInfo on SchoolTemplateKind {
 
 class SchoolTemplateField {
   const SchoolTemplateField({required this.key,required this.x,required this.y,
-    this.width=.3,this.size=.018,this.mask=false});
+    this.width=.3,this.size=.018,this.mask=false,this.ink,this.bold=false,this.alignment='left'});
   final String key;
   final double x,y,width,size;
-  final bool mask;
+  final bool mask,bold;
+  final String? ink;
+  final String alignment;
   void validate(SchoolTemplateKind kind) {
+    if((ink!=null && !RegExp(r'^[0-9A-Fa-f]{6}$').hasMatch(ink!)) ||
+      !const ['left','center','right'].contains(alignment))throw const FormatException('Invalid field style.');
     if (!kind.fields.contains(key)) throw const FormatException('Unknown data field.');
     if (![x,y,width,size].every((v)=>v.isFinite) ||
       x<0 || x>1 || y<0 || y>1 || width<=0 || x+width>1.001 ||
@@ -59,17 +63,19 @@ class SchoolTemplateField {
   SchoolTemplateField copyWith({double? x,double? y,double? width,
     double? size,bool? mask}) => SchoolTemplateField(
     key:key,x:x??this.x,y:y??this.y,width:width??this.width,
-    size:size??this.size,mask:mask??this.mask);
+    size:size??this.size,mask:mask??this.mask,ink:ink,bold:bold,alignment:alignment);
   factory SchoolTemplateField.fromJson(Map<String,dynamic> v) {
     final field=SchoolTemplateField(
       key:v['key']?.toString()??'',
       x:(v['x'] as num).toDouble(),y:(v['y'] as num).toDouble(),
       width:(v['width'] as num).toDouble(),
-      size:(v['size'] as num).toDouble(),mask:v['mask']==true);
+      size:(v['size'] as num).toDouble(),mask:v['mask']==true,
+      ink:v['ink'] as String?,bold:v['bold']==true,alignment:v['alignment']?.toString()??'left');
     return field;
   }
   Map<String,dynamic> toJson()=>{'key':key,'x':x,'y':y,
-    'width':width,'size':size,'mask':mask};
+    'width':width,'size':size,'mask':mask,
+    if(ink!=null)'ink':ink,if(bold)'bold':true,if(alignment!='left')'alignment':alignment};
 }
 
 /// Verified OCR/geometry evidence for an image or QR placeholder.
@@ -767,7 +773,7 @@ class SchoolTemplateImportEngine {
 
   static pw.Widget _renderField(
     SchoolTemplateField field,Map<String,dynamic> record,
-    pw.Font font,List<pw.Font> fontFallback,double pageWidth,double pageHeight,
+    pw.Font font,pw.Font boldFont,List<pw.Font> fontFallback,double pageWidth,double pageHeight,
   ) {
     final value=valueFor(field.key,record);
     return pw.Positioned(
@@ -777,9 +783,10 @@ class SchoolTemplateImportEngine {
         color:field.mask?PdfColors.white:null,
         child:value.isEmpty?null:pw.Text(value,
           maxLines:1,overflow:pw.TextOverflow.clip,
-          style:pw.TextStyle(font:font,fontFallback:fontFallback,
+          textAlign:switch(field.alignment){'center'=>pw.TextAlign.center,'right'=>pw.TextAlign.right,_=>pw.TextAlign.left},
+          style:pw.TextStyle(font:field.bold?boldFont:font,fontFallback:fontFallback,
             fontSize:fittedTextSize(field,value,pageWidth:pageWidth,pageHeight:pageHeight),
-            color:PdfColors.black)),
+            color:field.ink==null?PdfColors.black:PdfColor.fromHex('#'+field.ink!))),
       ),
     );
   }
@@ -840,6 +847,7 @@ class SchoolTemplateImportEngine {
     validatePreviewRecord(draft,record);
     validateVisualAssets(draft,record,visualAssets);
     final normal=pw.Font.ttf(await rootBundle.load('assets/id_card_regular.ttf'));
+    final boldFont=draft.pageDrafts.any((p)=>p.fields.any((f)=>f.bold))?pw.Font.ttf(await rootBundle.load('assets/id_card_bold.ttf')):normal;
     // The OCR engine recognises Hindi, Bengali and Assamese, and the final
     // printed overlay must also contain their glyphs. Load the already
     // bundled fonts only when the current school record needs them.
@@ -870,7 +878,7 @@ class SchoolTemplateImportEngine {
         pw.Positioned(left:0,top:0,
           child:pw.Image(background,width:width,height:height,fit:pw.BoxFit.fill)),
         for(final f in source.fields)
-          _renderField(f,pageRecord,normal,fontFallback,width,height),
+          _renderField(f,pageRecord,normal,boldFont,fontFallback,width,height),
         for(final slot in source.visualSlots)
           _renderVisualSlot(slot,record,visualAssets,width,height),
       ]),

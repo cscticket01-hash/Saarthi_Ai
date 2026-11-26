@@ -5,9 +5,9 @@ import 'package:flutter/material.dart';
 import 'windows_document_templates.dart';
 import 'windows_local_firestore.dart';
 import 'windows_template_import_engine.dart';
-import 'windows_template_forge_ocr.dart';
-import 'windows_template_forge_auto.dart';
-import 'windows_template_forge_visual_slots.dart';
+import 'windows_template_office_layout.dart';
+import 'windows_template_office_converter.dart';
+import 'fitted_document_preview.dart';
 import 'windows_template_cloud_store.dart';
 
 /// Zero-edit TemplateForge upload and preview for the three supported tabs.
@@ -34,8 +34,7 @@ class SchoolTemplateImportEditor {
     void stage(String message){progress.value=message;}
     try {
       SchoolTemplateImportEngine.verifySchool(school);
-      const types=XTypeGroup(label:'A4 / Legal PDF, image, Word or Excel',
-        extensions:['pdf','png','jpg','jpeg','doc','docx','xls','xlsx']);
+      const types=XTypeGroup(label:'Word or Excel template',extensions:['docx','xlsx']);
       final file=await openFile(acceptedTypeGroups:[types]);
       if(file==null||!context.mounted)return;
       if(!sameSchool())throw StateError('School changed.');
@@ -54,83 +53,14 @@ class SchoolTemplateImportEditor {
       unawaited(progressNavigator!.push(progressRoute!));
       // Paint feedback before starting raster analysis on the UI isolate.
       await WidgetsBinding.instance.endOfFrame;
-      final raw=await file.readAsBytes();
-      stage('Converting document to a printable page… Word/Excel requires installed Microsoft Office or LibreOffice.');
-      final sources=await SchoolTemplateImportEngine.importPages(
-        kind:kind,schoolId:school,filename:file.name,
-        bytes:Uint8List.fromList(raw));
-      if(!sameSchool())throw StateError('School changed while uploading.');
-      final verifiedPages=<SchoolTemplateDraft>[];
-      for(var pageIndex=0;pageIndex<sources.length;pageIndex++){
-      final draft=sources[pageIndex];
-      final paperLabel='Page ${pageIndex+1} of ${sources.length} • '+SchoolTemplateImportEngine.pageSizeLabel(draft.width,draft.height);
-      stage('Checking '+paperLabel+' page orientation…');
-      final oriented=await TemplateForgeOfflineOcr.normalizeOrientation(draft);
-      if(!sameSchool())throw StateError('School changed during orientation detection.');
-      stage('Recognizing text and template fields…');
-      var tsv=await TemplateForgeOfflineOcr.recognize(oriented);
-      if(!sameSchool())throw StateError('School changed during recognition.');
-      var textRecognition=TemplateForgeAutoMapper.detect(oriented,tsv);
-      // Retry faint, low-contrast OCR once, on a TEMPORARY enhanced raster.
-      // A source warning for an old photo, duplicated field, wrong document
-      // kind or unsafe overlapping boxes must never be erased by this retry.
-      final unsafe=textRecognition.warnings.any((w)=>
-        w.contains('Image/QR/signature') ||
-        w.contains('ambiguous') || w.contains('Overlapping') ||
-        w.contains('appears to be'));
-      if(!textRecognition.safeToActivate && !unsafe){
-        stage('Checking faint text with enhanced recognition…');
-        final enhanced=await TemplateForgeOfflineOcr.recognize(
-          oriented,enhanced:true);
-        if(!sameSchool())throw StateError('School changed during OCR retry.');
-        final second=TemplateForgeAutoMapper.detect(oriented,enhanced);
-        final consistent=textRecognition.draft.fields.every((first){
-          final matches=second.draft.fields.where((f)=>f.key==first.key);
-          return matches.length==1 &&
-            (matches.single.x-first.x).abs()<=.028 &&
-            (matches.single.y-first.y).abs()<=.028;
-        });
-        if(consistent && second.missing.length<textRecognition.missing.length &&
-            second.warnings.where((w)=>w.contains('ambiguous') ||
-              w.contains('Overlapping')||w.contains('Image/QR/signature'))
-              .isEmpty){
-          tsv=enhanced;
-          textRecognition=second;
-        }
-      }
-      stage('Checking photo, signature and QR positions…');
-      await Future<void>.delayed(Duration.zero);
-      final labels=TemplateForgeVisualSlots.labelCounts(
-        tsv,oriented.width,oriented.height);
-      final slots=labels.isEmpty?const <ForgeVisualSlot>[]:
-        TemplateForgeVisualSlots.detect(oriented,tsv);
-      final allVerified=labels.isNotEmpty &&
-        labels.values.every((count)=>count==1) &&
-        slots.length==labels.length;
-      final warnings=[...textRecognition.warnings];
-      if(TemplateForgeVisualSlots.hasUnverifiedColorPhoto(
-        oriented,allVerified?slots:const <ForgeVisualSlot>[])){
-        warnings.add('Unlabelled colour image may contain an old student '
-          'photo. Upload a blank form or a source with a verifiable photo slot.');
-      }
-      if(allVerified){
-        warnings.remove('Image/QR/signature slot needs verified automatic replacement.');
-      }
-      final result=ForgeRecognition(
-        textRecognition.draft.copyWith(
-          visualSlots:allVerified?slots:const <ForgeVisualSlot>[]),
-        textRecognition.detected,textRecognition.missing,warnings);
-      if(!context.mounted)return;
-      if(!result.safeToActivate){
-        final missing=result.missing.isEmpty?'none':result.missing.join(', ');
-        final warnings=result.warnings.isEmpty?'none':result.warnings.join('; ');
-        throw StateError('This scan is not safe to publish. Missing fields: '
-          +missing+'. Recognition warnings: '+warnings+
-          '. Use a clearer A4 or Legal source; existing school templates remain unchanged.');
-      }
-      verifiedPages.add(result.draft);
-      }
-      final approved=SchoolTemplateImportEngine.joinVerifiedPages(verifiedPages);
+      if(!SchoolTemplateOfficeConverter.supportsNative(file.name))
+        throw const FormatException('Only Word DOCX and Excel XLSX templates are supported.');
+      if(await file.length()>SchoolTemplateOfficeConverter.maxSourceBytes)
+        throw const FormatException('Office template exceeds 16 MB.');
+      stage('Reading and validating Word / Excel layout…');
+      final approved=await SchoolTemplateOfficeLayout.importSource(
+        kind:kind,schoolId:school,filename:file.name,bytes:Uint8List.fromList(await file.readAsBytes()));
+      if(!sameSchool())throw StateError('School changed during import.');
       final profile=(await db.collection('school_config')
         .doc('school_profile_cache').get()).data()??{};
       if(!sameSchool())throw StateError('School changed before preview.');
@@ -152,6 +82,19 @@ class SchoolTemplateImportEditor {
       final output=await SchoolTemplateImportEngine.previewPdf(
         approved,record,visualAssets:imageAssets);
       if(!sameSchool())throw StateError('School changed before publication.');
+      closeProgress();
+      if(!context.mounted)return;
+      final confirmed=await showDialog<bool>(context:context,barrierDismissible:false,
+        builder:(ctx)=>Dialog(child:SizedBox(width:900,height:680,child:Column(children:[
+          const ListTile(title:Text('Review generated template'),subtitle:Text('Check the design and data fields. Confirm that no old student or staff data remains.')),
+          Expanded(child:FittedDocumentPreview(bytes:output)),
+          Padding(padding:const EdgeInsets.all(12),child:Row(mainAxisAlignment:MainAxisAlignment.end,children:[
+            TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),
+            const SizedBox(width:12),FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Approve and save')),
+          ])),
+        ]))));
+      if(confirmed!=true || !context.mounted)return;
+      if(!sameSchool())throw StateError('School changed before approval.');
       // Keep one immutable, verified local draft even if the school Drive
       // becomes unavailable after recognition; repeat uploads are idempotent.
       await SchoolTemplateImportEngine.saveLocalDraft(approved,
@@ -175,7 +118,7 @@ class SchoolTemplateImportEditor {
           title:const Text('Template import did not finish'),
           content:SingleChildScrollView(child:SelectableText(
             'Stage: '+progress.value+'\n\n'+error.toString()+
-            '\n\nNo successful upload was confirmed. Existing templates remain available.')),
+            '\n\nNo successful publication was confirmed. Approved local drafts may be retried. Existing selected templates remain available.')),
           actions:[TextButton(onPressed:()=>Navigator.of(dialogContext).pop(),
             child:const Text('Close'))],
         ));

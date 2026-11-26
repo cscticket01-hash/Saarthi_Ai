@@ -1641,7 +1641,7 @@ class _SchoolDocumentTemplatesScreenState
                 OutlinedButton.icon(
                   key:ValueKey('upload-template-'+_kind),
                   icon:const Icon(Icons.upload_file_outlined),
-                  label:const Text('Upload PDF / Image / Word / Excel template'),
+                  label:const Text('Upload Word / Excel template'),
                   onPressed:_loading?null:() async {
                     await SchoolTemplateImportEditor.pickAutomatic(
                       context,
@@ -1659,7 +1659,7 @@ class _SchoolDocumentTemplatesScreenState
             ),
             const Padding(
               padding:EdgeInsets.symmetric(vertical:9),
-              child:Text('One to four independently recognized A4 or Legal source pages keep their paper size and orientation. Every page must pass field verification. Verified uploads are stored in this school’s Drive and appear below as selectable versions.',
+              child:Text('Upload a blank Word (.docx) or Excel (.xlsx) school form with supported A4 / Legal layout. Review the generated design before saving. No Office installation is required.',
                 style:TextStyle(fontSize:12)),
             ),
           ],
@@ -1735,9 +1735,9 @@ class _SchoolDocumentTemplatesScreenState
                                   : FutureBuilder<Uint8List>(
                                 future: _thumbnail(i),
                                 builder: (context, snapshot) { WindowsAppearance.watch(context); return  snapshot.hasData
-                                    ? Image.memory(
-                                        snapshot.data!,
-                                        fit: BoxFit.contain,
+                                    ? DecoratedBox(
+                                        decoration: const BoxDecoration(color: Colors.white),
+                                        child: Image.memory(snapshot.data!,fit:BoxFit.contain),
                                       )
                                     : snapshot.hasError
                                     ? const Text(
