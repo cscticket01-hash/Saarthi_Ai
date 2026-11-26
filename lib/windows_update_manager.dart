@@ -1,4 +1,5 @@
 import 'windows_appearance.dart';
+import 'windows_runtime_diagnostics.dart';
 import 'windows_verified_update.dart';
 import 'windows_release_selection.dart';
 
@@ -249,6 +250,7 @@ for (\$i = 0; \$i -lt 30; \$i++) {
       installerPid: installerProcess.pid,
       installerPath: file.path,
     );
+    WindowsRuntimeDiagnostics.record('exit.requested_update');
     await Future<void>.delayed(const Duration(milliseconds: 800));
     exit(0);
   }

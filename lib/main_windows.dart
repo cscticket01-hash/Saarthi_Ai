@@ -11,7 +11,8 @@ import 'windows_connect/central_school_cloud.dart';
 import 'windows_ui_localization.dart';
 
 import 'dart:async';
-import 'dart:ui' show PointerDeviceKind;
+import 'dart:ui' show PointerDeviceKind, PlatformDispatcher;
+import 'windows_runtime_diagnostics.dart';
 import 'windows_inactivity_timer.dart';
 
 import 'windows_platform_client.dart';
@@ -55,7 +56,8 @@ class _WindowsActivityMonitorState extends State<WindowsActivityMonitor> {
         (widget.onActivity ?? windows_html.document.dispatchClick)();
         // A normal user click can promptly renew a stale online session.
         // Internal throttling avoids a server request for every click.
-        unawaited(SchoolCloudEngine.current.refreshAfterNetworkUse());
+        unawaited(WindowsRuntimeDiagnostics.background('activity.connection_refresh',
+          ()async{await SchoolCloudEngine.current.refreshAfterNetworkUse();}));
       }
     },
     child: widget.child,
@@ -64,18 +66,35 @@ class _WindowsActivityMonitorState extends State<WindowsActivityMonitor> {
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
+  final previousFlutterError=FlutterError.onError;
+  FlutterError.onError=(details){
+    WindowsRuntimeDiagnostics.record('framework.error',error:details.exception,stack:details.stack);
+    if(previousFlutterError!=null)previousFlutterError(details);
+    else FlutterError.presentError(details);
+  };
+  final previousPlatformError=PlatformDispatcher.instance.onError;
+  PlatformDispatcher.instance.onError=(error,stack){
+    WindowsRuntimeDiagnostics.record('isolate.unhandled',error:error,stack:stack);
+    // Preserve the existing fatal-error policy.
+    return previousPlatformError?.call(error,stack)??false;
+  };
+  WindowsRuntimeDiagnostics.record('startup.begin');
+  var stage='startup.appearance';
+  try{
   await WindowsAppearance.restore();
+  stage='startup.activation_recovery';
   await recoverLocalActivationBeforeStorage();
   try {
     await WindowsLocalSecurity.initialize();
   } catch (_) {
     debugPrint('App Lock storage will be retried by the startup lock.');
   }
+  stage='startup.local_storage';
   await WindowsLocalStorage.initialize();
   try {
     await WindowsUpdateManager.cleanupOldInstallers();
   } catch (_) {}
+  stage='startup.local_session';
   await WindowsLocalSession.initialize();
   ManagedSchoolSession.startAppearanceControl();
   try {
@@ -94,7 +113,13 @@ Future<void> main() async {
       debugPrint('Platform startup verification deferred.');
     }),
   );
+  stage='startup.run_app';
   runApp(const VidyaSaarthiWindowsApp());
+  WindowsRuntimeDiagnostics.record('startup.app_started');
+  }catch(error,stack){
+    WindowsRuntimeDiagnostics.record(stage,error:error,stack:stack);
+    rethrow;
+  }
 }
 
 class VidyaSaarthiWindowsApp extends StatelessWidget {

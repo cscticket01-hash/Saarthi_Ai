@@ -15,6 +15,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/services.dart';
 import '../lib/windows_inactivity_timer.dart';
+import '../lib/windows_runtime_diagnostics.dart';
 
 import '../lib/main_windows.dart';
 import '../lib/windows_admin_setup.dart';
@@ -27,6 +28,22 @@ import '../lib/main_dashboard_screen_windows.dart' show WindowsSectionLocks;
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => FlutterSecureStorage.setMockInitialValues({}));
+  test('runtime diagnostics omit private exception messages and external paths', (){
+    final row=WindowsRuntimeDiagnostics.event('sync.details_refresh',
+      error:StateError('private student name and password'),
+      stack:StackTrace.fromString('#0 internal (package:saarthi_ai/windows_sync_engine.dart:12:34)\n#1 private (C:/Users/Private/secret.dart:8:9)'));
+    expect(row['errorType'],'StateError');
+    expect(row['frames'],['windows_sync_engine.dart:12:34']);
+    expect(jsonEncode(row),isNot(contains('private student')));
+    expect(jsonEncode(row),isNot(contains('C:/Users')));
+  });
+  test('best-effort task reports a failure without throwing into the caller', ()async{
+    var notified=false;
+    await WindowsRuntimeDiagnostics.background('test.background',()async{
+      throw StateError('local read failed');
+    },onFailure:(error,stack){notified=true;});
+    expect(notified,isTrue);
+  });
   testWidgets('one-hour idle timer resets on activity and disposal cancels it', (tester) async {
     var locks = 0;
     final idle = WindowsInactivityTimer(onTimeout: () => locks++);

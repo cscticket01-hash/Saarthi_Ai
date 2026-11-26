@@ -32,7 +32,21 @@ def configure(source):
     HANDLE handle;
     ~ScopedVidyaInstance() { if (handle) ::CloseHandle(handle); }
   } instance_gate{::CreateMutexW(nullptr, FALSE, L"Local\\VidyaSaarthiSchoolApp")};
-  const DWORD instance_error = ::GetLastError();
+  DWORD instance_error = ::GetLastError();
+  // Wait for the original singleton handle to disappear before opening SQLite.
+  // Only explicit restart may wait; normal launches keep existing behavior.
+  const bool saarthi_restart =
+      ::wcsstr(::GetCommandLineW(), L"--saarthi-restart") != nullptr;
+  if (saarthi_restart) {
+    for (int attempt = 0; instance_gate.handle &&
+         instance_error == ERROR_ALREADY_EXISTS && attempt < 150; ++attempt) {
+      ::CloseHandle(instance_gate.handle);
+      instance_gate.handle = nullptr;
+      ::Sleep(100);
+      instance_gate.handle = ::CreateMutexW(nullptr, FALSE, L"Local\\VidyaSaarthiSchoolApp");
+      instance_error = ::GetLastError();
+    }
+  }
   if (!instance_gate.handle) {
     ::MessageBoxW(nullptr, L"Unable to check the running school app. Close other instances and retry.",
                   L"Vidya Saarthi", MB_OK | MB_ICONERROR);
