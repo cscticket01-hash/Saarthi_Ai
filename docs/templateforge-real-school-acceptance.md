@@ -107,3 +107,8 @@ Developer website Schools → School Features grants the school-wide add-on; def
 
 
 Follow-up security hardening: generic single/batch `school_settings/document_templates` writes that carry asset metadata are checked against the authoritative catalog when the school add-on is disabled or global uploads are paused. Unchanged asset metadata can replay; a newly selected imported template during maintenance must already be an approved, nonarchived, nondeleted school version. Ordinary archive/restore flags, built-in selection, and unrelated records are unaffected. Existing CAS rules still own write concurrency. This is not proof that modified offline executables, pre-upgrade clients, backup/recycle restoration routes, direct owner-controlled storage or previously admitted uploads are tamper-proof. Actual provider acceptance and rollout gates remain unchanged.
+
+
+## Owner-authorized rollout — 2026-11-26
+
+PR #431 merged at 66cd839135c3df24c7883c530ef57ae515e6fc0b after 15 successful workflows and one isolated TEST skip. Targeted production broker PR #432 passed its three checks and Render reports commit a2ae78ceef9a65bb306502fd2c06fa010b3e0bb5 live (deployment dep-dc437peq1p3s73cpomfg). Windows publication requested at 5ee2bd6875bb029b05800cd2cce9a888725e9cb5. Website Hosting-only publication requested after backend verification; no Firestore rules changes or Android release requested. Physical printer, actual school 1/2/5-PC acceptance, and complete modified-client enforcement remain unverified; the owner explicitly elected to perform physical testing separately. Release initiation is not evidence of completed artifact publication or live school acceptance.
