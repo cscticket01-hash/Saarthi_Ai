@@ -1535,6 +1535,17 @@ class _SchoolDocumentTemplatesScreenState
       db.activeProfileIdentity['schoolSyncId']!=boundSchool){
       throw StateError('School changed before template selection was saved.');
     }
+    if (isImported && asset['version']==2) {
+      if(!mounted)return;
+      final confirmed=await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(
+        title:const Text('Select multi-page template?'),
+        content:const Text('All school PCs must use a Windows app version that supports multi-page templates. Older apps cannot render this design. Update every PC before applying.'),
+        actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),
+          FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('All PCs updated'))]));
+      if(confirmed!=true || !mounted)return;
+      if(db.activeProfileId!=origin || db.activeProfileIdentity['schoolSyncId']!=boundSchool)
+        throw StateError('School changed before template selection.');
+    }
     final ref = db.collection('school_settings').doc('document_templates');
     // Validate the exact selected financial renderer before changing selection.
     // The approved manifest cannot silently become a different version.

@@ -231,7 +231,8 @@ class SchoolTemplateImportEngine {
       pixels+=page.width*page.height;
       bytes+=page.png.length;
     }
-    if(pixels>maxPixels || bytes>maxPngBytes)
+    if(pixels>maxPixels || bytes>maxPngBytes ||
+      (draft.additionalPages.isNotEmpty && packedDimensions(draft).width*packedDimensions(draft).height>maxPixels))
       throw const FormatException('Combined template pages exceed safe raster limits.');
   }
 
@@ -415,7 +416,7 @@ class SchoolTemplateImportEngine {
   }) async {
     verifySchool(schoolId);
     if(bytes.isEmpty || bytes.length>maxSourceBytes || filename.isEmpty ||
-      filename.length>180 || filename.contains('/') || filename.contains('\\\\')){
+      filename.length>180 || filename.contains('/') || filename.contains('\\')){
       throw const FormatException('Invalid template source.');
     }
     final office=SchoolTemplateOfficeConverter.supports(filename);
@@ -452,8 +453,9 @@ class SchoolTemplateImportEngine {
   }
 
   static SchoolTemplateDraft joinVerifiedPages(List<SchoolTemplateDraft> pages){
-    if(pages.isEmpty || pages.length>maxSourcePages)
-      throw const FormatException('Invalid source page count.');
+    if(pages.isEmpty || pages.length>maxSourcePages ||
+      pages.any((page)=>page.additionalPages.isNotEmpty))
+      throw const FormatException('Invalid or nested source pages.');
     final draft=pages.first.copyWith(additionalPages:List.unmodifiable(pages.skip(1)));
     validateDraft(draft);
     return draft;
@@ -519,6 +521,7 @@ class SchoolTemplateImportEngine {
 
   static SchoolTemplateDraft _unpackPages(SchoolTemplateKind kind,String schoolId,
       Map<String,dynamic> manifest,Uint8List png){
+    if(png.isEmpty || png.length>maxPngBytes)throw const FormatException('Invalid combined template bytes.');
     final raw=manifest['pages'];
     if(raw is! List || raw.length<2 || raw.length>maxSourcePages)
       throw const FormatException('Invalid multi-page template manifest.');
@@ -1072,6 +1075,7 @@ class SchoolTemplateImportEngine {
         if(meta['contentHash']!=null &&
           meta['contentHash']!=sha256.convert(imageBytes).toString())continue;
         if(meta['version']==2){
+          if(meta['contentHash'] is! String || sha256.convert(imageBytes).toString()!=meta['contentHash'])continue;
           final candidate=_unpackPages(kind,schoolId,meta,imageBytes);
           if(meta['draftIdentity']!=bundleIdentity(candidate,meta['contentHash'].toString(),'local-draft'))continue;
           drafts.add(candidate);continue;

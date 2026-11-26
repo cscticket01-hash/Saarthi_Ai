@@ -69,6 +69,8 @@ void main() {
       kind:SchoolTemplateKind.receipt,schoolId:school,filename:'two.pdf',
       bytes:original,pdfPagesRasterizer:(_) async=>[png,png]);
     expect(pages.length,2);
+    await expectLater(SchoolTemplateImportEngine.importPages(kind:SchoolTemplateKind.receipt,
+      schoolId:school,filename:r'folder\two.pdf',bytes:original,pdfPagesRasterizer:(_) async=>[png]),throwsFormatException);
     final fields=[
       const SchoolTemplateField(key:'receiptNo',x:.1,y:.08,width:.2),
       const SchoolTemplateField(key:'studentName',x:.1,y:.16,width:.3),
@@ -94,6 +96,7 @@ void main() {
     final restored=SchoolTemplateImportEngine.fromPublishedManifest(kind:SchoolTemplateKind.receipt,
       schoolId:school,manifest:manifest,png:artwork);
     expect(restored.pageDrafts.length,2);
+    expect(()=>SchoolTemplateImportEngine.joinVerifiedPages([draft,pages.last]),throwsFormatException);
     final output=await SchoolTemplateImportEngine.previewPdf(restored,record);
     expect(RegExp(r'/Type\s*/Page\b').allMatches(latin1.decode(output)).length,3);
     expect(()=>SchoolTemplateImportEngine.fromPublishedManifest(kind:SchoolTemplateKind.receipt,

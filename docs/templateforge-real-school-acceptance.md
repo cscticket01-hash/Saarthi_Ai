@@ -17,7 +17,8 @@ Minimum acceptance matrix (a few examples do not prove that *every* design works
 | Phone photo of angled white paper on dark table | Correct bounds when confidently detectable; otherwise safe rejection |
 | Dim/low-contrast paper | Only verified OCR geometry accepted, never fields guessed silently |
 | Mixed portrait, signature, school seal, logo, and QR placeholders | Current-person/current-school assets printed; missing or ambiguous slots reject |
-| Cluttered, borderless or multi-page source | Safe rejection when there is no proven geometry |
+| Two to four A4/Legal pages in a single PDF or converted Office file | Every page independently recognized; verify complete ordered artwork, row offsets, continuation and bundle hash; reject incomplete, oversized or ambiguous pages |
+| Cluttered, borderless or unsupported source | Safe rejection when there is no proven geometry |
 
 ## Physical A4 printer acceptance
 
@@ -56,7 +57,7 @@ Use a **TEST school**, no real students, and the school's own connected Drive. E
 
 ## Non-destructive template version retention
 
-- Instead of deleting historical templates after three uploads, the verified school manifest retains up to 32 immutable template versions. New uploads beyond that bound are rejected until a separate reviewed archiving process exists. Old selected versions and rollback copies remain in Drive.
+- The catalog supports up to 32 active and 64 retained versions per document kind, subject to the bounded synced metadata budget. Archive an inactive design to free active capacity; restore it explicitly. Old selected versions and rollback copies remain in Drive. No physical deletion or silent eviction.
 - The 1/2/5-device tests exercise the same manifest append helper as publication, including repeat upload and immutable-version protection. They remain synthetic: server-side atomic compare-and-swap and real concurrent online Drive publication still require live tests.
 - Visual-slot recognition now requires an enclosed border on all four sides. Open ornamental rectangles are rejected rather than treated as a safe old-photo replacement target.
 
@@ -85,3 +86,8 @@ The local `build/templateforge_private_corpus_audit.json` contains only source S
 
 - The existing local Windows `school_settings/document_templates` manifest now uses its existing serialized batch read-dependency check with up to three retries if the local snapshot changed before commit. This prevents a **same-PC** lost-update race without creating any duplicate sync engine. It is **not** a server-side compare-and-swap; two independent cloud PCs still need live concurrent/rollback acceptance.
 - The existing Windows receipt print dialog observes app resume and refreshes the installed printer list when users return from Windows Settings/Add Printer. All OS-installed printers with usable printer identities remain available and the system print chooser is retained.
+
+
+## Multi-page source acceptance (2026-11-26)
+
+The version-2 manifest is bounded to one to four independently verified A4/Legal pages, 12 MP combined canvas and 18 MiB artwork. Each source page must satisfy existing required-field and table-slot validation; arbitrary split/partially recognized forms are not supported. Verify no duplicated or missing fee/subject rows, exact order, paper dimensions, full hash and correct live image slots. Test corrupt and foreign manifests, one rejected page, fifth page, local draft restart, archive/restore and offline cached artwork. Before selecting a version-2 template, update **all** school PCs; older apps fail closed on unsupported manifests. This is not physical acceptance evidence. Keep the existing ID Designer/Bulk rollout gate and actual 1/2/5-PC, OCR and printer requirements. Do not use student-identifiable samples in public test evidence.
