@@ -97,7 +97,7 @@ class SchoolTemplateImportEditor {
       if(!sameSchool())throw StateError('School changed before approval.');
       // Keep one immutable, verified local draft even if the school Drive
       // becomes unavailable after recognition; repeat uploads are idempotent.
-      await SchoolTemplateImportEngine.saveLocalDraft(approved,
+      await SchoolTemplateImportEngine.markPublicationPending(approved,
         currentSchoolId:()=>db.activeProfileIdentity['schoolSyncId']
           ?.toString()??'');
       if(!sameSchool())throw StateError('School changed before publication.');
@@ -110,7 +110,7 @@ class SchoolTemplateImportEditor {
           title:Text('Saving verified template'),content:Column(mainAxisSize:MainAxisSize.min,
             children:[LinearProgressIndicator(),SizedBox(height:12),Text('Local draft saved. Verifying school Drive publication…')]))));
       unawaited(progressNavigator!.push(progressRoute!));
-      await WindowsDocumentTemplates.publishImportedTemplate(approved);
+      await WindowsTemplateCloudStore.publishApprovedLocalDraft(approved);
       if(!sameSchool()||!context.mounted)return;
       closeProgress();
       await WindowsDocumentTemplates.preview(context,output,
@@ -175,7 +175,7 @@ class SchoolTemplateImportEditor {
         db.activeProfileIdentity['schoolSyncId']!=school){
         throw StateError('School changed during draft preview.');
       }
-      final record={...schoolProfile,...example};
+      final record={...schoolProfile,...example,'schoolName':schoolProfile['schoolName']??schoolProfile['name']??example['schoolName']??''};
       final images=await WindowsTemplateCloudStore.previewVisualAssets(
         draft,record);
       final pdf=await SchoolTemplateImportEngine.previewPdf(
@@ -199,7 +199,9 @@ class SchoolTemplateImportEditor {
           FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Retry publication'))]));
       if(retry!=true||!context.mounted)return;
       if(db.activeProfileId!=profile||db.activeProfileIdentity['schoolSyncId']!=school)throw StateError('School changed.');
-      await WindowsDocumentTemplates.publishImportedTemplate(draft);
+      await SchoolTemplateImportEngine.markPublicationPending(draft,
+        currentSchoolId:()=>db.activeProfileId==profile?db.activeProfileIdentity['schoolSyncId']?.toString()??'':'');
+      await WindowsTemplateCloudStore.publishApprovedLocalDraft(draft);
       if(context.mounted&&db.activeProfileId==profile&&db.activeProfileIdentity['schoolSyncId']==school)
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Template publication verified. Choose Use for school to select it.')));
     }catch(e){

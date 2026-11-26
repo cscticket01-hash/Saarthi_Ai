@@ -1056,6 +1056,7 @@ class SchoolTemplateImportEngine {
 
   static Future<List<SchoolTemplateDraft>> loadLocalDrafts({
     required SchoolTemplateKind kind, required String schoolId,
+    bool pendingPublicationOnly=false,
   }) async {
     verifySchool(schoolId);
     final root = await getApplicationSupportDirectory();
@@ -1065,7 +1066,8 @@ class SchoolTemplateImportEngine {
     if (!await folder.exists()) return [];
     final entries = await folder.list(followLinks: false).toList();
     final manifests = entries.whereType<File>()
-      .where((f) => f.path.endsWith('.json')).toList()
+      .where((f) => f.path.endsWith('.json') && (!pendingPublicationOnly ||
+        File(f.path.substring(0,f.path.length-5)+'.publish-pending').existsSync())).toList()
       ..sort((a, b) => b.path.compareTo(a.path));
     final drafts = <SchoolTemplateDraft>[];
     for (final manifest in manifests.take(30)) {
@@ -1086,6 +1088,7 @@ class SchoolTemplateImportEngine {
           if(meta['contentHash'] is! String || sha256.convert(imageBytes).toString()!=meta['contentHash'])continue;
           final candidate=_unpackPages(kind,schoolId,meta,imageBytes);
           if(meta['draftIdentity']!=bundleIdentity(candidate,meta['contentHash'].toString(),'local-draft'))continue;
+          if(pendingPublicationOnly && !await hasPendingPublication(candidate))continue;
           drafts.add(candidate);continue;
         }
         final decoded = img.decodePng(imageBytes);
@@ -1116,6 +1119,7 @@ class SchoolTemplateImportEngine {
         validateDraft(candidate);
         if(meta['draftIdentity']!=null &&
           meta['draftIdentity']!=localDraftIdentity(candidate))continue;
+        if(pendingPublicationOnly && !await hasPendingPublication(candidate))continue;
         drafts.add(candidate);
       } catch (_) {
         // A corrupt local draft must never hide other previously saved versions.
@@ -1136,6 +1140,46 @@ class SchoolTemplateImportEngine {
       draft.visualSlots.map((slot)=>slot.toJson()).toList(),
     ]);
     return sha256.convert(utf8.encode(map)).toString();
+  }
+
+  static Future<File> _pendingPublicationFile(SchoolTemplateDraft draft) async {
+    verifySchool(draft.schoolId);
+    final root=await getApplicationSupportDirectory();
+    final scope=sha256.convert(utf8.encode(draft.schoolId)).toString().substring(0,32);
+    final identity=localDraftIdentity(draft);
+    final sep=Platform.pathSeparator;
+    return File(root.path+sep+'template_drafts'+sep+scope+sep+draft.kind.name+sep+
+      draft.sourceHash+'-'+identity.substring(0,24)+'.publish-pending');
+  }
+
+  static Future<bool> hasPendingPublication(SchoolTemplateDraft draft) async {
+    try{
+      final marker=await _pendingPublicationFile(draft);
+      return await marker.exists() && await marker.length()==64 &&
+        await marker.readAsString()==localDraftIdentity(draft);
+    }catch(_){return false;}
+  }
+
+  // Only the explicit approval path may create a publication marker.
+  // Old drafts lacking this marker are never auto-published.
+  static Future<void> markPublicationPending(SchoolTemplateDraft draft,{
+    required String Function() currentSchoolId,
+  }) async {
+    await saveLocalDraft(draft,currentSchoolId:currentSchoolId);
+    final marker=await _pendingPublicationFile(draft);
+    if(currentSchoolId()!=draft.schoolId)throw StateError('School changed before approval persistence.');
+    if(await hasPendingPublication(draft))return;
+    final temp=File(marker.path+'.'+DateTime.now().microsecondsSinceEpoch.toString()+'.tmp');
+    try{
+      await temp.writeAsString(localDraftIdentity(draft),flush:true);
+      if(currentSchoolId()!=draft.schoolId)throw StateError('School changed before approval persistence.');
+      await temp.rename(marker.path);
+    }finally{if(await temp.exists())await temp.delete();}
+  }
+
+  static Future<void> clearPendingPublication(SchoolTemplateDraft draft) async {
+    final marker=await _pendingPublicationFile(draft);
+    if(await hasPendingPublication(draft))await marker.delete();
   }
 
   /// Local school-scoped DRAFT ONLY; never replaces approved school templates.

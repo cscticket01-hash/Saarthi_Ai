@@ -1261,6 +1261,7 @@ class _SchoolDocumentTemplatesScreenState
   void initState() {
     super.initState();
     _initializeCatalog();
+    unawaited(_resumeApprovedTemplates());
     final db=FirebaseFirestore.instance,origin=db.activeProfileId;
     _templateChanges=db.collection('school_settings').doc('document_templates')
       .snapshots().listen((_){
@@ -1329,6 +1330,14 @@ class _SchoolDocumentTemplatesScreenState
     try{await WindowsTemplateCloudStore.setArchived(kind,chosen,archive:false);if(mounted)await _initializeCatalog();}
     catch(error){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Restore failed: $error')));}
     finally{if(mounted)setState(()=>_deletingTemplate=false);}
+  }
+
+  Future<void> _resumeApprovedTemplates() async {
+    final origin=FirebaseFirestore.instance.activeProfileId;
+    try{
+      final count=await WindowsTemplateCloudStore.resumeApprovedPublications();
+      if(count>0&&mounted&&FirebaseFirestore.instance.activeProfileId==origin)await _initializeCatalog();
+    }catch(_){ /* Local approved drafts remain available for explicit retry. */ }
   }
 
   int _catalogLoadGeneration=0;

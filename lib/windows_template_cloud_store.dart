@@ -232,6 +232,54 @@ class WindowsTemplateCloudStore {
       settings,kind,templateId:id)!=null || settings[deletionKey(kind,id)]==true);
   }
 
+  static final _publishing=<String,Future<Map<String,dynamic>>>{};
+
+  static Future<Map<String,dynamic>> publishApprovedLocalDraft(SchoolTemplateDraft draft) async {
+    final db=FirebaseFirestore.instance,origin=db.activeProfileId;
+    bool current()=>db.activeProfileId==origin &&
+      db.activeProfileIdentity['schoolSyncId']==draft.schoolId;
+    if(!current() || !await SchoolTemplateImportEngine.hasPendingPublication(draft))
+      throw StateError('Approved local publication marker unavailable.');
+    if(!current())throw StateError('School changed before retry.');
+    final key=draft.schoolId+':'+SchoolTemplateImportEngine.localDraftIdentity(draft);
+    final existing=_publishing[key];
+    if(existing!=null)return existing;
+    final future=() async {
+      final result=await publish(draft);
+      if(!current())throw StateError('School changed after publication.');
+      await SchoolTemplateImportEngine.clearPendingPublication(draft);
+      return result;
+    }();
+    _publishing[key]=future;
+    try{return await future;}
+    finally{if(identical(_publishing[key],future))_publishing.remove(key);}
+  }
+
+  /// Resume a bounded number of explicitly approved pending drafts when the
+  /// school opens Templates. Only managed storage has stable upload keys.
+  /// Do not repeatedly poll, retry unapproved drafts, or bypass Drive readback.
+  static Future<int> resumeApprovedPublications() async {
+    final db=FirebaseFirestore.instance,origin=db.activeProfileId;
+    final school=db.activeProfileIdentity['schoolSyncId']?.toString()??'';
+    bool current()=>db.activeProfileId==origin&&db.activeProfileIdentity['schoolSyncId']==school;
+    if(school.isEmpty)return 0;
+    final connection=await CentralSchoolCloud.saved();
+    if(!current()||connection['managed']!=true||connection['schoolId']!=school)return 0;
+    var attempts=0,completed=0;
+    for(final kind in SchoolTemplateKind.values){
+      if(!current()||attempts>=3)break;
+      final drafts=await SchoolTemplateImportEngine.loadLocalDrafts(kind:kind,schoolId:school,
+        pendingPublicationOnly:true);
+      for(final draft in drafts){
+        if(!current()||attempts>=3)break;
+        attempts++;
+        try{await publishApprovedLocalDraft(draft);completed++;}
+        catch(_){ /* Keep marker and exact bytes for the next explicit or page-open retry. */ }
+      }
+    }
+    return completed;
+  }
+
   static Future<Map<String,dynamic>> publish(SchoolTemplateDraft draft) async {
     final db=FirebaseFirestore.instance;
     final origin=db.activeProfileId;
