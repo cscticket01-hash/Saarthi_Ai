@@ -1654,22 +1654,20 @@ class _SchoolDocumentTemplatesScreenState
           if (const ['receipt','reportCard','payslip'].contains(_kind)) ...[
             Align(
               alignment:Alignment.centerLeft,
-              child:Container(
-                decoration:BoxDecoration(
-                  border:Border.all(color:const Color(0xFFFBAE17)),
-                  borderRadius:BorderRadius.circular(32),
-                ),
-                padding:const EdgeInsets.only(left:2,right:6),
-                child:Row(mainAxisSize:MainAxisSize.min,children:[
-                  TextButton.icon(
+              child:Row(mainAxisSize:MainAxisSize.min,
+                crossAxisAlignment:CrossAxisAlignment.center,children:[
+                  SizedBox(height:36,child:OutlinedButton(
                     key:ValueKey('upload-template-'+_kind),
-                    style:TextButton.styleFrom(
+                    style:OutlinedButton.styleFrom(
                       foregroundColor:const Color(0xFFFBAE17),
                       disabledForegroundColor:const Color(0xFFFBAE17),
+                      side:const BorderSide(color:Color(0xFFFBAE17)),
+                      shape:const StadiumBorder(),
                       padding:const EdgeInsets.symmetric(horizontal:14),
+                      minimumSize:Size.zero,
+                      tapTargetSize:MaterialTapTargetSize.shrinkWrap,
+                      visualDensity:VisualDensity.standard,
                     ),
-                    icon:Icon(_feature.canUpload?Icons.upload_file_outlined:Icons.lock_outline,color:const Color(0xFFFBAE17)),
-                    label:const Text('Upload Word / Excel template'),
                     onPressed:_loading||!_feature.canUpload?null:() async {
                       await SchoolTemplateImportEditor.pickAutomatic(
                         context,
@@ -1682,11 +1680,24 @@ class _SchoolDocumentTemplatesScreenState
                       );
                       if(mounted){await _initializeCatalog();await _refreshFeature();}
                     },
-                  ),
+                    child:Row(mainAxisSize:MainAxisSize.min,
+                      mainAxisAlignment:MainAxisAlignment.center,
+                      crossAxisAlignment:CrossAxisAlignment.center,children:[
+                        Icon(_feature.canUpload?Icons.upload_file_outlined:Icons.lock_outline,
+                          size:18,color:const Color(0xFFFBAE17)),
+                        const SizedBox(width:8),
+                        const Text('Upload Word / Excel template'),
+                      ]),
+                  )),
+                  const SizedBox(width:8),
                   Tooltip(message:[if(_featureSchoolLabel.isNotEmpty)'School: $_featureSchoolLabel',_feature.uploadExplanation,'Click to refresh access.'].join('\n'),waitDuration:const Duration(milliseconds:250),
-                    child:IconButton(tooltip:null,onPressed:()=>_refreshFeature(),icon:const Icon(Icons.info_outline,size:19,color:Color(0xFFFBAE17)))),
-                ]),
-              )
+                    child:IconButton(
+                      constraints:const BoxConstraints.tightFor(width:36,height:36),
+                      padding:EdgeInsets.zero,
+                      alignment:Alignment.center,
+                      onPressed:()=>_refreshFeature(),
+                      icon:const Icon(Icons.info_outline,size:19,color:Color(0xFFFBAE17)))),
+                ])
             ),
             const Padding(
               padding:EdgeInsets.symmetric(vertical:9),
