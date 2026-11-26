@@ -9,6 +9,7 @@ import 'document_processing_engine.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_connect/school_drive_images.dart';
 import 'windows_local_firestore.dart';
+import 'windows_school_image_cache.dart';
 import 'windows_template_import_engine.dart';
 
 /// Owns only the Drive asset and small school-scoped manifest for TemplateForge.
@@ -448,14 +449,25 @@ class WindowsTemplateCloudStore {
       throw StateError('Imported template Drive identity is invalid.');
     }
     final origin=db.activeProfileId;
-    final bytes=await schoolImageBytes(url);
-    if(bytes==null)throw StateError('School template is not available from its private Drive.');
+    final fileId=manifest['fileId']?.toString()??'';
+    final hash=manifest['contentHash']?.toString()??'';
+    // Prefer the existing tenant-scoped verified local cache. First use
+    // still requires Drive; a stale or damaged cache is never trusted.
+    var bytes=await WindowsSchoolImageCache.read(school,fileId);
+    if(bytes==null || sha256.convert(bytes).toString()!=hash) {
+      bytes=await schoolImageBytes(url,preferCached:false);
+    }
+    if(bytes==null || sha256.convert(bytes).toString()!=hash)
+      throw StateError('School template is unavailable or failed integrity verification. Reconnect and retry.');
     if(db.activeProfileId!=origin ||
       db.activeProfileIdentity['schoolSyncId']!=school){
       throw StateError('School changed during template download.');
     }
     final draft=SchoolTemplateImportEngine.fromPublishedManifest(
       kind:parsed.single,schoolId:school,manifest:manifest,png:bytes);
+    // Cache only hash/manifest-verified artwork; this local cache never syncs.
+    try { await WindowsSchoolImageCache.store(school,fileId,
+      WindowsSchoolImageCache.dataUrl(bytes),profileId:origin); } catch (_) { /* Cache is optional. */ }
     void ensureSchool(){
       if(db.activeProfileId!=origin ||
         db.activeProfileIdentity['schoolSyncId']!=school){

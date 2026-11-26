@@ -87,13 +87,10 @@ class WindowsExpenseReceiptPreview {
         schoolAddress: (details['address'] ?? details['schoolAddress'] ?? '').toString(),
       );
     }
-    return showDialog<void>(context: context,
-      builder: (_) => WindowsReceiptPrintDialog(
-        receipt: receipt(),
-        title: 'Expense Receipt ${original['expenseId'] ?? ''}',
-        subtitle: '${original['title'] ?? 'School Expense'} • ${original['dateText'] ?? ''}',
-        isCurrent: current,
-      ),
+    return WindowsReceiptPrintDialog.openPrepared(context,prepare:receipt,
+      title: 'Expense Receipt ${original['expenseId'] ?? ''}',
+      subtitle: '${original['title'] ?? 'School Expense'} • ${original['dateText'] ?? ''}',
+      isCurrent: current,
     );
   }
 }

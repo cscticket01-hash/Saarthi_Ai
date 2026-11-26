@@ -33,6 +33,36 @@ class WindowsReceiptPrintDialog extends StatefulWidget {
   final bool preserveActualSize;
   final VoidCallback? onRetryDocument;
   final Future<Uint8List> Function(Uint8List,PdfPageFormat)? composeLayout;
+  /// One guarded, retryable source future for record-based print entries.
+  static Future<void> openPrepared(BuildContext context, {
+    required Future<Uint8List> Function() prepare,
+    required String title, required String subtitle, required bool Function() isCurrent,
+  }) {
+    if (!context.mounted || !isCurrent()) return Future<void>.value();
+    Future<Uint8List> start() async {
+      if (!isCurrent()) throw StateError('School changed. Reopen document.');
+      final bytes = await prepare().timeout(const Duration(seconds:45));
+      if (!isCurrent()) throw StateError('School changed. Reopen document.');
+      return bytes;
+    }
+    Future<Uint8List> guarded() {
+      final next=start();
+      unawaited(next.then<void>((_) {},onError:(Object _,StackTrace __){}));
+      return next;
+    }
+    var source=guarded();
+    return showDialog<void>(context:context,builder:(_)=>StatefulBuilder(
+      builder:(context,setDialogState)=>WindowsReceiptPrintDialog(
+        receipt:source,title:title,subtitle:subtitle,isCurrent:isCurrent,
+        onRetryDocument:(){
+          if (!isCurrent()) return;
+          final next=guarded();
+          setDialogState(() { source=next; });
+        },
+      ),
+    ));
+  }
+
   @override
   State<WindowsReceiptPrintDialog> createState() => _WindowsReceiptPrintDialogState();
 }

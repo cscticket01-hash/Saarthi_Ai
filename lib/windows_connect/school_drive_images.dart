@@ -14,7 +14,7 @@ String? schoolDriveFileId(String source) {
   final id = match?.group(1) ?? (uri.path == '/uc' ? uri.queryParameters['id'] : null);
   return id != null && RegExp(r'^[A-Za-z0-9_-]{1,200}$').hasMatch(id) ? id : null;
 }
-Future<Uint8List?> schoolImageBytes(String source) async {
+Future<Uint8List?> schoolImageBytes(String source,{bool preferCached=true}) async {
   if(source.startsWith('data:image/')) { try{return UriData.parse(source).contentAsBytes();}catch(_){return null;} }
   final origin=FirebaseFirestore.instance.activeProfileId;
   final uri = Uri.tryParse(source);
@@ -22,7 +22,7 @@ Future<Uint8List?> schoolImageBytes(String source) async {
   final id = schoolDriveFileId(source);
   final connection = await CentralSchoolCloud.saved();
   if (connection.isNotEmpty && id != null) {
-    if(connection['managed']==true) {
+    if(connection['managed']==true && preferCached) {
       final cached=await WindowsSchoolImageCache.read(connection['schoolId'].toString(),id);
       if(cached!=null)return cached;
     }
