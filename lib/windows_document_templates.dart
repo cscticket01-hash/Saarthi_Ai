@@ -42,6 +42,7 @@ import 'windows_template_import_engine.dart';
 import 'windows_template_import_editor.dart';
 import 'windows_template_cloud_store.dart';
 import 'windows_template_feature_access.dart';
+import 'windows_template_thumbnail_queue.dart';
 import 'windows_student_id_cards.dart';
 import 'windows_sync_recovery.dart';
 
@@ -1243,10 +1244,17 @@ class _SchoolDocumentTemplatesScreenState
         : windowsReferenceDocumentIndex(_kind, value);
   }
 
-  String _kind = 'studentId';
+  String _activeKind = 'studentId';
+  String get _kind=>_activeKind;
+  set _kind(String value){
+    if(value==_activeKind)return;
+    _thumbnails.clear();
+    _activeKind=value;
+  }
   Map<String, dynamic> _selected = {};
   bool _loading = true;
-  final Map<String, Future<Uint8List>> _thumbnails = {};
+  final _thumbnails=WindowsTemplateThumbnailQueue();
+  String? _thumbnailCatalogSignature;
   StreamSubscription? _templateChanges;
   bool _deletingTemplate=false;
   bool _selectingTemplate=false;
@@ -1279,19 +1287,23 @@ class _SchoolDocumentTemplatesScreenState
     }finally{_refreshingFeature=false;}
   }
 
-  Future<Uint8List> _thumbnail(int index) {
-    final kind = _kind;
-    final sample = _sample;
-    return _thumbnails.putIfAbsent('$kind:$index', () async {
+  Future<Uint8List?> _thumbnail(int index) {
+    final kind=_kind,sample=_sample;
+    final db=FirebaseFirestore.instance,profile=db.activeProfileId;
+    final school=db.activeProfileIdentity['schoolSyncId'];
+    return _thumbnails.request('$profile:$school:$kind:$index',(current)async{
       if(widget.thumbnail!=null)return widget.thumbnail!(kind,index);
-      final bytes = (await WindowsDocumentTemplates.renderTemplate(
-        kind,
-        index,
-        sample,
-      ))!;
-      final page = await Printing.raster(bytes, pages: [0], dpi: 100).first;
-      return page.toPng();
-    });
+      final bytes=await WindowsDocumentTemplates.renderTemplate(kind,index,sample);
+      if(bytes==null||!current())return null;
+      // Thumbnails only: use a smaller raster and drain the native stream
+      // completely before allowing the next PDF job. Actual printing is unchanged.
+      Uint8List? png;
+      await for(final page in Printing.raster(bytes,pages:[0],dpi:72)){
+        if(current()&&png==null)png=await page.toPng();
+      }
+      return current()?png:null;
+    },current:()=>mounted&&_kind==kind&&db.activeProfileId==profile&&
+      db.activeProfileIdentity['schoolSyncId']==school);
   }
 
   @override
@@ -1310,7 +1322,7 @@ class _SchoolDocumentTemplatesScreenState
   }
 
   @override
-  void dispose(){_featureTimer?.cancel();_templateChanges?.cancel();super.dispose();}
+  void dispose(){_thumbnails.clear();_featureTimer?.cancel();_templateChanges?.cancel();super.dispose();}
 
   Future<void> _deleteUploaded(int index) async {
     final kind=_kind;
@@ -1348,14 +1360,25 @@ class _SchoolDocumentTemplatesScreenState
   Future<void> _initializeCatalog() async {
     final generation=++_catalogLoadGeneration;
     final origin=FirebaseFirestore.instance.activeProfileId;
-    // Version ordering can change after an upload; never reuse an old card image.
-    _thumbnails.clear();
     try {
       final entries = await IdCardCatalog.load(),
           v = await WindowsDocumentTemplates.selections();
+      // Identical sync notifications must not restart every thumbnail.
+      // Include the school/profile, actual catalog, and all template data,
+      // except bookkeeping-only timestamps and sync revisions.
+      final signature=syncPayloadHash({
+        'profile':origin,
+        'school':FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'],
+        'entries':entries.map((e)=>e.id).toList(),
+        'settings':{for(final e in v.entries)if(e.key!='updatedAt')e.key:e.value},
+      });
       if (mounted && generation==_catalogLoadGeneration &&
           FirebaseFirestore.instance.activeProfileId==origin)
         setState(() {
+          if(signature!=_thumbnailCatalogSignature){
+            _thumbnailCatalogSignature=signature;
+            _thumbnails.clear();
+          }
           _catalog = entries;
           _selected = v;
           _catalogError = null;
@@ -1768,14 +1791,16 @@ class _SchoolDocumentTemplatesScreenState
                                   ? Image.asset(entry!.frontAsset!, fit: BoxFit.contain)
                                   : entry != null
                                   ? const Icon(Icons.badge_outlined, size: 54)
-                                  : FutureBuilder<Uint8List>(
+                                  : FutureBuilder<Uint8List?>(
+                                key:ValueKey('$_kind:$i:${_thumbnails.generation}'),
                                 future: _thumbnail(i),
                                 builder: (context, snapshot) { WindowsAppearance.watch(context); return  snapshot.hasData
                                     ? DecoratedBox(
                                         decoration: const BoxDecoration(color: Colors.white),
-                                        child: Image.memory(snapshot.data!,fit:BoxFit.contain),
+                                        child: Image.memory(snapshot.data!,fit:BoxFit.contain,cacheWidth:320,
+                                          errorBuilder:(_,__,___)=>const Text('Use Preview to view this design')),
                                       )
-                                    : snapshot.hasError
+                                    : snapshot.hasError||snapshot.connectionState==ConnectionState.done
                                     ? const Text(
                                         'Use Preview to view this design',
                                       )

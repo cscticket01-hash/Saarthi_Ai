@@ -1,4 +1,5 @@
 import 'windows_drive_delivery_queue.dart';
+import 'windows_runtime_diagnostics.dart';
 import 'cloudflare_record_handoff.dart';
 import 'windows_live_sync_runtime.dart';
 import 'live_sync_protocol.dart';
@@ -332,7 +333,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         _armPauseExpiry();
         return;
       }
-      unawaited(refreshDetails());
+      unawaited(WindowsRuntimeDiagnostics.background('sync.details_refresh',refreshDetails));
       scheduleSoon();
     });
   }
@@ -1442,7 +1443,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         'isRetryable': false,
       });
       scheduleSoon(localMutation: true);
-      unawaited(refreshDetails());
+      unawaited(WindowsRuntimeDiagnostics.background('sync.details_refresh',refreshDetails));
     };
 
     WindowsFirebaseRemote.onConnectionChanged = () async {
@@ -1459,7 +1460,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         'isRetryable': false,
       });
       scheduleSoon(localMutation: true);
-      unawaited(refreshDetails());
+      unawaited(WindowsRuntimeDiagnostics.background('sync.details_refresh',refreshDetails));
     };
     WindowsBackendBridge.onRemoteAvailable = () async {
       _schedule.reconnected();

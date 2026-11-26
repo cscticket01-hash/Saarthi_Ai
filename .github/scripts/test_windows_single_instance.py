@@ -35,6 +35,16 @@ class InstanceGuardTests(unittest.TestCase):
         self.assertIn('if (::wcsstr(::GetCommandLineW(), L"--saarthi-background") == nullptr)', result)
         self.assertEqual(configure_window(result), result)
 
+    def test_explicit_restart_waits_for_old_singleton_before_flutter(self):
+        result = configure(self.MAIN)
+        self.assertIn('L"--saarthi-restart"', result)
+        self.assertIn('if (saarthi_restart)', result)
+        self.assertIn('attempt < 150', result)
+        self.assertLess(result.index('::Sleep(100)'), result.index('DartProject'))
+        self.assertLess(result.index('if (instance_error == ERROR_ALREADY_EXISTS)'), result.index('DartProject'))
+        self.assertEqual(result.count('CreateMutexW'), 2)
+        self.assertNotIn('TerminateProcess', result)
+
     def test_no_second_flutter_engine_opening_same_school_sqlite(self):
         result = configure(self.MAIN)
         self.assertLess(result.index('ERROR_ALREADY_EXISTS'), result.index('DartProject'))
