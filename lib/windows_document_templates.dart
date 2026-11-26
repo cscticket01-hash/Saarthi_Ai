@@ -1289,6 +1289,42 @@ class _SchoolDocumentTemplatesScreenState
     } finally {if(mounted)setState(()=>_deletingTemplate=false);}
   }
 
+  Future<void> _archiveTemplate(int index) async {
+    final kind=_kind,school=FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'];
+    final asset=_uploadedTemplate(index);
+    if(asset==null || _deletingTemplate || _selectingTemplate)return;
+    final id=WindowsTemplateCloudStore.versionId(asset);
+    final confirmed=await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(
+      title:const Text('Archive uploaded template?'),
+      content:const Text('Hide this inactive design from the template list. The verified Drive asset and history remain available for restoration.'),
+      actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),
+        FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Archive'))]));
+    if(confirmed!=true || !mounted || FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']!=school)return;
+    setState(()=>_deletingTemplate=true);
+    try {await WindowsTemplateCloudStore.setArchived(kind,id,archive:true);if(mounted)await _initializeCatalog();}
+    catch(error){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Archive failed: $error')));}
+    finally {if(mounted)setState(()=>_deletingTemplate=false);}
+  }
+
+  Future<void> _showArchive() async {
+    final kind=_kind,db=FirebaseFirestore.instance,origin=db.activeProfileId;
+    final school=db.activeProfileIdentity['schoolSyncId']?.toString()??'';
+    final archived=WindowsTemplateCloudStore.archivedTemplates(_selected,kind,school);
+    final chosen=await showDialog<String>(context:context,builder:(ctx)=>AlertDialog(
+      title:const Text('Archived templates'),
+      content:SizedBox(width:500,child:archived.isEmpty?const Text('No archived templates'):
+        ListView(shrinkWrap:true,children:[for(final asset in archived)ListTile(
+          title:Text(asset['filename']?.toString()??'School template'),
+          trailing:TextButton(onPressed:()=>Navigator.pop(ctx,WindowsTemplateCloudStore.versionId(asset)),
+            child:const Text('Restore')))])),
+      actions:[TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Close'))]));
+    if(chosen==null || !mounted || db.activeProfileId!=origin || db.activeProfileIdentity['schoolSyncId']!=school)return;
+    setState(()=>_deletingTemplate=true);
+    try{await WindowsTemplateCloudStore.setArchived(kind,chosen,archive:false);if(mounted)await _initializeCatalog();}
+    catch(error){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Restore failed: $error')));}
+    finally{if(mounted)setState(()=>_deletingTemplate=false);}
+  }
+
   int _catalogLoadGeneration=0;
   Future<void> _initializeCatalog() async {
     final generation=++_catalogLoadGeneration;
@@ -1508,8 +1544,8 @@ class _SchoolDocumentTemplatesScreenState
     final current = currentSnapshot ?? <String,dynamic>{};
     if (current[kind] != settings[kind])
       throw StateError('Template selection changed on another device. Refresh and retry.');
-    if (isImported && WindowsDocumentTemplates.importedAsset(current,kind,
-        templateId:value.toString().substring(9)) == null) {
+    if (isImported && !WindowsDocumentTemplates.availableImportedTemplates(current,kind,school)
+        .any((asset)=>'imported:${WindowsTemplateCloudStore.versionId(asset)}'==value)) {
       throw StateError('Uploaded template was removed. Reopen templates.');
     }
     if(db.activeProfileId!=origin || db.activeProfileIdentity['schoolSyncId']!=boundSchool)
@@ -1580,6 +1616,8 @@ class _SchoolDocumentTemplatesScreenState
             Align(
               alignment:Alignment.centerLeft,
               child:Wrap(spacing:12,runSpacing:8,children:[
+                OutlinedButton.icon(onPressed:_loading||_deletingTemplate||_selectingTemplate?null:_showArchive,
+                  icon:const Icon(Icons.archive_outlined),label:const Text('Archived templates')),
                 OutlinedButton.icon(
                   key:ValueKey('upload-template-'+_kind),
                   icon:const Icon(Icons.upload_file_outlined),
@@ -1649,6 +1687,11 @@ class _SchoolDocumentTemplatesScreenState
                               color: WindowsAppearance.foreground(Colors.tealAccent),
                             ),
                             const Spacer(),
+                            if(const ['receipt','reportCard','payslip'].contains(_kind) &&
+                                i>=_baseTemplateCount(_kind) && !active)
+                              IconButton(tooltip:'Archive uploaded template',
+                                onPressed:_deletingTemplate||_selectingTemplate?null:()=>_archiveTemplate(i),
+                                icon:const Icon(Icons.archive_outlined)),
                             if(const ['receipt','reportCard','payslip'].contains(_kind) &&
                                 i>=_baseTemplateCount(_kind))
                               IconButton(tooltip:'Delete uploaded template',

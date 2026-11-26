@@ -18,7 +18,8 @@ class WindowsTemplateCloudStore {
   static const _engineVersion='TemplateForge-3';
   // Keep rollback history across up to five devices; do not silently remove
   // verified Drive versions during another PC's concurrent upload.
-  static const maxStoredVersions=32;
+  static const maxStoredVersions=32; // active, selectable versions per kind
+  static const maxRetainedVersions=64; // includes archive/deletion history
 
   static Future<Map<String,dynamic>> _settings() async =>
     (await FirebaseFirestore.instance.collection('school_settings')
@@ -61,6 +62,44 @@ class WindowsTemplateCloudStore {
   // Top-level independent fields survive existing field-patch synchronization.
   // Never remove manifests: a stale device must not resurrect a deleted design.
   static String deletionKey(String kind,String id)=>'templateDeleted_${kind}_$id';
+  static String archiveKey(String kind,String id)=>'templateArchived_${kind}_$id';
+  static String versionId(Map<String,dynamic> asset)=>
+      (asset['templateId']??asset['sourceHash']).toString();
+  static bool isArchived(Map<String,dynamic> settings,String kind,String id)=>
+      settings[archiveKey(kind,id)]==true;
+
+  static List<Map<String,dynamic>> archivedTemplates(Map<String,dynamic> settings,String kind,String school) =>
+    importedTemplates(settings,kind).where((asset)=>asset['approved']==true &&
+      asset['schoolId']==school && asset['kind']==kind &&
+      isArchived(settings,kind,versionId(asset)) && settings[kind]!='imported:${versionId(asset)}').toList();
+
+  static Map<String,dynamic> archivePatch(Map<String,dynamic> settings,String kind,
+      String id,String school,{required bool archive}) {
+    SchoolTemplateImportEngine.verifySchool(school);
+    final asset=importedAsset(settings,kind,templateId:id);
+    if(asset==null || asset['approved']!=true || asset['schoolId']!=school || asset['kind']!=kind)
+      throw StateError('Only this school’s approved template can be archived or restored.');
+    if(archive && settings[kind]=='imported:$id')
+      throw StateError('Select a different design or Plain White before archiving this template.');
+    if(!archive && isArchived(settings,kind,id) &&
+      availableSchoolTemplates(settings,kind,school).length>=maxStoredVersions)
+      throw StateError('Archive another inactive template before restoring this one.');
+    return {archiveKey(kind,id):archive};
+  }
+
+  static Future<void> setArchived(String kind,String id,{required bool archive}) async {
+    final db=FirebaseFirestore.instance,origin=db.activeProfileId;
+    final school=db.activeProfileIdentity['schoolSyncId']?.toString()??'';
+    final ref=db.collection('school_settings').doc('document_templates');
+    final snapshot=await ref.get();
+    final patch=archivePatch(snapshot.data()??{},kind,id,school,archive:archive);
+    if(db.activeProfileId!=origin || db.activeProfileIdentity['schoolSyncId']!=school)
+      throw StateError('School changed before archive update.');
+    final batch=db.batch();
+    batch.requireUnchanged(ref,snapshot.data());
+    batch.set(ref,{...patch,'updatedAt':FieldValue.serverTimestamp()},const SetOptions(merge:true));
+    await batch.commit();
+  }
 
   static Map<String,dynamic> deletionPatch(Map<String,dynamic> settings,
       String kind,String id,String school) {
@@ -100,7 +139,8 @@ class WindowsTemplateCloudStore {
       item['approved']==true &&
       item['schoolId']==schoolId &&
       item['kind']==kind &&
-      (item['templateId']??item['sourceHash']) is String
+      (item['templateId']??item['sourceHash']) is String &&
+      (!isArchived(settings,kind,versionId(item)) || settings[kind]=='imported:${versionId(item)}')
     ).toList(growable:false);
   }
 
@@ -131,6 +171,7 @@ class WindowsTemplateCloudStore {
   /// silently evicts the active template or the rollback target.
   static Map<String,dynamic> appendedVersionHistory(
     dynamic rawVersions,String templateId,Map<String,dynamic> manifest,
+    {Set<String> inactiveIds=const {}}
   ){
     final versions=<String,dynamic>{};
     if(rawVersions is Map){
@@ -157,9 +198,11 @@ class WindowsTemplateCloudStore {
         ' Drive version must not be overwritten.');
     }
     versions[templateId]=manifest;
-    if(versions.length>maxStoredVersions){
-      throw StateError('School template history is full.'
-        ' Archive older versions safely before publishing another template.');
+    if(versions.length>maxRetainedVersions){
+      throw StateError('Retained template history is full. No rollback versions were removed.');
+    }
+    if(versions.keys.where((id)=>!inactiveIds.contains(id)).length>maxStoredVersions){
+      throw StateError('Active template list is full. Archive an inactive version before uploading another.');
     }
     return versions;
   }
@@ -185,7 +228,7 @@ class WindowsTemplateCloudStore {
     Map<String,dynamic> settings,String kind,Iterable<String> expected,
   ){
     return expected.every((id)=>importedAsset(
-      settings,kind,templateId:id)!=null);
+      settings,kind,templateId:id)!=null || settings[deletionKey(kind,id)]==true);
   }
 
   static Future<Map<String,dynamic>> publish(SchoolTemplateDraft draft) async {
@@ -308,9 +351,19 @@ class WindowsTemplateCloudStore {
       final allAssets=latestSettings['templateAssets'] is Map
         ?Map<String,dynamic>.from(latestSettings['templateAssets'] as Map)
         :<String,dynamic>{};
-      versions=appendedVersionHistory(
-        allAssets[draft.kind.name],templateId,manifest);
+      final kind=draft.kind.name;
+      final old=allAssets[kind];
+      final ids=old is Map
+        ? (old['version']==1 ? [(old['templateId']??old['sourceHash']).toString()]
+          : old.keys.map((key)=>key.toString()).toList())
+        : <String>[];
+      final inactiveIds=ids.where((id)=>latestSettings[deletionKey(kind,id)]==true ||
+        (isArchived(latestSettings,kind,id) && latestSettings[kind]!='imported:$id')).toSet();
+      versions=appendedVersionHistory(old,templateId,manifest,inactiveIds:inactiveIds);
       allAssets[draft.kind.name]=versions;
+      // Keep synced metadata bounded independently of the retained Drive bytes.
+      if(utf8.encode(jsonEncode(allAssets)).length>512*1024)
+        throw StateError('Template catalog exceeds safe metadata size. Existing versions retained.');
       final latest=latestSettings['templateAssetLatest'] is Map
         ?Map<String,dynamic>.from(latestSettings['templateAssetLatest'] as Map)
         :<String,dynamic>{};

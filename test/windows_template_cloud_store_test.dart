@@ -185,6 +185,29 @@ void main(){
     expect(history.length,WindowsTemplateCloudStore.maxStoredVersions);
   });
 
+  test('archive hides inactive versions, preserves history and supports restore',(){
+    const school='vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    final original=<String,dynamic>{'receipt':'imported:active','templateAssets':{'receipt':{
+      for(final id in ['active','old']) id:{'version':1,'approved':true,'schoolId':school,
+        'kind':'receipt','templateId':id,'sourceHash':id,'contentHash':id},
+    }}};
+    expect(()=>WindowsTemplateCloudStore.archivePatch(original,'receipt','active',school,archive:true),throwsStateError);
+    final archived={...original,...WindowsTemplateCloudStore.archivePatch(original,'receipt','old',school,archive:true)};
+    expect(WindowsTemplateCloudStore.availableSchoolTemplates(archived,'receipt',school).map((v)=>v['templateId']),['active']);
+    expect(WindowsTemplateCloudStore.archivedTemplates(archived,'receipt',school).single['templateId'],'old');
+    expect(WindowsTemplateCloudStore.importedAsset(archived,'receipt',templateId:'old'),isNotNull);
+    final restored={...archived,...WindowsTemplateCloudStore.archivePatch(archived,'receipt','old',school,archive:false)};
+    expect(WindowsTemplateCloudStore.availableSchoolTemplates(restored,'receipt',school),hasLength(2));
+    expect(()=>WindowsTemplateCloudStore.archivePatch(original,'receipt','old','vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',archive:true),throwsStateError);
+  });
+  test('archive frees active capacity without removing retained versions',(){
+    final history=<String,dynamic>{for(var i=0;i<32;i++) 'v$i':{'sourceHash':'v$i','contentHash':'v$i','schoolId':'school','kind':'receipt'}};
+    final result=WindowsTemplateCloudStore.appendedVersionHistory(history,'new',
+      {'sourceHash':'new','contentHash':'new','schoolId':'school','kind':'receipt'},inactiveIds:{'v0'});
+    expect(result.length,33);
+    expect(result.containsKey('v0'),isTrue);
+  });
+
   test('five-device manifest ACK simulation detects lost peer updates',(){
     const school='vs-db8afb01a3be46a983c8284714d06e5d';
     final assets=<String,dynamic>{
