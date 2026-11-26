@@ -28,11 +28,12 @@ import 'windows_save_pdf.dart';
 import 'windows_id_card_designer_entry.dart';
 import 'fitted_document_preview.dart';
 import 'windows_connect/school_drive_images.dart';
-import 'windows_ui_localization.dart';
+// Template catalog, preview and document text intentionally retain their own
+// language; device UI translation must not wrap these widgets.
 
 import 'dart:typed_data';
 
-import 'package:flutter/material.dart' hide Text, InputDecoration;
+import 'package:flutter/material.dart';
 import 'package:printing/printing.dart';
 
 import 'windows_local_firestore.dart';
