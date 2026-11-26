@@ -9,6 +9,7 @@ import 'windows_template_office_layout.dart';
 import 'windows_template_office_converter.dart';
 import 'fitted_document_preview.dart';
 import 'windows_template_cloud_store.dart';
+import 'windows_template_feature_access.dart';
 
 /// Structured, Office-independent TemplateForge upload for the three supported tabs.
 /// Approved pages are hash-verified in the school's Drive and listed as selectable versions.
@@ -34,6 +35,8 @@ class SchoolTemplateImportEditor {
     void stage(String message){progress.value=message;}
     try {
       SchoolTemplateImportEngine.verifySchool(school);
+      await WindowsTemplateFeatureAccess.requireUpload();
+      if(!sameSchool()||!context.mounted)return;
       const types=XTypeGroup(label:'Word or Excel template',extensions:['docx','xlsx']);
       final file=await openFile(acceptedTypeGroups:[types]);
       if(file==null||!context.mounted)return;
@@ -97,6 +100,8 @@ class SchoolTemplateImportEditor {
       if(!sameSchool())throw StateError('School changed before approval.');
       // Keep one immutable, verified local draft even if the school Drive
       // becomes unavailable after recognition; repeat uploads are idempotent.
+      await WindowsTemplateFeatureAccess.requireUpload();
+      if(!sameSchool()||!context.mounted)return;
       await SchoolTemplateImportEngine.markPublicationPending(approved,
         currentSchoolId:()=>db.activeProfileIdentity['schoolSyncId']
           ?.toString()??'');
@@ -199,6 +204,8 @@ class SchoolTemplateImportEditor {
           FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Retry publication'))]));
       if(retry!=true||!context.mounted)return;
       if(db.activeProfileId!=profile||db.activeProfileIdentity['schoolSyncId']!=school)throw StateError('School changed.');
+      await WindowsTemplateFeatureAccess.requireUpload();
+      if(!context.mounted||db.activeProfileId!=profile||db.activeProfileIdentity['schoolSyncId']!=school)return;
       await SchoolTemplateImportEngine.markPublicationPending(draft,
         currentSchoolId:()=>db.activeProfileId==profile?db.activeProfileIdentity['schoolSyncId']?.toString()??'':'');
       await WindowsTemplateCloudStore.publishApprovedLocalDraft(draft);

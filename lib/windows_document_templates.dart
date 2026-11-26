@@ -41,6 +41,7 @@ import 'windows_reference_documents.dart';
 import 'windows_template_import_engine.dart';
 import 'windows_template_import_editor.dart';
 import 'windows_template_cloud_store.dart';
+import 'windows_template_feature_access.dart';
 import 'windows_student_id_cards.dart';
 import 'windows_sync_recovery.dart';
 
@@ -1241,6 +1242,21 @@ class _SchoolDocumentTemplatesScreenState
   StreamSubscription? _templateChanges;
   bool _deletingTemplate=false;
   bool _selectingTemplate=false;
+  TemplateFeatureAccess _feature=const TemplateFeatureAccess.unverified();
+  Timer? _featureTimer;
+  bool _refreshingFeature=false;
+  Future<void> _refreshFeature() async {
+    if(_refreshingFeature)return;
+    _refreshingFeature=true;
+    final origin=FirebaseFirestore.instance.activeProfileId;
+    try{
+      final next=await WindowsTemplateFeatureAccess.read(force:true);
+      if(mounted&&FirebaseFirestore.instance.activeProfileId==origin){
+        if(next.canUse!=_feature.canUse)_thumbnails.clear();
+        setState(()=>_feature=next);
+      }
+    }finally{_refreshingFeature=false;}
+  }
 
   Future<Uint8List> _thumbnail(int index) {
     final kind = _kind;
@@ -1262,6 +1278,8 @@ class _SchoolDocumentTemplatesScreenState
     super.initState();
     _initializeCatalog();
     unawaited(_resumeApprovedTemplates());
+    unawaited(_refreshFeature());
+    _featureTimer=Timer.periodic(const Duration(seconds:60),(_)=>unawaited(_refreshFeature()));
     final db=FirebaseFirestore.instance,origin=db.activeProfileId;
     _templateChanges=db.collection('school_settings').doc('document_templates')
       .snapshots().listen((_){
@@ -1270,7 +1288,7 @@ class _SchoolDocumentTemplatesScreenState
   }
 
   @override
-  void dispose(){_templateChanges?.cancel();super.dispose();}
+  void dispose(){_featureTimer?.cancel();_templateChanges?.cancel();super.dispose();}
 
   Future<void> _deleteUploaded(int index) async {
     final kind=_kind;
@@ -1533,6 +1551,7 @@ class _SchoolDocumentTemplatesScreenState
     final isImported=['receipt','reportCard','payslip'].contains(kind) &&
       asset!=null && asset['approved']==true &&
       asset['schoolId']==school;
+    if(isImported)await WindowsTemplateFeatureAccess.requireUse(force:true);
     final value = index == -1 && WindowsDocumentTemplates.supportsPlain(kind)
         ? WindowsDocumentTemplates.plainSelection
         : isImported
@@ -1654,9 +1673,9 @@ class _SchoolDocumentTemplatesScreenState
                   icon:const Icon(Icons.archive_outlined),label:const Text('Archived templates')),
                 OutlinedButton.icon(
                   key:ValueKey('upload-template-'+_kind),
-                  icon:const Icon(Icons.upload_file_outlined),
+                  icon:Icon(_feature.canUpload?Icons.upload_file_outlined:Icons.lock_outline),
                   label:const Text('Upload Word / Excel template'),
-                  onPressed:_loading?null:() async {
+                  onPressed:_loading||!_feature.canUpload?null:() async {
                     await SchoolTemplateImportEditor.pickAutomatic(
                       context,
                       switch (_kind) {
@@ -1669,6 +1688,8 @@ class _SchoolDocumentTemplatesScreenState
                     if(mounted)await _initializeCatalog();
                   },
                 ),
+                Tooltip(message:_feature.uploadExplanation,waitDuration:const Duration(milliseconds:250),
+                  child:IconButton(tooltip:null,onPressed:()=>_refreshFeature(),icon:const Icon(Icons.info_outline,size:19))),
               ]),
             ),
             const Padding(
@@ -1790,7 +1811,8 @@ class _SchoolDocumentTemplatesScreenState
                             ),
                             const SizedBox(width: 10),
                             FilledButton(
-                              onPressed: active || _loading || _selectingTemplate || _catalogError != null
+                              onPressed: active || _loading || _selectingTemplate || _catalogError != null ||
+                                  (_uploadedTemplate(i)!=null&&!_feature.canUse)
                                   ? null
                                   : () async {
                                       setState(() => _selectingTemplate = true);

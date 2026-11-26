@@ -11,6 +11,7 @@ import 'windows_connect/school_drive_images.dart';
 import 'windows_local_firestore.dart';
 import 'windows_school_image_cache.dart';
 import 'windows_template_import_engine.dart';
+import 'windows_template_feature_access.dart';
 
 /// Owns only the Drive asset and small school-scoped manifest for TemplateForge.
 /// Existing templates stay selected until the school explicitly chooses a new version.
@@ -263,6 +264,8 @@ class WindowsTemplateCloudStore {
     final school=db.activeProfileIdentity['schoolSyncId']?.toString()??'';
     bool current()=>db.activeProfileId==origin&&db.activeProfileIdentity['schoolSyncId']==school;
     if(school.isEmpty)return 0;
+    final access=await WindowsTemplateFeatureAccess.read(force:true);
+    if(!access.canUpload)return 0;
     final connection=await CentralSchoolCloud.saved();
     if(!current()||connection['managed']!=true||connection['schoolId']!=school)return 0;
     var attempts=0,completed=0;
@@ -290,6 +293,8 @@ class WindowsTemplateCloudStore {
         throw StateError('School changed during template publication.');
       }
     }
+    ensureSchool();
+    await WindowsTemplateFeatureAccess.requireUpload();
     ensureSchool();
     SchoolTemplateImportEngine.validateDraft(draft);
     final packed=SchoolTemplateImportEngine.packedArtwork(draft);
@@ -391,6 +396,8 @@ class WindowsTemplateCloudStore {
     // serialized local-store read-dependency guard, not an unguarded set().
     // Only a true concurrent local change triggers a bounded retry.
     // Cross-device atomicity still needs verified cloud CAS acceptance.
+    await WindowsTemplateFeatureAccess.requireUpload();
+    ensureSchool();
     final settingsRef=db.collection('school_settings').doc('document_templates');
     Map<String,dynamic> latestSettings={};
     Map<String,dynamic> versions={};
@@ -561,6 +568,9 @@ class WindowsTemplateCloudStore {
     final origin=db.activeProfileId;
     final fileId=manifest['fileId']?.toString()??'';
     final hash=manifest['contentHash']?.toString()??'';
+    await WindowsTemplateFeatureAccess.requireUse();
+    if(db.activeProfileId!=origin||db.activeProfileIdentity['schoolSyncId']!=school)
+      throw StateError('School changed during template permission check.');
     // Prefer the existing tenant-scoped verified local cache. First use
     // still requires Drive; a stale or damaged cache is never trusted.
     var bytes=await WindowsSchoolImageCache.read(school,fileId);
