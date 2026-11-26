@@ -1,31 +1,25 @@
+import 'dart:async';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
-import 'windows_browser_print.dart';
+import 'windows_print_layout.dart';
+import 'windows_receipt_print_dialog.dart';
 import 'windows_exam_policy.dart';
 import 'windows_local_firestore.dart';
-import 'windows_save_pdf.dart';
 
-/// Record-only report-card preview. Neither opening this dialog nor printing
-/// it invokes the PDF renderer. Only Download Report Card calls createPdf.
+/// Direct report print preview. The existing record artwork is captured only
+/// into memory for the common print dialog; no saved or synced PDF is created.
 class WindowsReportCardPreview extends StatefulWidget {
-  const WindowsReportCardPreview({
-    super.key,
-    required this.record,
-    required this.createPdf,
-  });
-
+  const WindowsReportCardPreview({super.key, required this.record});
   final Map<String, dynamic> record;
-  final Future<Uint8List?> Function() createPdf;
 
   static Future<bool> open(
     BuildContext context,
-    Map<String, dynamic> record, {
-    required Future<Uint8List?> Function() createPdf,
-  }) async {
+    Map<String, dynamic> record,
+  ) async {
     if (!context.mounted) return false;
     final db = FirebaseFirestore.instance;
     final profile = db.activeProfileId;
@@ -50,23 +44,24 @@ class WindowsReportCardPreview extends StatefulWidget {
       context: context,
       builder: (_) => WindowsReportCardPreview(
         record: {...branding, ...record},
-        createPdf: createPdf,
       ),
     );
     return true;
   }
 
   @override
-  State<WindowsReportCardPreview> createState() =>
-      _WindowsReportCardPreviewState();
+  State<WindowsReportCardPreview> createState() => _WindowsReportCardPreviewState();
 }
 
 class _WindowsReportCardPreviewState extends State<WindowsReportCardPreview> {
   final GlobalKey _paperKey = GlobalKey();
+  final Completer<Uint8List> _receipt = Completer<Uint8List>();
   final String _profile = FirebaseFirestore.instance.activeProfileId;
   final String _school = FirebaseFirestore.instance
       .activeProfileIdentity['schoolSyncId']?.toString() ?? '';
-  bool _busy = false;
+  late final List<Map<String, dynamic>> _pages;
+  int _page = 0;
+  bool _capturing = true;
 
   bool get _sameSchool {
     final db = FirebaseFirestore.instance;
@@ -74,145 +69,86 @@ class _WindowsReportCardPreviewState extends State<WindowsReportCardPreview> {
         (db.activeProfileIdentity['schoolSyncId']?.toString() ?? '') == _school;
   }
 
-  void _guardSchool() {
-    if (!_sameSchool) {
-      throw StateError('School changed. Reopen this report card.');
-    }
+  @override
+  void initState() {
+    super.initState();
+    final source = widget.record['marks'];
+    final entries = source is Map
+        ? Map<String, dynamic>.from(source).entries.toList()
+        : <MapEntry<String, dynamic>>[];
+    // Keep the existing native artwork, paginate instead of clipping a long
+    // subject table, and repeat the whole-exam totals on every sheet.
+    const perPage = 8;
+    _pages = [
+      for (var i = 0; i < entries.length; i += perPage)
+        Map<String, dynamic>.fromEntries(entries.skip(i).take(perPage)),
+    ];
+    if (_pages.isEmpty) _pages.add({});
+    WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(_prepare()));
   }
 
-  Future<void> _perform(Future<void> Function() task) async {
-    if (_busy) return;
-    setState(() => _busy = true);
+  Future<void> _prepare() async {
+    final images = <({Uint8List png, int width, int height})>[];
     try {
-      _guardSchool();
-      await task();
-      _guardSchool();
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-          SnackBar(content: Text('Report Card: $error')),
-        );
+      for (var i = 0; i < _pages.length; i++) {
+        if (!mounted || !_sameSchool) throw StateError('Report preview closed or school changed.');
+        if (i != 0) {
+          setState(() => _page = i);
+          await WidgetsBinding.instance.endOfFrame;
+        }
+        if (!mounted || !_sameSchool) throw StateError('Report preview closed or school changed.');
+        final boundary = _paperKey.currentContext?.findRenderObject();
+        if (boundary is! RenderRepaintBoundary || boundary.debugNeedsPaint) {
+          throw StateError('Report artwork is not ready.');
+        }
+        final image = await boundary.toImage(pixelRatio: 2.5);
+        try {
+          final data = await image.toByteData(format: ui.ImageByteFormat.png);
+          if (data == null) throw StateError('Report image could not be rendered.');
+          images.add((png: data.buffer.asUint8List(), width: image.width, height: image.height));
+        } finally {
+          image.dispose();
+        }
       }
+      if (!mounted || !_sameSchool) throw StateError('Report preview closed or school changed.');
+      final bytes = await WindowsPrintLayout.fromImages(images);
+      if (!mounted || !_sameSchool) throw StateError('Report preview closed or school changed.');
+      _receipt.complete(bytes);
+    } catch (error, stack) {
+      if (!_receipt.isCompleted) _receipt.completeError(error, stack);
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) setState(() => _capturing = false);
     }
   }
-
-  Future<void> _print() => _perform(() async {
-    // Flutter paints a PNG; the shared dialog builds temporary print-only bytes.
-    await WidgetsBinding.instance.endOfFrame;
-    _guardSchool();
-    final boundary = _paperKey.currentContext?.findRenderObject();
-    if (boundary is! RenderRepaintBoundary) {
-      throw StateError('Report preview is not ready to print.');
-    }
-    final image = await boundary.toImage(pixelRatio: 2.5);
-    final data = await image.toByteData(format: ui.ImageByteFormat.png);
-    final width = image.width;
-    final height = image.height;
-    image.dispose();
-    if (data == null) throw StateError('Report image could not be rendered.');
-    _guardSchool();
-    if(!mounted)return;
-    await WindowsBrowserPrint.openImages(context,[
-      (png: data.buffer.asUint8List(), width: width, height: height),
-    ],title:'Report card',isCurrent:()=>_sameSchool);
-  });
-
-  Future<void> _download() => _perform(() async {
-    // This is intentionally the ONLY PDF-rendering action in this widget.
-    _guardSchool();
-    final pdf = await widget.createPdf();
-    _guardSchool();
-    if (pdf == null || pdf.isEmpty) {
-      throw StateError('Selected report-card template unavailable.');
-    }
-    final exam = widget.record['examId']?.toString() ?? 'Exam';
-    final student = widget.record['studentId']?.toString() ?? 'Student';
-    final saved = await WindowsSavePdf.save(
-      pdf, 'Report-Card-$exam-$student.pdf');
-    _guardSchool();
-    if (saved != null && mounted) {
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        const SnackBar(content: Text('Report Card PDF saved.')),
-      );
-    }
-  });
 
   @override
-  Widget build(BuildContext context) {
-    if (!_sameSchool) {
-      return AlertDialog(
-        title: const Text('School changed'),
-        content: const Text('Close and reopen the report card.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context),
-            child: const Text('Close')),
-        ],
-      );
-    }
-    return Dialog(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 900, maxHeight: 850),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              title: const Text('Report Card Preview'),
-              subtitle: const Text(
-                'Record preview • No PDF is generated until Download Report Card'),
-              trailing: IconButton(
-                tooltip: 'Close preview',
-                icon: const Icon(Icons.close),
-                onPressed: _busy ? null : () => Navigator.pop(context),
-              ),
-            ),
-            const Divider(height: 1),
-            Flexible(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(16),
-                child: Center(
-                  child: RepaintBoundary(
-                    key: _paperKey,
-                    child: _ReportCardPaper(record: widget.record),
-                  ),
-                ),
-              ),
-            ),
-            const Divider(height: 1),
-            Padding(
-              padding: const EdgeInsets.all(14),
-              child: Wrap(
-                alignment: WrapAlignment.end,
-                spacing: 10,
-                runSpacing: 10,
-                children: [
-                  OutlinedButton.icon(
-                    onPressed: _busy ? null : _print,
-                    icon: const Icon(Icons.print),
-                    label: const Text('Print Report Card'),
-                  ),
-                  FilledButton.icon(
-                    onPressed: _busy ? null : _download,
-                    icon: const Icon(Icons.download),
-                    label: const Text('Download Report Card'),
-                  ),
-                  if (_busy) const SizedBox(
-                    height: 24, width: 24,
-                    child: CircularProgressIndicator(strokeWidth: 2)),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => Stack(
+    fit: StackFit.expand,
+    clipBehavior: Clip.none,
+    children: [
+      // Paint the record artwork behind the one visible print dialog, with no
+      // hit testing or semantics. Opacity must be nonzero for toImage().
+      if (_capturing) Positioned.fill(child: IgnorePointer(child: ExcludeSemantics(
+        child: Opacity(opacity: 0.01, child: OverflowBox(
+          alignment: Alignment.center,
+          minWidth: 740, maxWidth: 740, minHeight: 0, maxHeight: double.infinity,
+          child: RepaintBoundary(key: _paperKey,
+            child: _ReportCardPaper(record: widget.record, visibleMarks: _pages[_page],
+              page: _page + 1, pageCount: _pages.length)),
+        )),
+      ))),
+      WindowsReceiptPrintDialog(receipt: _receipt.future,
+        title: 'Report card', subtitle: 'Print preview', isCurrent: () => mounted && _sameSchool),
+    ],
+  );
 }
 
 class _ReportCardPaper extends StatelessWidget {
-  const _ReportCardPaper({required this.record});
+  const _ReportCardPaper({required this.record, required this.visibleMarks,
+    required this.page, required this.pageCount});
   final Map<String, dynamic> record;
+  final Map<String, dynamic> visibleMarks;
+  final int page, pageCount;
 
   String value(String key, [String fallback = '—']) =>
       (record[key]?.toString().trim().isNotEmpty ?? false)
@@ -242,6 +178,7 @@ class _ReportCardPaper extends StatelessWidget {
     );
     return Container(
       width: 740,
+      constraints: const BoxConstraints(minHeight: 1046),
       padding: const EdgeInsets.all(28),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -250,6 +187,7 @@ class _ReportCardPaper extends StatelessWidget {
       child: DefaultTextStyle(
         style: const TextStyle(color: Color(0xFF232323), fontSize: 14),
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Container(
@@ -300,7 +238,7 @@ class _ReportCardPaper extends StatelessWidget {
                       ),
                   ],
                 ),
-                for (final entry in marks.entries)
+                for (final entry in visibleMarks.entries)
                   TableRow(children: [
                     for (final value in [
                       entry.key,
@@ -343,7 +281,10 @@ class _ReportCardPaper extends StatelessWidget {
                 Text('Parent / Guardian'),
               ],
             ),
-
+            if (pageCount > 1) ...[
+              const SizedBox(height: 16),
+              Text('Page $page of $pageCount', textAlign: TextAlign.right),
+            ],
           ],
         ),
       ),
