@@ -132,6 +132,15 @@ void main() {
       'principalSignatureUrl': 'data:image/png;base64,%%%',
     });
     expect(card!.images, isEmpty);
+    const pixel = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGMwaDgAAAJUAXHIMWMAAAAAAElFTkSuQmCC';
+    await db.collection('school_config').doc('school_profile_cache').set({
+      'schoolId': school, 'schoolName': 'Saved School',
+      'logoUrl': 'data:image/png;base64,$pixel',
+    });
+    final reopened = await WindowsDocumentTemplates.nativePersonCard(
+      'studentId', {'schoolId': school, 'name': 'Synthetic'});
+    expect(reopened!.images['logo'], orderedEquals(base64Decode(pixel)));
+    expect(card.images, isEmpty); // Previously displayed snapshot remains exact.
   });
 
   test('unused seal never blocks a decorative student preview', () async {

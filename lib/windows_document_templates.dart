@@ -1082,13 +1082,29 @@ class WindowsDocumentTemplates {
       }
     }
     if (kind == 'payslip') return renderWindowsPayslip({...data, ...{'netPaise':2850000,'paidPaise':2000000,'basicPaise':2500000,'allowancePaise':400000,'deductionPaise':50000,'role':'Teacher','month':'2026-10','status':'Part paid'}},schoolName:branding['schoolName']?.toString()??'');
+    final school = FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'];
+    if (personKind(kind) && profile['schoolId'] != null &&
+        profile['schoolId'] != school) {
+      throw StateError('Foreign school branding cannot be used.');
+    }
+    final legacyTeacher = kind == 'teacherId' && index >= 0 &&
+        index < windowsReferenceDocumentNames['teacherId']!.length;
+    final brandingSources = [profile['logoUrl'], profile['principalSignatureUrl'],
+      legacyTeacher ? null : profile['sealUrl']];
     final images = await Future.wait<Uint8List?>([
-      _image(profile['logoUrl']),
-      _image(profile['principalSignatureUrl']),
-      _image(profile['sealUrl']),
+      for (final source in brandingSources) _image(source),
     ]);
-    if (FirebaseFirestore.instance.activeProfileId != origin)
+    if (FirebaseFirestore.instance.activeProfileId != origin ||
+        FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] != school)
       throw StateError('School changed during template preview.');
+    if (personKind(kind)) {
+      for (var i = 0; i < brandingSources.length; i++) {
+        if ((brandingSources[i]?.toString().trim() ?? '').isNotEmpty &&
+            (images[i] == null || images[i]!.isEmpty)) {
+          throw StateError('Configured school branding is unavailable. Retry preview.');
+        }
+      }
+    }
     final legacyCount = kind == 'studentId'
         ? windowsStudentIdNames.length
         : kind == 'teacherId'
