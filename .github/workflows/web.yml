@@ -1,3 +1,4 @@
+# User-authorized hosting-only publication of PR #433 Global Features and School Features UI.
 # Frontend-only rollout for PR #196. [hosting-only] deliberately skips Firestore rules publication.
 # Midnight Glass website preview now uses real Windows screenshots, not synthetic empty cards.
 name: Deploy Vidya Saarthi to Firebase Hosting
