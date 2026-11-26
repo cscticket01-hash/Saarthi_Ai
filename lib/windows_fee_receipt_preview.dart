@@ -72,7 +72,13 @@ class WindowsFeeReceiptPreview {
       if (!current()) throw StateError('School changed. Reopen receipt history.');
       return result;
     }
-    var receipt = prepare();
+    Future<Uint8List> start() {
+      final pending = prepare();
+      // A failed source can finish before the route's first frame.
+      pending.then<void>((_) {}, onError: (Object _, StackTrace __) {});
+      return pending;
+    }
+    var receipt = start();
     return showDialog<void>(context: context,
       builder: (_) => StatefulBuilder(builder: (context, setDialogState) =>
         WindowsReceiptPrintDialog(
@@ -82,7 +88,7 @@ class WindowsFeeReceiptPreview {
           isCurrent: current,
           onRetryDocument: () {
             if (!current()) return;
-            final next = prepare();
+            final next = start();
             setDialogState(() { receipt = next; });
           },
         ),
