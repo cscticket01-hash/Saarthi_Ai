@@ -11,10 +11,10 @@ Fees Collection continues to use the existing Windows screen, local student stre
 
 ## Receipt preview and user actions
 
-- **Preview Receipt** reads the saved payment fields and displays the receipt record only. Preview does not render, download, or fetch PDF bytes.
-- **Print Receipt** is the explicit action that prepares or retrieves the receipt bytes and opens the existing Windows print dialog.
-- **Download PDF** is the explicit action that prepares or retrieves the receipt bytes and saves the PDF locally.
-- The new payment stores the selected receipt template identifier, not generated PDF bytes. Existing historical PDF-backed receipts remain supported; their bytes are fetched only after Print or Download is pressed.
+- **Preview Receipt** in Fees Collection and **Receipt** in Transaction History open the shared Windows print preview directly. No intermediate record popup.
+- For record-only payments, the preview prepares in-memory PDF bytes from the current school-selected receipt template. When unset, the existing white reference receipt is used; a missing selected custom template is an error, not a silent replacement.
+- Historical PDF-backed receipts use the retained original PDF bytes. Source files and payment snapshots are never rewritten.
+- The common print preview defaults to A4 and shares its selected layout between printing and the Save as PDF destination. Payment Save still never generates a PDF, creates a document queue or downloads a receipt.
 
 ## Sync and financial safety
 
