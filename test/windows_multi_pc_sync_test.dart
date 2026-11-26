@@ -14,6 +14,7 @@ import '../lib/windows_runtime_flags.dart';
 import '../lib/windows_sync_engine.dart';
 import '../lib/windows_sync_dependencies.dart';
 import '../lib/windows_sync_projection.dart';
+import '../lib/windows_template_cloud_store.dart';
 
 const school = 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
@@ -371,6 +372,70 @@ void main() {
       }
     });
   }
+
+  test('five independent SQLite PCs synchronize template selection, archive, deletion and restore', () async {
+    rig.fieldPatchMode = true;
+    rig.measurements['environment'] = 'synthetic-five-SQLite-PCs-and-Apps-Script-VM';
+    rig.measurements['scenario'] = 'template-catalog-lifecycle';
+    final watch = Stopwatch()..start();
+    final assets = <String,dynamic>{
+      for(var i=1;i<=5;i++) 'v$i': {
+        'version':1,'approved':true,'schoolId':school,'kind':'receipt',
+        'templateId':'v$i','sourceHash':'source-$i','contentHash':'hash-$i',
+      },
+    };
+    final settings = <String,dynamic>{
+      'schoolId':school,'receipt':'imported:v1',
+      'templateAssets':{'receipt':assets},
+    };
+    final ref = () => rig.db.collection('school_settings').doc('document_templates');
+    Future<Map<String,dynamic>> read() async => (await ref().get()).data()!;
+    Future<void> verifyAll(String selection,Set<String> visible) async {
+      for(var pc=1;pc<=5;pc++){
+        await rig.open('pc$pc');
+        await rig.pull({'school_settings'});
+        final current=await read();
+        expect(current['receipt'],selection);
+        expect(WindowsTemplateCloudStore.availableSchoolTemplates(current,'receipt',school)
+          .map((asset)=>asset['templateId']).toSet(),visible);
+        expect(await rig.queue(),isEmpty,reason:'Receiving templates must not create duplicate uploads.');
+      }
+    }
+    await ref().set(settings);
+    await rig.flush();
+    await verifyAll('imported:v1',{'v1','v2','v3','v4','v5'});
+    // Three PCs make independent offline archive edits; each retains its
+    // original operation ID across an actual SQLite reopen.
+    final operations=<int,String>{};
+    for(var pc=2;pc<=4;pc++){
+      await rig.open('pc$pc');
+      final patch=WindowsTemplateCloudStore.archivePatch(await read(),'receipt','v$pc',school,archive:true);
+      await ref().update(patch);
+      operations[pc]=(await rig.queue()).single.data()['operationId'] as String;
+    }
+    for(var pc=4;pc>=2;pc--){
+      await rig.open('pc$pc');
+      expect((await rig.queue()).single.data()['operationId'],operations[pc]);
+      await rig.flush();
+      expect(await rig.queue(),isEmpty);
+    }
+    await verifyAll('imported:v1',{'v1','v5'});
+    await rig.open('pc5');
+    await ref().update(WindowsTemplateCloudStore.deletionPatch(await read(),'receipt','v1',school));
+    await rig.flush();
+    await verifyAll('plain',{'v5'});
+    await rig.open('pc3');
+    await ref().update(WindowsTemplateCloudStore.archivePatch(await read(),'receipt','v3',school,archive:false));
+    await rig.flush();
+    await ref().update({'receipt':'imported:v3'});
+    await rig.flush();
+    await verifyAll('imported:v3',{'v3','v5'});
+    rig.measurements['clients']=5;
+    rig.measurements['elapsedMs']=watch.elapsedMilliseconds;
+    rig.measurements['templateLifecycleVerified']=true;
+    rig.measurements['physicalDevicesVerified']=false;
+    rig.measurements['liveDriveVerified']=false;
+  });
 
   test('dependent work survives SQLite restart without requiring a full idle scan', () async {
     await WindowsSyncDependencies.retain(school, 'notices', 'N1', 'notice-1');

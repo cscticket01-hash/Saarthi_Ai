@@ -68,6 +68,25 @@ void main() {
     expect(downloads, 0);
   });
 
+  testWidgets('production print callback receives the selected side without screenshot capture', (tester) async {
+    final sides=<bool>[];
+    await tester.pumpWidget(MaterialApp(home:NativeIdCardPreview(template:template,
+      data:const {'name':'Synthetic person','backText':'Back details'},
+      onPrintDocument:(frontOnly) async { sides.add(frontOnly); })));
+    await tester.tap(find.text('Front only'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Print'));
+    await tester.tap(find.text('Print'));
+    await tester.pumpAndSettle();
+    expect(sides,[true]);
+    await tester.ensureVisible(find.text('Front + back'));
+    await tester.tap(find.text('Front + back'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Print'));
+    await tester.tap(find.text('Print'));
+    await tester.pumpAndSettle();
+    expect(sides,[true,false]);
+  });
   testWidgets('a front-only manifest renders without a back-side selector', (tester) async {
     final frontOnly = IdCardManifest.fromJson({
       'id': 'test-front-only', 'version': 1, 'canvasWidth': 100, 'canvasHeight': 60,

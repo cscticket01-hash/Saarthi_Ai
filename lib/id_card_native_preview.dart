@@ -14,13 +14,14 @@ class NativeIdCardPreview extends StatefulWidget {
   const NativeIdCardPreview({
     super.key, required this.template, required this.data,
     this.images = const {}, this.backgrounds = const {}, this.qr = '',
-    this.onDownload, this.onPrint,
+    this.onDownload, this.onPrint, this.onPrintDocument,
   });
   final IdCardManifest template;
   final Map<String, dynamic> data;
   final Map<String, Uint8List> images, backgrounds;
   final String qr;
   final Future<void> Function()? onDownload;
+  final Future<void> Function(bool frontOnly)? onPrintDocument;
   final Future<void> Function(
     List<({Uint8List png, int width, int height})> pages,
   )? onPrint;
@@ -101,6 +102,10 @@ class _NativeIdCardPreviewState extends State<NativeIdCardPreview> {
 
   Future<void> printCards(String qr) async {
     final template = widget.template;
+    if (widget.onPrintDocument != null) {
+      await widget.onPrintDocument!(!both || !template.hasBack);
+      return;
+    }
     final ratio = template.printWidth * 300 / 25.4 / template.width;
     final sides = both && template.hasBack ? const ['front', 'back'] : const ['front'];
     final pages = <({Uint8List png, int width, int height})>[];
@@ -149,7 +154,7 @@ class _NativeIdCardPreviewState extends State<NativeIdCardPreview> {
         const SizedBox(height: 12),
         const Text('Native visual preview. PDF export uses the verified print renderer.'),
         if (error != null) Text(error!),
-        if (widget.onPrint != null)
+        if (widget.onPrint != null || widget.onPrintDocument != null)
           OutlinedButton.icon(
             onPressed: busy || missing.isNotEmpty ? null :
               () => runAction(() => printCards(qr), 'Print failed'),

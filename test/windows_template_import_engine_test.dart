@@ -61,6 +61,53 @@ void main() {
       isNot(identity));
   });
 
+  test('multi-page source import maps all rows and verifies version 2 artwork',() async {
+    final pdf=pw.Document();
+    for(var i=0;i<2;i++)pdf.addPage(pw.Page(build:(_)=>pw.Text('Synthetic template page')));
+    final original=await pdf.save();
+    final pages=await SchoolTemplateImportEngine.importPages(
+      kind:SchoolTemplateKind.receipt,schoolId:school,filename:'two.pdf',
+      bytes:original,pdfPagesRasterizer:(_) async=>[png,png]);
+    expect(pages.length,2);
+    await expectLater(SchoolTemplateImportEngine.importPages(kind:SchoolTemplateKind.receipt,
+      schoolId:school,filename:r'folder\two.pdf',bytes:original,pdfPagesRasterizer:(_) async=>[png]),throwsFormatException);
+    final fields=[
+      const SchoolTemplateField(key:'receiptNo',x:.1,y:.08,width:.2),
+      const SchoolTemplateField(key:'studentName',x:.1,y:.16,width:.3),
+      const SchoolTemplateField(key:'totalAmount',x:.6,y:.85,width:.2),
+      const SchoolTemplateField(key:'feeName0',x:.1,y:.4,width:.3),
+      const SchoolTemplateField(key:'feeAmount0',x:.6,y:.4,width:.2),
+    ];
+    final draft=SchoolTemplateImportEngine.joinVerifiedPages(
+      pages.map((page)=>page.copyWith(fields:fields)).toList());
+    final record=<String,dynamic>{'receiptNo':'TEST-1','studentName':'Example',
+      'feeItems':{'First':100,'Second':200,'Third':300},'totalAmount':600};
+    expect(SchoolTemplateImportEngine.valueFor('feeName0',
+      SchoolTemplateImportEngine.recordForPage(draft,record,1)),'Second');
+    expect(SchoolTemplateImportEngine.continuationRows(draft,record).single.key,'Third');
+    final artwork=SchoolTemplateImportEngine.packedArtwork(draft);
+    final dims=SchoolTemplateImportEngine.packedDimensions(draft);
+    final hash=sha256.convert(artwork).toString();
+    final manifest=<String,dynamic>{'version':2,'approved':true,'schoolId':school,
+      'kind':'receipt','filename':'two.pdf','sourceHash':draft.sourceHash,
+      'contentHash':hash,'width':dims.width,'height':dims.height,
+      'engine':'TemplateForge-3','pages':SchoolTemplateImportEngine.pageMetadata(draft),
+      'templateId':SchoolTemplateImportEngine.bundleIdentity(draft,hash,'TemplateForge-3')};
+    final restored=SchoolTemplateImportEngine.fromPublishedManifest(kind:SchoolTemplateKind.receipt,
+      schoolId:school,manifest:manifest,png:artwork);
+    expect(restored.pageDrafts.length,2);
+    expect(()=>SchoolTemplateImportEngine.joinVerifiedPages([draft,pages.last]),throwsFormatException);
+    final output=await SchoolTemplateImportEngine.previewPdf(restored,record);
+    expect(RegExp(r'/Type\s*/Page\b').allMatches(latin1.decode(output)).length,3);
+    expect(()=>SchoolTemplateImportEngine.fromPublishedManifest(kind:SchoolTemplateKind.receipt,
+      schoolId:school,manifest:{...manifest,'templateId':'wrong'},png:artwork),throwsFormatException);
+    expect(()=>SchoolTemplateImportEngine.joinVerifiedPages([pages.first.copyWith(fields:fields),pages.last]),
+      throwsFormatException);
+    await expectLater(SchoolTemplateImportEngine.importPages(kind:SchoolTemplateKind.receipt,
+      schoolId:school,filename:'five.pdf',bytes:original,
+      pdfPagesRasterizer:(_) async=>List.filled(5,png)),throwsFormatException);
+  });
+
   test('page size labels follow physical stock and orientation',(){
     expect(SchoolTemplateImportEngine.pageSizeLabel(2100,2970),
       'A4 • Portrait');
@@ -674,6 +721,12 @@ void main() {
       'feeItems':{for(var i=0;i<250;i++) 'Fee $i':1},
       'totalAmount':250};
     expect(()=>SchoolTemplateImportEngine.validatePreviewRecord(draft,tooMany),
+      throwsFormatException);
+    final partial={'receiptNo':'VS-PART','studentName':'Mira',
+      'feeItems':{'Tuition':100,'Exam':50},'expectedAmount':150,
+      'installmentAmount':50,'totalPaid':100,'balance':50};
+    expect(()=>SchoolTemplateImportEngine.validatePreviewRecord(draft,partial),returnsNormally);
+    expect(()=>SchoolTemplateImportEngine.validatePreviewRecord(draft,{...partial,'balance':40}),
       throwsFormatException);
     final badAmount={'receiptNo':'VS-BAD','studentName':'Mira',
       'feeItems':{'Tuition':100,'Exam':-10},'totalAmount':90};

@@ -14,6 +14,7 @@ class WindowsExpenseReceiptPreview {
   static Future<Uint8List> bytes(Map<String, dynamic> expense, {
     String schoolName = 'SCHOOL EXPENSE',
     String schoolAddress = '',
+    bool printOnly=false,
   }) async {
     final amount = expense['amount'] is num
         ? (expense['amount'] as num).toDouble()
@@ -63,7 +64,8 @@ class WindowsExpenseReceiptPreview {
         pw.SizedBox(height: 28),
         pw.Text('This receipt reflects a saved school expense record.'),
       ]));
-    return SchoolMediaBudgets.verifyGeneratedPdf('expenseReceipt', await pdf.save());
+    final output=await pdf.save();
+    return printOnly?SchoolMediaBudgets.verifyPrintPdf(output):SchoolMediaBudgets.verifyGeneratedPdf('expenseReceipt',output);
   }
 
   static Future<void> open(BuildContext context, Map<String, dynamic> expense) {
@@ -85,15 +87,13 @@ class WindowsExpenseReceiptPreview {
       return bytes(original,
         schoolName: (details['schoolName'] ?? 'SCHOOL EXPENSE').toString(),
         schoolAddress: (details['address'] ?? details['schoolAddress'] ?? '').toString(),
+        printOnly:true,
       );
     }
-    return showDialog<void>(context: context,
-      builder: (_) => WindowsReceiptPrintDialog(
-        receipt: receipt(),
-        title: 'Expense Receipt ${original['expenseId'] ?? ''}',
-        subtitle: '${original['title'] ?? 'School Expense'} • ${original['dateText'] ?? ''}',
-        isCurrent: current,
-      ),
+    return WindowsReceiptPrintDialog.openPrepared(context,prepare:receipt,
+      title: 'Expense Receipt ${original['expenseId'] ?? ''}',
+      subtitle: '${original['title'] ?? 'School Expense'} • ${original['dateText'] ?? ''}',
+      isCurrent: current,
     );
   }
 }

@@ -5,15 +5,16 @@ import 'package:flutter/material.dart';
 import 'windows_document_templates.dart';
 import 'windows_local_firestore.dart';
 import 'windows_template_import_engine.dart';
-import 'windows_template_forge_ocr.dart';
-import 'windows_template_forge_auto.dart';
-import 'windows_template_forge_visual_slots.dart';
+import 'windows_template_office_layout.dart';
+import 'windows_template_office_converter.dart';
+import 'fitted_document_preview.dart';
 import 'windows_template_cloud_store.dart';
+import 'windows_template_feature_access.dart';
 
-/// Zero-edit TemplateForge upload and preview for the three supported tabs.
+/// Structured, Office-independent TemplateForge upload for the three supported tabs.
 /// Approved pages are hash-verified in the school's Drive and listed as selectable versions.
 class SchoolTemplateImportEditor {
-  /// One-click conversion: offline OCR, strict record preflight, verified Drive
+  /// Structured import, strict record preflight, explicit approval, verified Drive
   /// publication and a real print preview. The school explicitly selects the version.
   static Future<void> pickAutomatic(
     BuildContext context,SchoolTemplateKind kind,Map<String,dynamic> example,
@@ -34,8 +35,9 @@ class SchoolTemplateImportEditor {
     void stage(String message){progress.value=message;}
     try {
       SchoolTemplateImportEngine.verifySchool(school);
-      const types=XTypeGroup(label:'A4 / Legal PDF, image, Word or Excel',
-        extensions:['pdf','png','jpg','jpeg','doc','docx','xls','xlsx']);
+      await WindowsTemplateFeatureAccess.requireUpload();
+      if(!sameSchool()||!context.mounted)return;
+      const types=XTypeGroup(label:'Word or Excel template',extensions:['docx','xlsx']);
       final file=await openFile(acceptedTypeGroups:[types]);
       if(file==null||!context.mounted)return;
       if(!sameSchool())throw StateError('School changed.');
@@ -54,77 +56,14 @@ class SchoolTemplateImportEditor {
       unawaited(progressNavigator!.push(progressRoute!));
       // Paint feedback before starting raster analysis on the UI isolate.
       await WidgetsBinding.instance.endOfFrame;
-      final raw=await file.readAsBytes();
-      stage('Converting document to a printable page… Word/Excel requires installed Microsoft Office or LibreOffice.');
-      final draft=await SchoolTemplateImportEngine.importBytes(
-        kind:kind,schoolId:school,filename:file.name,
-        bytes:Uint8List.fromList(raw));
-      if(!sameSchool())throw StateError('School changed while uploading.');
-      final paperLabel=SchoolTemplateImportEngine.pageSizeLabel(draft.width,draft.height);
-      stage('Checking '+paperLabel+' page orientation…');
-      final oriented=await TemplateForgeOfflineOcr.normalizeOrientation(draft);
-      if(!sameSchool())throw StateError('School changed during orientation detection.');
-      stage('Recognizing text and template fields…');
-      var tsv=await TemplateForgeOfflineOcr.recognize(oriented);
-      if(!sameSchool())throw StateError('School changed during recognition.');
-      var textRecognition=TemplateForgeAutoMapper.detect(oriented,tsv);
-      // Retry faint, low-contrast OCR once, on a TEMPORARY enhanced raster.
-      // A source warning for an old photo, duplicated field, wrong document
-      // kind or unsafe overlapping boxes must never be erased by this retry.
-      final unsafe=textRecognition.warnings.any((w)=>
-        w.contains('Image/QR/signature') ||
-        w.contains('ambiguous') || w.contains('Overlapping') ||
-        w.contains('appears to be'));
-      if(!textRecognition.safeToActivate && !unsafe){
-        stage('Checking faint text with enhanced recognition…');
-        final enhanced=await TemplateForgeOfflineOcr.recognize(
-          oriented,enhanced:true);
-        if(!sameSchool())throw StateError('School changed during OCR retry.');
-        final second=TemplateForgeAutoMapper.detect(oriented,enhanced);
-        final consistent=textRecognition.draft.fields.every((first){
-          final matches=second.draft.fields.where((f)=>f.key==first.key);
-          return matches.length==1 &&
-            (matches.single.x-first.x).abs()<=.028 &&
-            (matches.single.y-first.y).abs()<=.028;
-        });
-        if(consistent && second.missing.length<textRecognition.missing.length &&
-            second.warnings.where((w)=>w.contains('ambiguous') ||
-              w.contains('Overlapping')||w.contains('Image/QR/signature'))
-              .isEmpty){
-          tsv=enhanced;
-          textRecognition=second;
-        }
-      }
-      stage('Checking photo, signature and QR positions…');
-      await Future<void>.delayed(Duration.zero);
-      final labels=TemplateForgeVisualSlots.labelCounts(
-        tsv,oriented.width,oriented.height);
-      final slots=labels.isEmpty?const <ForgeVisualSlot>[]:
-        TemplateForgeVisualSlots.detect(oriented,tsv);
-      final allVerified=labels.isNotEmpty &&
-        labels.values.every((count)=>count==1) &&
-        slots.length==labels.length;
-      final warnings=[...textRecognition.warnings];
-      if(TemplateForgeVisualSlots.hasUnverifiedColorPhoto(
-        oriented,allVerified?slots:const <ForgeVisualSlot>[])){
-        warnings.add('Unlabelled colour image may contain an old student '
-          'photo. Upload a blank form or a source with a verifiable photo slot.');
-      }
-      if(allVerified){
-        warnings.remove('Image/QR/signature slot needs verified automatic replacement.');
-      }
-      final result=ForgeRecognition(
-        textRecognition.draft.copyWith(
-          visualSlots:allVerified?slots:const <ForgeVisualSlot>[]),
-        textRecognition.detected,textRecognition.missing,warnings);
-      if(!context.mounted)return;
-      if(!result.safeToActivate){
-        final missing=result.missing.isEmpty?'none':result.missing.join(', ');
-        final warnings=result.warnings.isEmpty?'none':result.warnings.join('; ');
-        throw StateError('This scan is not safe to publish. Missing fields: '
-          +missing+'. Recognition warnings: '+warnings+
-          '. Use a clearer A4 or Legal source; existing school templates remain unchanged.');
-      }
+      if(!SchoolTemplateOfficeConverter.supportsNative(file.name))
+        throw const FormatException('Only Word DOCX and Excel XLSX templates are supported.');
+      if(await file.length()>SchoolTemplateOfficeConverter.maxSourceBytes)
+        throw const FormatException('Office template exceeds 16 MB.');
+      stage('Reading and validating Word / Excel layout…');
+      final approved=await SchoolTemplateOfficeLayout.importSource(
+        kind:kind,schoolId:school,filename:file.name,bytes:Uint8List.fromList(await file.readAsBytes()));
+      if(!sameSchool())throw StateError('School changed during import.');
       final profile=(await db.collection('school_config')
         .doc('school_profile_cache').get()).data()??{};
       if(!sameSchool())throw StateError('School changed before preview.');
@@ -137,18 +76,33 @@ class SchoolTemplateImportEditor {
         'schoolAddress':profile['address']??example['schoolAddress']??'',
         'schoolEmail':profile['schoolEmail']??profile['email']??example['schoolEmail']??'',
       };
-      SchoolTemplateImportEngine.validatePreviewRecord(result.draft,record);
+      SchoolTemplateImportEngine.validatePreviewRecord(approved,record);
       stage('Loading verified school images and preparing preview…');
       final imageAssets=await WindowsTemplateCloudStore.previewVisualAssets(
-        result.draft,record);
+        approved,record);
       if(!sameSchool())throw StateError('School changed during image preview.');
       // Render the complete source+live-record preview before any Drive write.
       final output=await SchoolTemplateImportEngine.previewPdf(
-        result.draft,record,visualAssets:imageAssets);
+        approved,record,visualAssets:imageAssets);
       if(!sameSchool())throw StateError('School changed before publication.');
+      closeProgress();
+      if(!context.mounted)return;
+      final confirmed=await showDialog<bool>(context:context,barrierDismissible:false,
+        builder:(ctx)=>Dialog(child:SizedBox(width:900,height:680,child:Column(children:[
+          const ListTile(title:Text('Review generated template'),subtitle:Text('Check the design and data fields. Confirm that no old student or staff data remains.')),
+          Expanded(child:FittedDocumentPreview(bytes:output)),
+          Padding(padding:const EdgeInsets.all(12),child:Row(mainAxisAlignment:MainAxisAlignment.end,children:[
+            TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),
+            const SizedBox(width:12),FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Approve and save')),
+          ])),
+        ]))));
+      if(confirmed!=true || !context.mounted)return;
+      if(!sameSchool())throw StateError('School changed before approval.');
       // Keep one immutable, verified local draft even if the school Drive
       // becomes unavailable after recognition; repeat uploads are idempotent.
-      await SchoolTemplateImportEngine.saveLocalDraft(result.draft,
+      await WindowsTemplateFeatureAccess.requireUpload();
+      if(!sameSchool()||!context.mounted)return;
+      await SchoolTemplateImportEngine.markPublicationPending(approved,
         currentSchoolId:()=>db.activeProfileIdentity['schoolSyncId']
           ?.toString()??'');
       if(!sameSchool())throw StateError('School changed before publication.');
@@ -156,12 +110,16 @@ class SchoolTemplateImportEditor {
       // Reuse the already validated PDF instead of downloading all assets
       // and rendering the identical preview a second time.
       stage('Saving to school Drive and verifying upload…');
-      await WindowsDocumentTemplates.publishImportedTemplate(result.draft);
+      progressRoute=DialogRoute<void>(context:context,barrierDismissible:false,
+        builder:(_)=>const PopScope(canPop:false,child:AlertDialog(
+          title:Text('Saving verified template'),content:Column(mainAxisSize:MainAxisSize.min,
+            children:[LinearProgressIndicator(),SizedBox(height:12),Text('Local draft saved. Verifying school Drive publication…')]))));
+      unawaited(progressNavigator!.push(progressRoute!));
+      await WindowsTemplateCloudStore.publishApprovedLocalDraft(approved);
       if(!sameSchool()||!context.mounted)return;
       closeProgress();
       await WindowsDocumentTemplates.preview(context,output,
-        title:kind.title+' • '+SchoolTemplateImportEngine.pageSizeLabel(
-          result.draft.width,result.draft.height)+' • School template preview',
+        title:kind.title+' • '+approved.pageDrafts.length.toString()+' source page(s) • School template preview',
         notice:'Use matching A4 or Legal paper at Actual Size (100%) when printing. Drive image read-back and content hash verified. This template is saved to this PC’s school catalog; other PCs receive its manifest through school sync. Select “Use for school” after preview to apply it to future prints.');
     } catch(error) {
       closeProgress();
@@ -170,7 +128,7 @@ class SchoolTemplateImportEditor {
           title:const Text('Template import did not finish'),
           content:SingleChildScrollView(child:SelectableText(
             'Stage: '+progress.value+'\n\n'+error.toString()+
-            '\n\nNo successful upload was confirmed. Existing templates remain available.')),
+            '\n\nNo successful publication was confirmed. Approved local drafts may be retried. Existing selected templates remain available.')),
           actions:[TextButton(onPressed:()=>Navigator.of(dialogContext).pop(),
             child:const Text('Close'))],
         ));
@@ -222,7 +180,7 @@ class SchoolTemplateImportEditor {
         db.activeProfileIdentity['schoolSyncId']!=school){
         throw StateError('School changed during draft preview.');
       }
-      final record={...schoolProfile,...example};
+      final record={...schoolProfile,...example,'schoolName':schoolProfile['schoolName']??schoolProfile['name']??example['schoolName']??''};
       final images=await WindowsTemplateCloudStore.previewVisualAssets(
         draft,record);
       final pdf=await SchoolTemplateImportEngine.previewPdf(
@@ -231,11 +189,28 @@ class SchoolTemplateImportEditor {
         db.activeProfileIdentity['schoolSyncId']!=school){
         throw StateError('School changed before draft preview.');
       }
-      if(context.mounted)await WindowsDocumentTemplates.preview(context,pdf,
+      if(!context.mounted)return;
+      await WindowsDocumentTemplates.preview(context,pdf,
         title:kind.title+' • '+SchoolTemplateImportEngine.pageSizeLabel(
           draft.width,draft.height)+' • Saved auto draft',
         notice:'A local draft, not an approved/published school template. '
           'Original school document selections remain in effect.');
+      if(!context.mounted||db.activeProfileId!=profile||db.activeProfileIdentity['schoolSyncId']!=school)return;
+      if(!SchoolTemplateOfficeConverter.supportsNative(draft.filename))return;
+      final retry=await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(
+        title:const Text('Publish approved local draft?'),
+        content:const Text('Confirm this is the correct blank school template. Existing selected layouts are retained.'),
+        actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),
+          FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Retry publication'))]));
+      if(retry!=true||!context.mounted)return;
+      if(db.activeProfileId!=profile||db.activeProfileIdentity['schoolSyncId']!=school)throw StateError('School changed.');
+      await WindowsTemplateFeatureAccess.requireUpload();
+      if(!context.mounted||db.activeProfileId!=profile||db.activeProfileIdentity['schoolSyncId']!=school)return;
+      await SchoolTemplateImportEngine.markPublicationPending(draft,
+        currentSchoolId:()=>db.activeProfileId==profile?db.activeProfileIdentity['schoolSyncId']?.toString()??'':'');
+      await WindowsTemplateCloudStore.publishApprovedLocalDraft(draft);
+      if(context.mounted&&db.activeProfileId==profile&&db.activeProfileIdentity['schoolSyncId']==school)
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Template publication verified. Choose Use for school to select it.')));
     }catch(e){
       if(context.mounted)ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content:Text('Draft preview unavailable: '+e.toString())));

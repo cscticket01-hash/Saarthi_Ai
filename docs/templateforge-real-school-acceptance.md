@@ -17,7 +17,8 @@ Minimum acceptance matrix (a few examples do not prove that *every* design works
 | Phone photo of angled white paper on dark table | Correct bounds when confidently detectable; otherwise safe rejection |
 | Dim/low-contrast paper | Only verified OCR geometry accepted, never fields guessed silently |
 | Mixed portrait, signature, school seal, logo, and QR placeholders | Current-person/current-school assets printed; missing or ambiguous slots reject |
-| Cluttered, borderless or multi-page source | Safe rejection when there is no proven geometry |
+| Two to four A4/Legal pages in a single PDF or converted Office file | Every page independently recognized; verify complete ordered artwork, row offsets, continuation and bundle hash; reject incomplete, oversized or ambiguous pages |
+| Cluttered, borderless or unsupported source | Safe rejection when there is no proven geometry |
 
 ## Physical A4 printer acceptance
 
@@ -56,7 +57,7 @@ Use a **TEST school**, no real students, and the school's own connected Drive. E
 
 ## Non-destructive template version retention
 
-- Instead of deleting historical templates after three uploads, the verified school manifest retains up to 32 immutable template versions. New uploads beyond that bound are rejected until a separate reviewed archiving process exists. Old selected versions and rollback copies remain in Drive.
+- The catalog supports up to 32 active and 64 retained versions per document kind, subject to the bounded synced metadata budget. Archive an inactive design to free active capacity; restore it explicitly. Old selected versions and rollback copies remain in Drive. No physical deletion or silent eviction.
 - The 1/2/5-device tests exercise the same manifest append helper as publication, including repeat upload and immutable-version protection. They remain synthetic: server-side atomic compare-and-swap and real concurrent online Drive publication still require live tests.
 - Visual-slot recognition now requires an enclosed border on all four sides. Open ornamental rectangles are rejected rather than treated as a safe old-photo replacement target.
 
@@ -85,3 +86,24 @@ The local `build/templateforge_private_corpus_audit.json` contains only source S
 
 - The existing local Windows `school_settings/document_templates` manifest now uses its existing serialized batch read-dependency check with up to three retries if the local snapshot changed before commit. This prevents a **same-PC** lost-update race without creating any duplicate sync engine. It is **not** a server-side compare-and-swap; two independent cloud PCs still need live concurrent/rollback acceptance.
 - The existing Windows receipt print dialog observes app resume and refreshes the installed printer list when users return from Windows Settings/Add Printer. All OS-installed printers with usable printer identities remain available and the system print chooser is retained.
+
+
+## Multi-page source acceptance (2026-11-26)
+
+The version-2 manifest is bounded to one to four independently verified A4/Legal pages, 12 MP combined canvas and 18 MiB artwork. Each source page must satisfy existing required-field and table-slot validation; arbitrary split/partially recognized forms are not supported. Verify no duplicated or missing fee/subject rows, exact order, paper dimensions, full hash and correct live image slots. Test corrupt and foreign manifests, one rejected page, fifth page, local draft restart, archive/restore and offline cached artwork. Before selecting a version-2 template, update **all** school PCs; older apps fail closed on unsupported manifests. This is not physical acceptance evidence. Keep the existing ID Designer/Bulk rollout gate and actual 1/2/5-PC, OCR and printer requirements. Do not use student-identifiable samples in public test evidence.
+
+
+## Native Office import rollout (pending acceptance)
+
+The new public upload accepts blank DOCX/XLSX only. It parses OpenXML locally and uses existing TemplateForge field validation, preview, draft storage, school Drive publication and common print rendering. No Microsoft Office / LibreOffice process or OCR language model is required on this new entry path. It is a bounded one-page A4/Legal adapter, not a complete Office renderer: explicit field tokens (for example `{{studentName}}`) or recognized labels with blank adjacent cells are required; simple blank fee/marks rows are supported. Complex styles, formulas, embedded images, merges, multiple sheets, legacy DOC/XLS and external relationships are unsupported. Bundled fonts substitute for source font families. Verify layout and privacy before approval. Do not delete the school's original source file. Approved local drafts can be retried explicitly. Existing historic templates and lower-level legacy converter remain readable. Actual five-PC binary delivery and physical print verification remain pending; no gate bypass.
+
+
+Follow-up: bounded horizontal DOCX/XLSX merges are accepted; vertical merges and formulas remain unsupported. New native forms allow only known static labels and verified dynamic fields rather than arbitrary literal personal data. Explicitly approved local drafts receive a durable publication marker. Opening Templates retries up to three marked drafts on managed storage, reusing the existing stable upload key and verified Drive readback. This does not establish Cloudflare-first custody of template artwork, which needs a dedicated verified storage handoff and cross-device binary acceptance; direct Drive remains manual retry. No unapproved draft is automatically published.
+
+
+## Paid TemplateForge / global upload maintenance
+
+Developer website Schools → School Features grants the school-wide add-on; default is off. Global Feature Control independently pauses new uploads for entitled schools (default uploads enabled). Both changes use authenticated developer endpoints with revision checks and audit records. School entitlement is separate from licence expiry, prices and billing. The managed broker checks the reserved `school_template_` artwork upload namespace for full and resumable uploads. Windows checks permission before import, approval, publication and custom rendering/selection. Global maintenance never denies existing paid template rendering, selection, reads, archive/restore or ordinary record sync. No assets are removed. Paid OFF retains saved custom layouts but locks new custom render/use; built-in and historical PDF paths remain available. Updated Windows clients refresh while the catalog is open (60 seconds), and a verified cached paid permission may be used offline for at most 24 hours, not beyond licence expiry. New publication requires online verification. A pending approved draft can resume after uploads reopen. Release requires coordinated backend, website and Windows deployment; older binaries cannot enforce the new local render gate. Test actual paid activation for existing schools before rollout. Reserved-name broker gating is not a full adversarial entitlement boundary: generic media and manifest-sync routes remain compatible and must be reviewed for noncanonical/modified clients before treating the add-on as tamper-proof. No payment gateway or pricing changes are included.
+
+
+Follow-up security hardening: generic single/batch `school_settings/document_templates` writes that carry asset metadata are checked against the authoritative catalog when the school add-on is disabled or global uploads are paused. Unchanged asset metadata can replay; a newly selected imported template during maintenance must already be an approved, nonarchived, nondeleted school version. Ordinary archive/restore flags, built-in selection, and unrelated records are unaffected. Existing CAS rules still own write concurrency. This is not proof that modified offline executables, pre-upgrade clients, backup/recycle restoration routes, direct owner-controlled storage or previously admitted uploads are tamper-proof. Actual provider acceptance and rollout gates remain unchanged.

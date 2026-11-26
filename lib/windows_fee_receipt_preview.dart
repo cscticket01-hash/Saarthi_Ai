@@ -5,13 +5,12 @@ import 'windows_receipt_print_dialog.dart';
 
 import 'windows_backend_bridge.dart';
 import 'windows_document_templates.dart';
-import 'windows_save_pdf.dart';
 import 'windows_local_firestore.dart';
 
 /// Receipts stay inside the application. Drive is read through the authenticated
 /// owner; no public URLs, browser navigation or new Google sign-in window.
 class WindowsFeeReceiptPreview {
-  static Future<Uint8List> bytes(Map<String, dynamic> payment) async {
+  static Future<Uint8List> bytes(Map<String, dynamic> payment,{bool printOnly=false}) async {
     final db = FirebaseFirestore.instance,
         origin = FirebaseFirestore.instance.activeProfileId;
     void scope() {
@@ -42,146 +41,40 @@ class WindowsFeeReceiptPreview {
       return result;
     }
     // Older payments store the complete receipt snapshot, without a document ID.
-    final result = await WindowsDocumentTemplates.selected('receipt', payment);
+    final result = await WindowsDocumentTemplates.selected('receipt', payment,printOnly:printOnly);
     scope();
     if (result == null) throw StateError('Receipt record cannot be rendered.');
     return result;
   }
 
-  /// The receipt PDF is read/generated ONLY after the user presses Print.
-  /// Opening a saved-record preview never invokes [bytes].
-  static Future<void> print(BuildContext context, Map<String, dynamic> payment) {
+  /// Both collection and transaction history open this one direct preview.
+  /// Preview bytes are temporary; Payment Save never calls this path.
+  static Future<void> print(BuildContext context, Map<String, dynamic> payment) =>
+      open(context, payment);
+
+  static Future<void> open(BuildContext context, Map<String, dynamic> payment) {
     final db = FirebaseFirestore.instance;
     final profile = db.activeProfileId;
     final school = db.activeProfileIdentity['schoolSyncId'];
     final saved = Map<String, dynamic>.from(payment);
     if (saved['schoolId'] != null && saved['schoolId'] != school) {
-      throw StateError('Another school receipt cannot be printed.');
-    }
-    return showDialog<void>(context: context,
-      builder: (_) => WindowsReceiptPrintDialog(
-        receipt: bytes(saved),
-        title: 'Receipt ${saved['receiptNo'] ?? ''}',
-        subtitle: '${saved['studentName'] ?? ''} • ${saved['month'] ?? ''}',
-        isCurrent: () => profile == db.activeProfileId &&
-            school == db.activeProfileIdentity['schoolSyncId'],
-      ));
-  }
-
-  /// All receipts preview their original saved records without rendering PDF.
-  /// Print and Download are explicit actions and never run on Payment Save.
-  static Future<void> open(BuildContext context, Map<String, dynamic> payment) {
-    final db = FirebaseFirestore.instance;
-    final origin = db.activeProfileId;
-    final school = db.activeProfileIdentity['schoolSyncId'];
-    final saved = Map<String, dynamic>.from(payment);
-    if (saved['schoolId'] != null && saved['schoolId'] != school) {
       throw StateError('Another school receipt cannot be displayed.');
     }
-    String field(String key) {
-      final value = saved[key]?.toString().trim() ?? '';
-      return value.isEmpty ? '—' : value;
+    bool current() => profile == db.activeProfileId &&
+        school == db.activeProfileIdentity['schoolSyncId'];
+    // Preserve saved historical PDF originals. Record-only payments render
+    // from the school's currently selected receipt template, not a stale
+    // template snapshot. Never mutate the payment or historical document.
+    Future<Uint8List> prepare() async {
+      if (!current()) throw StateError('School changed. Reopen receipt history.');
+      final source = Map<String, dynamic>.of(saved)..remove('receiptTemplateSelection');
+      final result = await bytes(source,printOnly:true);
+      if (!current()) throw StateError('School changed. Reopen receipt history.');
+      return result;
     }
-    Widget lineValue(String label, String value) => Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        SizedBox(width: 125, child: Text(label,
-          style: const TextStyle(fontWeight: FontWeight.bold))),
-        Expanded(child: Text(value)),
-      ]),
-    );
-    Widget line(String label, String key) => lineValue(label, field(key));
-    String money(dynamic value) {
-      final amount = value is num ? value.toDouble() :
-          double.tryParse(value?.toString() ?? '');
-      return amount != null && amount.isFinite
-          ? '₹${amount.toStringAsFixed(2)}' : '—';
-    }
-    final items = saved['feeItems'] is Map
-        ? Map<String, dynamic>.from(saved['feeItems'] as Map)
-        : <String, dynamic>{};
-    final safeNo = field('receiptNo').replaceAll(
-      RegExp(r'[^A-Za-z0-9._-]+'), '_');
-    return showDialog<void>(context: context, builder: (dialog) => AlertDialog(
-      title: Text('Fee Receipt ${field('receiptNo')}'),
-      content: SizedBox(width: 430, child: SingleChildScrollView(
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('Saved school record · No PDF generated on preview',
-            style: TextStyle(fontSize: 12)),
-          const Divider(),
-          line('Student', 'studentName'),
-          line('Student ID', 'studentId'),
-          line('Class', 'class'),
-          line('Roll', 'rollNo'),
-          line('Month', 'month'),
-          line('Receipt', 'receiptNo'),
-          line('Date', 'dateText'),
-          line('Time', 'timeText'),
-          if (items.isNotEmpty) ...[
-            const Padding(padding: EdgeInsets.only(bottom: 8),
-              child: Text('Fee breakdown',
-                style: TextStyle(fontWeight: FontWeight.bold))),
-            for (final item in items.entries)
-              lineValue(item.key, money(item.value)),
-          ],
-          lineValue('Total fee', money(saved['expectedAmount'])),
-          lineValue('Received now', money(saved['installmentAmount'])),
-          lineValue('Paid to date', money(saved['totalPaid'])),
-          lineValue('Balance due', money(saved['balance'])),
-          line('Status', 'status'),
-          line('Payment mode', 'paymentMode'),
-        ]),
-      )),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(dialog),
-          child: const Text('Close')),
-        TextButton.icon(
-          onPressed: () async {
-            if (db.activeProfileId != origin ||
-                db.activeProfileIdentity['schoolSyncId'] != school) {
-              Navigator.pop(dialog);
-              return;
-            }
-            Navigator.pop(dialog);
-            try {
-              if (!context.mounted) return;
-              await print(context, saved);
-            } catch (e) {
-              if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('Receipt print error: $e')));
-            }
-          },
-          icon: const Icon(Icons.print_outlined),
-          label: const Text('Print Receipt'),
-        ),
-        FilledButton.icon(
-          onPressed: () async {
-            if (db.activeProfileId != origin ||
-                db.activeProfileIdentity['schoolSyncId'] != school) {
-              Navigator.pop(dialog);
-              return;
-            }
-            Navigator.pop(dialog);
-            try {
-              // This user-triggered action is the ONLY new receipt PDF render.
-              final pdf = await bytes(saved);
-              if (db.activeProfileId != origin ||
-                  db.activeProfileIdentity['schoolSyncId'] != school) {
-                throw StateError('School changed during receipt download.');
-              }
-              await WindowsSavePdf.save(pdf,
-                'Fee_Receipt_${safeNo.isEmpty ? 'record' : safeNo}.pdf');
-            } catch (e) {
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Receipt download failed: $e')));
-              }
-            }
-          },
-          icon: const Icon(Icons.download_outlined),
-          label: const Text('Download PDF'),
-        ),
-      ],
-    ));
+    return WindowsReceiptPrintDialog.openPrepared(context,prepare:prepare,
+      title:'Receipt ${saved['receiptNo'] ?? ''}',
+      subtitle:'${saved['studentName'] ?? ''} • ${saved['month'] ?? ''}',
+      isCurrent:current);
   }
 }

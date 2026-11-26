@@ -1067,18 +1067,21 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
         await WindowsSavePdf.save(Uint8List.fromList(utf8.encode(content)), 'staff-salary-${StaffPayroll.monthKey(_month)}.csv', csv:true);
       } else {
         final r=rows.single;
-        final bytes=await WindowsDocumentTemplates.selected('payslip',{
-          ...r,'payslipRecordId':r['id'],'netPaise':StaffPayroll.total(r),'paidPaise':StaffPayroll.paid(r),
-        });
-        StaffPayroll._sameSchool(_profile);
-        if(bytes==null)throw StateError('Selected payslip template could not be rendered.');
-        if (mounted) await showDialog<void>(context:context,builder: (_) =>
-          WindowsReceiptPrintDialog(
-            receipt:Future.value(bytes),
-            title:'Payslip • ${rows.single['name']}',
-            subtitle:'${rows.single['month'] ?? ''} • Staff Salary',
-            isCurrent:()=>FirebaseFirestore.instance.activeProfileId==_profile,
-          ));
+        final school=FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'];
+        bool current()=>FirebaseFirestore.instance.activeProfileId==_profile &&
+          FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']==school;
+        Future<Uint8List> prepare() async {
+          StaffPayroll._sameSchool(_profile);
+          final bytes=await WindowsDocumentTemplates.selected('payslip',{
+            ...r,'payslipRecordId':r['id'],'netPaise':StaffPayroll.total(r),'paidPaise':StaffPayroll.paid(r),
+          },printOnly:true);
+          StaffPayroll._sameSchool(_profile);
+          if(bytes==null)throw StateError('Selected payslip template could not be rendered.');
+          return bytes;
+        }
+        if (mounted) await WindowsReceiptPrintDialog.openPrepared(context,
+          prepare:prepare,title:'Payslip • ${r['name']}',
+          subtitle:'${r['month'] ?? ''} • Staff Salary',isCurrent:current);
       }
     } catch(e) { if(mounted) setState(() => _error='$e'); }
     finally { if(mounted) setState(() => _working=false); }

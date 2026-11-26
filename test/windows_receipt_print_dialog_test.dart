@@ -10,6 +10,7 @@ import 'package:printing/printing.dart';
 import '../lib/windows_receipt_print_dialog.dart';
 import '../lib/windows_print_layout.dart';
 import '../lib/windows_printer_media.dart';
+import '../lib/windows_ui_localization.dart' show WindowsUiLanguage;
 
 // Synthetic OS raster boundary: physical geometry comes from raster dimensions;
 // preview pixels are tiny because this test verifies settings, not printer hardware.
@@ -54,6 +55,18 @@ void main() {
     expect(find.widgetWithText(FilledButton,'Save as PDF'),findsOneWidget);
     expect(find.widgetWithText(FilledButton,'Print'),findsNothing);
     expect(jobs,0);
+    final originalLanguage=WindowsUiLanguage.current;
+    try {
+      for(final language in ['hi','bn','as']) {
+        WindowsUiLanguage.changed.value=language;
+        await tester.pump();
+        expect(find.widgetWithText(FilledButton,'Save as PDF'),findsOneWidget);
+        expect(jobs,0);
+      }
+    } finally {
+      WindowsUiLanguage.changed.value=originalLanguage;
+      await tester.pump();
+    }
   });
   testWidgets('advanced settings are simplified and direct print uses driver defaults',(tester)async{
     await tester.binding.setSurfaceSize(const Size(1200,1000));

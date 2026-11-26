@@ -18,6 +18,7 @@ const {planStudentImport,canonicalHash}=require('./student-import-plan');
 const {createAttendanceQueue,firestoreAttendanceStore}=require('./attendance-queue');
 const {randomUUID,randomBytes,createHash,createHmac,timingSafeEqual,createCipheriv,createDecipheriv}=require('node:crypto');
 const {createSchoolDeltaSingleflight}=require('./school-delta-singleflight');
+const {isDeepStrictEqual}=require('node:util');
 const SCHOOL=/^vs-[a-f0-9]{32}$/;
 const COLLECTIONS=new Set(['students_directory','teachers_directory','attendance_logs','teacher_attendance','attendance_records','teacher_schedules','school_notices','school_calendar','exam_results','teacher_salary','school_config','school_settings','fee_settings','fee_ledger','fee_payments','school_expenses','student_scan_index','scanner_devices','documents','backups','exams','exam_center_results']);
 const hash=s=>createHash('sha256').update(s).digest('hex');
@@ -290,6 +291,75 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
  async function identity(req,expected){const u=await user(req),m=await db.doc('school_memberships/'+u.uid).get();if(!m.exists||m.data().managed!==true||m.data().active!==true||m.data().role!=='school_admin')fail(403,'Managed school login is inactive');const id=m.data().schoolId;if(!SCHOOL.test(id)||expected&&expected!==id)fail(403,'Another school is not accessible');const e=await db.doc('school_entitlements/'+id).get();if(!e.exists||e.data().active!==true||e.data().blocked===true)fail(403,'School is blocked or disabled');if(Number(e.data().sessionValidAfter||0)>Number(u.auth_time||0))fail(401,'Sign in again');const entitlement={...e.data()};
  if(entitlement.status!=='trial'&&entitlement.licenseHash){const licence=await db.doc('platform_license_status/'+entitlement.licenseHash).get();if(!licence.exists||licence.data().schoolId!==id||licence.data().revoked!==false){entitlement.expiresAt=0;}else{const end=licence.data().expiresAt;entitlement.expiresAt=typeof end?.toMillis==='function'?end.toMillis():Number(end||0);}}
  return {uid:u.uid,schoolId:id,entitlement,authenticatedAt:Number(u.auth_time)*1000};}
+ // Add-on policy is central and independent of the template catalog. Read
+ // global policy live, not via a cached school overview or an editable record.
+ const templateGlobalRef=db.doc('platform_feature_controls/templateforge');
+ const templateRevision=v=>Number.isSafeInteger(v)&&v>=0?v:0;
+ function templateGlobal(s){const v=s.data()||{};return {uploadEnabled:v.uploadEnabled!==false,revision:templateRevision(v.revision)};}
+ function templateSchool(e){return {enabled:e?.customTemplateForgeEnabled===true,revision:templateRevision(e?.customTemplateForgeRevision)};}
+ async function templatePolicy(m){
+  const global=templateGlobal(await templateGlobalRef.get()),school=templateSchool(m.entitlement);
+  const t=now();
+  return {success:true,schoolId:m.schoolId,uid:m.uid,customTemplates:school.enabled,
+   uploadEnabled:global.uploadEnabled,schoolRevision:school.revision,globalRevision:global.revision,
+   serverTime:t,expiresAt:Math.min(t+86400000,lease(m).expiresAt)};
+ }
+ async function requireTemplateUpload(m){
+  const policy=await templatePolicy(m);
+  if(!policy.customTemplates)fail(403,'Custom TemplateForge is not activated for this school','TEMPLATE_FEATURE_LOCKED');
+  if(!policy.uploadEnabled)fail(503,'TemplateForge uploads are under maintenance. Existing templates remain available.','TEMPLATE_UPLOAD_MAINTENANCE');
+  return policy;
+ }
+ // Canonical template artwork already uses this reserved upload namespace.
+ function isTemplateUpload(b){return typeof b.name==='string'&&/^school_template_/i.test(b.name);}
+ // Do not let a generic media filename and ordinary record write bypass
+ // the upload switch. Existing immutable assets may be replayed unchanged;
+ // selection of an existing layout remains independent of global maintenance.
+ // Use the authoritative record owner (Drive or Cloudflare live) and leave
+ // the existing record/field CAS checks in charge of concurrent writes.
+ async function guardTemplateManifest(m,op){
+  if(op.collection!=='school_settings'||op.id!=='document_templates'||
+     !['write','recover'].includes(op.operation))return;
+  const patch=op.data?._syncFieldPatch;
+  const values=patch?patch.set:op.data;
+  if(!values||typeof values!=='object'||Array.isArray(values))return;
+  const assets=['templateAssets','templateAssetLatest'];
+  const kinds=['receipt','reportCard','payslip'];
+  const changes=assets.filter(k=>Object.hasOwn(values,k));
+  const selections=kinds.filter(k=>typeof values[k]==='string'&&values[k].startsWith('imported:'));
+  if(!changes.length&&!selections.length)return;
+  const policy=await templatePolicy(m);
+  if(policy.customTemplates&&policy.uploadEnabled)return;
+  const reply=await signed(m,{action:'managed_records',operation:'read',
+    collection:'school_settings',id:'document_templates',syncProtocol:2,
+    ...(op.liveProtocol===1?{liveProtocol:1}:{})});
+  if(reply?.success!==true||reply.schoolId!==m.schoolId||
+     reply.syncProtocol!==2||reply.pointRead!==true||
+     !reply.records||typeof reply.records!=='object'||Array.isArray(reply.records))
+   fail(503,'Template catalog verification is pending; existing changes retained','TEMPLATE_CATALOG_UNVERIFIED');
+  const current=reply.records.document_templates||{};
+  if(current.schoolId&&current.schoolId!==m.schoolId)
+   fail(502,'Template catalog belongs to a different school','TEMPLATE_CATALOG_UNVERIFIED');
+  const base=current._syncDeleted===true?{}:current;
+  if(changes.some(k=>!isDeepStrictEqual(values[k],base[k])))
+   fail(policy.customTemplates?503:403,
+    policy.customTemplates?'TemplateForge uploads are under maintenance. Existing templates remain available.':'Custom TemplateForge is not activated for this school',
+    policy.customTemplates?'TEMPLATE_UPLOAD_MAINTENANCE':'TEMPLATE_FEATURE_LOCKED');
+  for(const kind of selections){
+   if(!policy.customTemplates&&values[kind]!==base[kind])
+    fail(403,'Custom TemplateForge is not activated for this school','TEMPLATE_FEATURE_LOCKED');
+   if(policy.customTemplates&&values[kind]!==base[kind]){
+    const selected=values[kind].slice('imported:'.length),catalog=base.templateAssets?.[kind];
+    const candidates=catalog?.version===1||catalog?.version===2?[catalog]:
+      catalog&&typeof catalog==='object'?Object.values(catalog):[];
+    if(!candidates.some(asset=>asset&&asset.approved===true&&asset.schoolId===m.schoolId&&
+       asset.kind===kind&&(asset.templateId||asset.sourceHash)===selected)||
+       base['templateDeleted_'+kind+'_'+selected]===true||
+       base['templateArchived_'+kind+'_'+selected]===true)
+     fail(409,'Select an existing verified template during maintenance','TEMPLATE_SELECTION_UNVERIFIED');
+   }
+  }
+ }
  function lease(m){const e=m.entitlement,t=now(),paid=e.status!=='trial',end=Number(e.expiresAt||0);return {success:true,managed:true,schoolId:m.schoolId,uid:m.uid,projectId,serverTime:t,activated:e.activated===true,expiresAt:end,allowed:e.startsAt<=t&&end>t,status:e.startsAt>t?'pending':end>t?(paid?'licensed':'trial'):'expired'};}
  // Context is attached only after identity/entitlement verification, never from
  // an unauthenticated request's schoolId or arbitrary Script response.
@@ -546,8 +616,43 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
    try{const t=now(),batch=db.batch();batch.create(db.doc('school_memberships/'+account.uid),{schoolId,managed:true,role:'school_admin',active:true});batch.create(db.doc('schools/'+schoolId),{schoolId,ownerUid:account.uid,schoolName:name,architecture:'managed-v1'});batch.create(db.doc('platform_schools/'+schoolId),{schoolId,name,loginEmail:email,authUid:account.uid,managed:true,registrationState:'new',createdAt:t,trialStartedAt:t,blocked:false});batch.create(db.doc('school_entitlements/'+schoolId),{active:true,blocked:false,status:'trial',startsAt:t,expiresAt:t+5*86400000});await batch.commit();}catch(e){if(!reused)await auth.deleteUser(account.uid);throw e;}
    await db.collection('platform_audit').add({action,schoolId,actor:admin.uid,at:now()});return {success:true,schoolId,email,...(password===undefined?{passwordSetupLink:await auth.generatePasswordResetLink(email)}:{})};
   }
+  if(action==='developer/managed/features/global/get')return {success:true,...templateGlobal(await templateGlobalRef.get())};
+  if(action==='developer/managed/features/global/set'){
+   if(typeof b.uploadEnabled!=='boolean'||!Number.isSafeInteger(b.expectedRevision)||b.expectedRevision<0)fail(400,'Invalid global feature change');
+   const result=await db.runTransaction(async tx=>{
+    const current=templateGlobal(await tx.get(templateGlobalRef));
+    if(current.revision!==b.expectedRevision)fail(409,'Global feature setting changed. Refresh before saving.','FEATURE_REVISION_CONFLICT');
+    if(current.uploadEnabled===b.uploadEnabled)return current;
+    const next={uploadEnabled:b.uploadEnabled,revision:current.revision+1};
+    tx.set(templateGlobalRef,{...next,updatedAt:now(),updatedBy:admin.uid},{merge:true});
+    tx.set(db.doc('platform_audit/'+randomUUID()),{action,actor:admin.uid,at:now(),before:current.uploadEnabled,after:next.uploadEnabled,revision:next.revision});
+    return next;
+   });
+   return {success:true,...result};
+  }
   if(action==='developer/managed/monitor'){const started=now();const [metrics,cloudflare]=await Promise.all([monitor(),cloudflareMonitor()]);return {success:true,projectId,responseMs:now()-started,measuredAt:now(),metrics,cloudflare};}
   if(!SCHOOL.test(id||''))fail(400,'Invalid school ID');if(!['developer/managed/exams','developer/managed/view','developer/managed/sync/status','developer/managed/overview'].includes(action))invalidate(id);const school=await cachedRead(developerViews,id,()=>db.doc('platform_schools/'+id).get());if(!school.exists||school.data().managed!==true)fail(404,'Managed school not found');const data=school.data(),ref=db.doc('school_entitlements/'+id);
+  if(action==='developer/managed/features/get'||action==='developer/managed/features/set'){
+   if(data.deletedAt)fail(409,'Archived school cannot change features');
+   if(action.endsWith('/get')){
+    const snapshot=await ref.get();if(!snapshot.exists)fail(404,'School entitlement missing');
+    return {success:true,schoolId:id,...templateSchool(snapshot.data())};
+   }
+   if(typeof b.enabled!=='boolean'||!Number.isSafeInteger(b.expectedRevision)||b.expectedRevision<0)fail(400,'Invalid school feature change');
+   const result=await db.runTransaction(async tx=>{
+    const school=await tx.get(db.doc('platform_schools/'+id)),snapshot=await tx.get(ref);
+    if(!school.exists||school.data().deletedAt||school.data().managed!==true||!snapshot.exists)fail(409,'School entitlement unavailable');
+    const current=templateSchool(snapshot.data());
+    if(current.revision!==b.expectedRevision)fail(409,'School feature setting changed. Refresh before saving.','FEATURE_REVISION_CONFLICT');
+    if(current.enabled===b.enabled)return current;
+    const next={enabled:b.enabled,revision:current.revision+1};
+    tx.set(ref,{customTemplateForgeEnabled:next.enabled,customTemplateForgeRevision:next.revision},{merge:true});
+    tx.set(db.doc('platform_audit/'+randomUUID()),{action,schoolId:id,actor:admin.uid,at:now(),before:current.enabled,after:next.enabled,revision:next.revision});
+    return next;
+   });
+   invalidate(id);
+   return {success:true,schoolId:id,...result};
+  }
   if(action==='developer/managed/overview'){
    // Developer-only aggregate, never record payloads or device credentials.
    const registry=await db.doc('managed_pc_registries/'+id).get();
@@ -1017,6 +1122,8 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
  if(action==='managed/licence/activate'){if(hash(String(b.key||'').trim().toUpperCase())!==m.entitlement.licenseHash||!lease(m).allowed)fail(403,'Licence does not belong to this school or has expired');const ref=db.doc('school_entitlements/'+m.schoolId);
  await db.runTransaction(async tx=>{const current=await tx.get(ref);const e=current.data();if(!e||e.active!==true||e.blocked===true||e.licenseHash!==m.entitlement.licenseHash||Number(e.expiresAt)<=now()||Number(e.startsAt)>now())fail(403,'School licence changed or access was blocked');tx.set(ref,{activated:true},{merge:true});});return {...lease(m),activated:true,status:'licensed'};}
  if(!lease(m).allowed||(m.entitlement.status!=='trial'&&m.entitlement.activated!==true))fail(403,'Activate the school licence before normal operations');
+ if(action==='managed/features')return templatePolicy(m);
+ if(action==='managed/features/template-upload')return requireTemplateUpload(m);
  if(action==='managed/mobile/health'){
   // Authenticated PC/device probe. Never mint a student session or heartbeat.
   const state=await mobileState(m.schoolId),school=state.school,entitlement=state.entitlement;
@@ -1835,6 +1942,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
    seen.add(op.collection+'/'+op.id);operationIds.add(op.operationId);return {action:'managed_records',operation:'write',collection:op.collection,id:op.id,...(b.liveProtocol===1?{liveProtocol:1,createIntent:op.createIntent===true}:{}),
     syncProtocol:2,operationId:op.operationId,expectedRecordRevision:op.expectedRecordRevision,data:{...clean(op.data),schoolId:m.schoolId}};
   });
+  for(const op of operations)await guardTemplateManifest(m,op);
   if(liveSync.enabled(m.schoolId)){
    const states=await Promise.all(operations.map(op=>liveMigration.state(m.schoolId,op.collection)));
    const rolledBackNotices=operations.some(op=>op.collection==='school_notices')&&await liveMigration.rolledBack(m.schoolId,'school_notices');
@@ -1878,6 +1986,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   if(b.deletedTeacherGeneration!==undefined&&(b.collection!=='teachers_directory'||b.operation!=='delete'||typeof b.deletedTeacherGeneration!=='string'||!b.deletedTeacherGeneration||b.deletedTeacherGeneration.length>200))fail(400,'Invalid teacher deletion generation');
   if(b.deletedStudentGeneration!==undefined&&(b.collection!=='students_directory'||b.operation!=='delete'||typeof b.deletedStudentGeneration!=='string'||!b.deletedStudentGeneration||b.deletedStudentGeneration.length>200))fail(400,'Invalid student deletion generation');
   if(b.deleteEverywhereVersion!==undefined&&(b.deleteEverywhereVersion!==1||b.operation!=='delete'||b.syncProtocol!==2))fail(400,'Invalid delete-everywhere operation');
+  await guardTemplateManifest(m,{...b,data});
   const acknowledged=await signed(m,{action:'managed_records',operation:b.operation,collection:b.collection,
     ...(b.liveProtocol===1?{liveProtocol:1,createIntent:b.createIntent===true,...(b.cachedBaseline?{cachedBaseline:clean(b.cachedBaseline)}:{})}:{}),
     ...(b.syncProtocol===2?{syncProtocol:2,...(b.operation==='read'?{knownRevision:typeof b.knownRevision==='string'?b.knownRevision:''}:{operationId:b.operationId,expectedRecordRevision:b.expectedRecordRevision})}:{}),...(b.id?{id:b.id}:{}),...(data?{data}:{}),...(b.deletedStudentGeneration!==undefined?{deletedStudentGeneration:b.deletedStudentGeneration}:{}),...(b.deletedTeacherGeneration!==undefined?{deletedTeacherGeneration:b.deletedTeacherGeneration}:{}),...(b.expectedRevision!==undefined?{expectedRevision:b.expectedRevision}:{}),...(b.deleteEverywhereVersion===1?{deleteEverywhereVersion:1}:{}),...(Number.isFinite(b.expectedUploadedAt)?{expectedUploadedAt:b.expectedUploadedAt}:{})});
@@ -2092,6 +2201,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   return result;
  }
  if(action==='managed/file/upload/resumable'){
+  if(isTemplateUpload(b))await requireTemplateUpload(m);
   if(!['begin','status','part'].includes(b.operation)||!/^[A-Za-z0-9_-]{1,150}$/.test(b.uploadKey||'')||!/^[a-f0-9]{64}$/.test(b.sha256||'')||!Number.isSafeInteger(b.sizeBytes)||b.sizeBytes<1||b.sizeBytes>20*1024*1024||typeof b.name!=='string'||!b.name||b.name.length>200||!/^[-\w.+]+\/[-\w.+]+$/.test(b.mime||'')||b.mime.startsWith('application/vnd.google-apps.'))fail(400,'Invalid resumable school upload');
   const payload={action:'managed_upload_resumable',operation:b.operation,uploadKey:b.uploadKey,sha256:b.sha256,sizeBytes:b.sizeBytes,name:b.name,mime:b.mime};
   if(b.operation==='part'){
@@ -2133,6 +2243,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
       {status:'unknown'})};
  }
  if(action==='managed/file/upload'){
+  if(isTemplateUpload(b))await requireTemplateUpload(m);
   if(typeof b.base64!=='string'||b.base64.length>28*1024*1024||!b.base64.length||!/^[-\w.+]+\/[-\w.+]+$/.test(b.mime||'')||typeof b.name!=='string'||b.name.length>200)fail(400,'Invalid school file');if(b.uploadKey!==undefined&&!/^[A-Za-z0-9_-]{1,150}$/.test(b.uploadKey))fail(400,'Invalid upload key');return signed(m,{action:'managed_upload',name:b.name,mime:b.mime,base64:b.base64,...(b.uploadKey?{uploadKey:b.uploadKey}:{})});
  }
  if(action==='managed/file/read'){if(!/^[A-Za-z0-9_-]{1,200}$/.test(b.fileId||''))fail(400,'Invalid file ID');return signed(m,{action:'managed_file',fileId:b.fileId});}

@@ -28,16 +28,27 @@ void main() {
     });
   }
   test('native manifest preparation reads student and staff designs without writing a PDF or queue', () async {
-    for (final kind in ['studentId','otherStaffId']) {
+    for (final kind in ['studentId','teacherId','otherStaffId']) {
       final card=await WindowsDocumentTemplates.nativePersonCard(kind,{
         'schoolId':school, 'name':'Synthetic TEST', 'class':'1',
         'rollNo':'1','schoolName':'TEST Sync V2',
       });
       expect(card,isNotNull);
       expect(card!.data['name'],'Synthetic TEST');
+      expect(card.template.id,'school-id-v1');
+      expect(card.backgrounds,isEmpty);
       expect(card.template.regions.any((r)=>r.side=='front'),isTrue);
       expect(card.template.regions.any((r)=>r.side=='back'),isTrue);
     }
+    expect((await db.collection('_windows_document_outbox').get()).docs,isEmpty);
+  });
+  test('explicit white ID preview does not rewrite automatic issuance selection', () async {
+    await db.collection('school_settings').doc('document_templates').set({'studentId':'plain'});
+    final card=await WindowsDocumentTemplates.nativePersonCard('studentId',{
+      'schoolId':school,'schoolName':'Test school','name':'Synthetic student'});
+    expect(card!.template.id,'school-id-v1');
+    expect(WindowsDocumentTemplates.studentCardSelection('plain'),
+      WindowsDocumentTemplates.studentCardSelection(null));
     expect((await db.collection('_windows_document_outbox').get()).docs,isEmpty);
   });
   test('student preview and export validate the stored template category', () async {

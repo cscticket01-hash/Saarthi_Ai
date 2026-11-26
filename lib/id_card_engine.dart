@@ -224,7 +224,7 @@ class IdCardEngine {
   static Future<pw.Font> loadFont() async =>
       pw.Font.ttf(await rootBundle.load('assets/id_card_regular.ttf'));
 
-  static Future<Uint8List> render(IdCardManifest template, Map<String,dynamic> data, {Map<String,Uint8List> images=const {},String qr='',Map<String,Uint8List> backgrounds=const {}}) => _render(template,data,images:images,qr:qr,backgrounds:backgrounds);
+  static Future<Uint8List> render(IdCardManifest template, Map<String,dynamic> data, {Map<String,Uint8List> images=const {},String qr='',Map<String,Uint8List> backgrounds=const {},bool frontOnly=false,bool printOnly=false}) => _render(template,data,images:images,qr:qr,backgrounds:backgrounds,frontOnly:frontOnly,printOnly:printOnly);
 
   static Future<Uint8List> _render(
     IdCardManifest template,
@@ -234,6 +234,8 @@ class IdCardEngine {
     Map<String, Uint8List> backgrounds = const {},
     bool useCompactVectorFont = false,
     bool compactBitmapAssets = false,
+    bool frontOnly = false,
+    bool printOnly = false,
   }) async {
     // Embed school-owned source backgrounds at their actual CR80 print size.
     // This is bitmap-only optimization; the original image assets, vector
@@ -258,6 +260,7 @@ class IdCardEngine {
     final width = template.printWidth * PdfPageFormat.mm;
     final height = template.printHeight * PdfPageFormat.mm;
     final gap = 8 * PdfPageFormat.mm;
+    final includeBack = template.hasBack && !frontOnly;
     pw.Widget card(String name) => pw.SizedBox(
       width: width,
       height: height,
@@ -268,17 +271,18 @@ class IdCardEngine {
     );
     pdf.addPage(
       pw.Page(
-        pageFormat: PdfPageFormat(template.hasBack ? 2 * width + gap : width, height),
+        pageFormat: PdfPageFormat(includeBack ? 2 * width + gap : width, height),
         margin: pw.EdgeInsets.zero,
         build: (_) => pw.Row(
           children: [
             card('front'),
-            if (template.hasBack) ...[pw.SizedBox(width: gap), card('back')],
+            if (includeBack) ...[pw.SizedBox(width: gap), card('back')],
           ],
         ),
       ),
     );
     final output = await pdf.save();
+    if (printOnly) return SchoolMediaBudgets.verifyPrintPdf(output);
     if (!useCompactVectorFont && output.length > SchoolMediaBudgets.idCard) {
       // Original catalog font wins when it fits. Only ASCII-only oversized
       // cards retry with a non-embedded vector font; no QR/text rasterization,
@@ -293,7 +297,7 @@ class IdCardEngine {
               code >= 32 && code <= 126));
       if (asciiText && asciiLabels) {
         return _render(template, data, images: images, qr: qr,
-            backgrounds: backgrounds, useCompactVectorFont: true);
+            backgrounds: backgrounds, useCompactVectorFont: true,frontOnly:frontOnly);
       }
     }
     if (!compactBitmapAssets && output.length > SchoolMediaBudgets.idCard) {
@@ -303,7 +307,7 @@ class IdCardEngine {
       return _render(template, data, images: images, qr: qr,
           backgrounds: backgrounds,
           useCompactVectorFont: useCompactVectorFont,
-          compactBitmapAssets: true);
+          compactBitmapAssets: true,frontOnly:frontOnly);
     }
     return SchoolMediaBudgets.verifyGeneratedPdf('idCard', output);
   }

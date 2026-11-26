@@ -8,12 +8,14 @@ import 'id_card_layout.dart';
 /// The only newly generated report layout. Retained PDFs are never rewritten.
 Future<Uint8List> renderMaroonMarksheet(Map<String, dynamic> data, {
   Uint8List? photo, Uint8List? logo, Uint8List? signature, Uint8List? seal,
+  bool plain = false,
+  bool printOnly=false,
 }) async {
   final regular=pw.Font.ttf(await rootBundle.load('assets/id_card_regular.ttf'));
   final bold=pw.Font.ttf(await rootBundle.load('assets/id_card_bold.ttf'));
   final pdf=pw.Document(theme:pw.ThemeData.withFont(base:regular,bold:bold));
-  final maroon=PdfColor.fromHex('#700d20'), gold=PdfColor.fromHex('#ba913b');
-  final ivory=PdfColor.fromHex('#fffdf7'), pale=PdfColor.fromHex('#f3e6bc');
+  final maroon=plain?PdfColors.black:PdfColor.fromHex('#700d20'), gold=plain?PdfColors.grey500:PdfColor.fromHex('#ba913b');
+  final ivory=plain?PdfColors.white:PdfColor.fromHex('#fffdf7'), pale=plain?PdfColors.white:PdfColor.fromHex('#f3e6bc');
   String value(List<String> keys,[String fallback='-']) {
     for(final key in keys){final v=data[key]?.toString().trim()??'';if(v.isNotEmpty&&v!='null')return v;}
     return fallback;
@@ -69,10 +71,10 @@ Future<Uint8List> renderMaroonMarksheet(Map<String, dynamic> data, {
     final layers=<pw.Widget>[
       pw.Positioned.fill(child:pw.Container(color:ivory)),
       at(14,14,567.28,813.89,pw.Container(decoration:pw.BoxDecoration(border:pw.Border.all(color:maroon,width:1.5)))),
-      at(18,18,559.28,108,pw.Container(decoration:pw.BoxDecoration(color:maroon,border:pw.Border.all(color:gold,width:1)))),
+      at(18,18,559.28,108,pw.Container(decoration:pw.BoxDecoration(color:plain?PdfColors.white:maroon,border:pw.Border.all(color:gold,width:1)))),
       at(29,30,82,82,image(logo)),
-      at(122,31,440,51,text(value(['schoolName'],'School name'),size:26,heavy:true,color:pale,align:pw.TextAlign.center,lines:3)),
-      at(122,88,440,27,text(value(['schoolAddress']),size:11,color:PdfColors.white,align:pw.TextAlign.center)),
+      at(122,31,440,51,text(value(['schoolName'],'School name'),size:26,heavy:true,color:plain?PdfColors.black:pale,align:pw.TextAlign.center,lines:3)),
+      at(122,88,440,27,text(value(['schoolAddress']),size:11,color:plain?PdfColors.black:PdfColors.white,align:pw.TextAlign.center)),
       at(30,139,535,31,text('STUDENT PROGRESS REPORT',size:23,heavy:true,color:maroon,align:pw.TextAlign.center)),
       at(30,174,535,23,text('$exam • Academic Session ${value(['academicSession','academicYear','session'])}',size:12,align:pw.TextAlign.center)),
       at(30,207,535,148,box(pw.SizedBox())),
@@ -90,8 +92,8 @@ Future<Uint8List> renderMaroonMarksheet(Map<String, dynamic> data, {
         at(157,215+row.key*19,280,18,text(row.value[1],size:10)),
       ],
       at(30,368,535,224,pw.Table(columnWidths:{0:const pw.FlexColumnWidth(2.5),1:const pw.FlexColumnWidth(1.2),2:const pw.FlexColumnWidth(1.2),3:const pw.FlexColumnWidth(1.6),4:const pw.FlexColumnWidth(.8)},border:pw.TableBorder.all(color:gold,width:.5),children:[
-        for(final row in cells.asMap().entries)pw.TableRow(decoration:pw.BoxDecoration(color:row.key==0?maroon:row.key==cells.length-1?pale:null),children:[
-          for(var c=0;c<5;c++)pw.Container(height:27,padding:const pw.EdgeInsets.symmetric(horizontal:6,vertical:3),child:text(row.value[c],size:row.key==0?8:10,heavy:row.key==0||row.key==cells.length-1||c==0,color:row.key==0?PdfColors.white:PdfColors.black,align:c==0?pw.TextAlign.left:pw.TextAlign.center)),
+        for(final row in cells.asMap().entries)pw.TableRow(decoration:pw.BoxDecoration(color:row.key==0?(plain?PdfColors.white:maroon):row.key==cells.length-1?pale:null),children:[
+          for(var c=0;c<5;c++)pw.Container(height:27,padding:const pw.EdgeInsets.symmetric(horizontal:6,vertical:3),child:text(row.value[c],size:row.key==0?8:10,heavy:row.key==0||row.key==cells.length-1||c==0,color:row.key==0&&!plain?PdfColors.white:PdfColors.black,align:c==0?pw.TextAlign.left:pw.TextAlign.center)),
         ]),
       ])),
       at(30,600,535,32,box(text('Percentage: ${percentage==null?'-':'${percentage.toStringAsFixed(2)}%'}       |       Result: $result',size:13,heavy:true,color:maroon,align:pw.TextAlign.center),color:pale)),
@@ -109,5 +111,6 @@ Future<Uint8List> renderMaroonMarksheet(Map<String, dynamic> data, {
     ];
     pdf.addPage(pw.Page(pageFormat:PdfPageFormat.a4,margin:pw.EdgeInsets.zero,build:(_)=>pw.Stack(children:layers)));
   }
-  return SchoolMediaBudgets.verifyGeneratedPdf('reportCard', await pdf.save());
+  final bytes=await pdf.save();
+  return printOnly?SchoolMediaBudgets.verifyPrintPdf(bytes):SchoolMediaBudgets.verifyGeneratedPdf('reportCard',bytes);
 }

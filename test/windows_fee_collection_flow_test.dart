@@ -6,6 +6,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/src/interface.dart';
+import '../lib/fitted_document_preview.dart';
+import '../lib/windows_receipt_print_dialog.dart';
+import 'windows_report_card_preview_test.dart' show ReportPreviewPrinting;
 
 import '../lib/windows_backend_bridge.dart';
 import '../lib/windows_atomic_financial_coordinator.dart';
@@ -462,48 +466,97 @@ void main() {
         .data()?['personId'], 'p-original');
   });
 
-  testWidgets('record-only receipt preview offers print and download without PDF at preview',
+  Future<void> settleReceipt(WidgetTester tester) async {
+    for (var i = 0; i < 120; i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 25)));
+      await tester.pump();
+      if (find.byType(Image).evaluate().isNotEmpty ||
+          find.text('Document unavailable.').evaluate().isNotEmpty) break;
+    }
+    await tester.pumpAndSettle();
+  }
+
+  void installPrintMock() {
+    final original = PrintingPlatform.instance;
+    PrintingPlatform.instance = ReportPreviewPrinting();
+    addTearDown(() => PrintingPlatform.instance = original);
+  }
+
+  testWidgets('record-only receipt opens one common print preview and uses current template',
       (tester) async {
+    installPrintMock();
+    await tester.binding.setSurfaceSize(const Size(1160, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     final p = payment('preview-payment')..remove('receiptDocumentId');
     p['feeItems'] = {'Tuition': 200.0};
+    p['receiptTemplateSelection'] = 'imported:stale-removed-template';
+    await tester.runAsync(() => db.collection('school_settings')
+        .doc('document_templates').set({'receipt': 0}));
     await tester.pumpWidget(MaterialApp(home: Builder(builder: (context) =>
       Scaffold(body: TextButton(
         onPressed: () => WindowsFeeReceiptPreview.open(context, p),
         child: const Text('Open saved receipt'),
       )),
     )));
-    await tester.tap(find.text('Open saved receipt'));
-    await tester.pumpAndSettle();
-    expect(find.text('Received now'), findsOneWidget);
-    expect(find.text('Paid to date'), findsOneWidget);
-    expect(find.text('Balance due'), findsOneWidget);
-    expect(find.text('₹100.00'), findsWidgets);
-    expect(find.text('Print Receipt'), findsOneWidget,
-        reason: 'PDF generation is allowed only after Print is pressed');
-    expect(find.text('Download PDF'), findsOneWidget);
+    await tester.runAsync(() async {
+      await tester.tap(find.text('Open saved receipt'));
+      await tester.pump();
+    });
+    await settleReceipt(tester);
+    expect(find.byType(WindowsReceiptPrintDialog), findsOneWidget);
+    expect(find.byType(Dialog), findsOneWidget);
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.text('Document unavailable.'), findsNothing);
+    expect(find.text('Print Receipt'), findsNothing);
+    expect(find.text('Download PDF'), findsNothing);
+    final preview = tester.widget<FittedDocumentPreview>(find.byType(FittedDocumentPreview));
+    expect(String.fromCharCodes(preview.bytes.take(5)), '%PDF-');
+    expect(tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Save as PDF')).onPressed, isNotNull);
+    expect(p['receiptTemplateSelection'], 'imported:stale-removed-template');
+    final outbox = await tester.runAsync(() => db.collection('_windows_document_outbox').get());
+    final localDocs = await tester.runAsync(() => db.collection('_local_student_documents').get());
+    expect(outbox!.docs, isEmpty);
+    expect(localDocs!.docs, isEmpty);
+    expect(tester.takeException(), isNull);
   });
 
-  testWidgets('original-PDF fee receipt also opens record preview first',
+  testWidgets('historical receipt opens the exact retained PDF directly without new writes',
       (tester) async {
+    installPrintMock();
+    await tester.binding.setSurfaceSize(const Size(1160, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     final p = payment('original-preview');
+    final counts = await tester.runAsync(() async {
+      await save(p);
+      return [
+        (await db.collection('_windows_document_outbox').get()).docs.length,
+        (await db.collection('_local_student_documents').get()).docs.length,
+      ];
+    });
     await tester.pumpWidget(MaterialApp(home: Builder(builder: (context) =>
       Scaffold(body: TextButton(
         onPressed: () => WindowsFeeReceiptPreview.open(context, p),
         child: const Text('Preview original receipt'),
       )),
     )));
-    await tester.tap(find.text('Preview original receipt'));
-    await tester.pumpAndSettle();
-    expect(find.text('Received now'), findsOneWidget);
-    expect(find.text('Print Receipt'), findsOneWidget);
-    expect(find.text('Download PDF'), findsOneWidget);
-    // The original PDF has not been fetched, regenerated or queued by preview.
-    final outbox = await tester.runAsync(() =>
-        db.collection('_windows_document_outbox').get());
-    final localDocs = await tester.runAsync(() =>
-        db.collection('_local_student_documents').get());
-    expect(outbox!.docs, isEmpty);
-    expect(localDocs!.docs, isEmpty);
+    await tester.runAsync(() async {
+      await tester.tap(find.text('Preview original receipt'));
+      await tester.pump();
+    });
+    await settleReceipt(tester);
+    expect(find.byType(WindowsReceiptPrintDialog), findsOneWidget);
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.text('Document unavailable.'), findsNothing);
+    final preview = tester.widget<FittedDocumentPreview>(find.byType(FittedDocumentPreview));
+    expect(preview.bytes, orderedEquals(pdf));
+    expect(tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Save as PDF')).onPressed, isNotNull);
+    final outbox = await tester.runAsync(() => db.collection('_windows_document_outbox').get());
+    final localDocs = await tester.runAsync(() => db.collection('_local_student_documents').get());
+    expect(outbox!.docs.length, counts![0]);
+    expect(localDocs!.docs.length, counts[1]);
+    expect(tester.takeException(), isNull);
   });
 
 }

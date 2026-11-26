@@ -15,6 +15,8 @@ class SchoolTemplateOfficeConverter {
   static String extension(String name)=>
     name.contains('.')?name.split('.').last.toLowerCase():'';
 
+  static bool supportsNative(String name)=>const {'docx','xlsx'}.contains(extension(name));
+
   static bool supports(String name)=>const {'doc','docx','xls','xlsx'}
     .contains(extension(name));
 
@@ -134,6 +136,13 @@ class SchoolTemplateOfficeConverter {
       }
     }
     return kind;
+  }
+
+  /// The public import uses native OpenXML only. Legacy conversion remains
+  /// available to existing internal compatibility callers.
+  static SchoolOfficeKind validateNativeSource(String filename,Uint8List bytes){
+    if(!supportsNative(filename))throw const FormatException('Upload Word DOCX or Excel XLSX. Save legacy DOC/XLS as the modern format first.');
+    return validateSource(filename,bytes);
   }
 
   static bool isPdf(Uint8List bytes)=>
@@ -264,7 +273,7 @@ try {
       if(!converted || !await outputFile.exists()){
         throw const FormatException(
           'Word/Excel conversion needs LibreOffice or Microsoft Office '
-          'installed locally. Alternatively upload one A4 or Legal PDF page.');
+          'installed locally. Use a supported Office source.');
       }
       if(await outputFile.length()>maxConvertedPdfBytes){
         throw const FormatException(

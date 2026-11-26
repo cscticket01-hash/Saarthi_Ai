@@ -9,7 +9,9 @@ import 'document_processing_engine.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_connect/school_drive_images.dart';
 import 'windows_local_firestore.dart';
+import 'windows_school_image_cache.dart';
 import 'windows_template_import_engine.dart';
+import 'windows_template_feature_access.dart';
 
 /// Owns only the Drive asset and small school-scoped manifest for TemplateForge.
 /// Existing templates stay selected until the school explicitly chooses a new version.
@@ -17,13 +19,15 @@ class WindowsTemplateCloudStore {
   static const _engineVersion='TemplateForge-3';
   // Keep rollback history across up to five devices; do not silently remove
   // verified Drive versions during another PC's concurrent upload.
-  static const maxStoredVersions=32;
+  static const maxStoredVersions=32; // active, selectable versions per kind
+  static const maxRetainedVersions=64; // includes archive/deletion history
 
   static Future<Map<String,dynamic>> _settings() async =>
     (await FirebaseFirestore.instance.collection('school_settings')
       .doc('document_templates').get()).data()??{};
 
   static String _idFor(SchoolTemplateDraft draft,String contentHash) {
+    if(draft.additionalPages.isNotEmpty)return SchoolTemplateImportEngine.bundleIdentity(draft,contentHash,_engineVersion);
     final fields=jsonEncode(draft.fields.map((f)=>f.toJson()).toList());
     final visuals=draft.visualSlots.isEmpty?'':':'+jsonEncode(
       draft.visualSlots.map((s)=>s.toJson()).toList());
@@ -60,6 +64,44 @@ class WindowsTemplateCloudStore {
   // Top-level independent fields survive existing field-patch synchronization.
   // Never remove manifests: a stale device must not resurrect a deleted design.
   static String deletionKey(String kind,String id)=>'templateDeleted_${kind}_$id';
+  static String archiveKey(String kind,String id)=>'templateArchived_${kind}_$id';
+  static String versionId(Map<String,dynamic> asset)=>
+      (asset['templateId']??asset['sourceHash']).toString();
+  static bool isArchived(Map<String,dynamic> settings,String kind,String id)=>
+      settings[archiveKey(kind,id)]==true;
+
+  static List<Map<String,dynamic>> archivedTemplates(Map<String,dynamic> settings,String kind,String school) =>
+    importedTemplates(settings,kind).where((asset)=>asset['approved']==true &&
+      asset['schoolId']==school && asset['kind']==kind &&
+      isArchived(settings,kind,versionId(asset)) && settings[kind]!='imported:${versionId(asset)}').toList();
+
+  static Map<String,dynamic> archivePatch(Map<String,dynamic> settings,String kind,
+      String id,String school,{required bool archive}) {
+    SchoolTemplateImportEngine.verifySchool(school);
+    final asset=importedAsset(settings,kind,templateId:id);
+    if(asset==null || asset['approved']!=true || asset['schoolId']!=school || asset['kind']!=kind)
+      throw StateError('Only this school’s approved template can be archived or restored.');
+    if(archive && settings[kind]=='imported:$id')
+      throw StateError('Select a different design or Plain White before archiving this template.');
+    if(!archive && isArchived(settings,kind,id) &&
+      availableSchoolTemplates(settings,kind,school).length>=maxStoredVersions)
+      throw StateError('Archive another inactive template before restoring this one.');
+    return {archiveKey(kind,id):archive};
+  }
+
+  static Future<void> setArchived(String kind,String id,{required bool archive}) async {
+    final db=FirebaseFirestore.instance,origin=db.activeProfileId;
+    final school=db.activeProfileIdentity['schoolSyncId']?.toString()??'';
+    final ref=db.collection('school_settings').doc('document_templates');
+    final snapshot=await ref.get();
+    final patch=archivePatch(snapshot.data()??{},kind,id,school,archive:archive);
+    if(db.activeProfileId!=origin || db.activeProfileIdentity['schoolSyncId']!=school)
+      throw StateError('School changed before archive update.');
+    final batch=db.batch();
+    batch.requireUnchanged(ref,snapshot.data());
+    batch.set(ref,{...patch,'updatedAt':FieldValue.serverTimestamp()},const SetOptions(merge:true));
+    await batch.commit();
+  }
 
   static Map<String,dynamic> deletionPatch(Map<String,dynamic> settings,
       String kind,String id,String school) {
@@ -70,7 +112,7 @@ class WindowsTemplateCloudStore {
       throw StateError('Only this school’s uploaded template can be deleted.');
     }
     return {deletionKey(kind,id):true,
-      if(settings[kind]=='imported:$id')kind:0};
+      if(settings[kind]=='imported:$id')kind:'plain'};
   }
 
   static Future<void> deleteTemplate(String kind,String id) async {
@@ -99,7 +141,8 @@ class WindowsTemplateCloudStore {
       item['approved']==true &&
       item['schoolId']==schoolId &&
       item['kind']==kind &&
-      (item['templateId']??item['sourceHash']) is String
+      (item['templateId']??item['sourceHash']) is String &&
+      (!isArchived(settings,kind,versionId(item)) || settings[kind]=='imported:${versionId(item)}')
     ).toList(growable:false);
   }
 
@@ -130,6 +173,7 @@ class WindowsTemplateCloudStore {
   /// silently evicts the active template or the rollback target.
   static Map<String,dynamic> appendedVersionHistory(
     dynamic rawVersions,String templateId,Map<String,dynamic> manifest,
+    {Set<String> inactiveIds=const {}}
   ){
     final versions=<String,dynamic>{};
     if(rawVersions is Map){
@@ -156,9 +200,11 @@ class WindowsTemplateCloudStore {
         ' Drive version must not be overwritten.');
     }
     versions[templateId]=manifest;
-    if(versions.length>maxStoredVersions){
-      throw StateError('School template history is full.'
-        ' Archive older versions safely before publishing another template.');
+    if(versions.length>maxRetainedVersions){
+      throw StateError('Retained template history is full. No rollback versions were removed.');
+    }
+    if(versions.keys.where((id)=>!inactiveIds.contains(id)).length>maxStoredVersions){
+      throw StateError('Active template list is full. Archive an inactive version before uploading another.');
     }
     return versions;
   }
@@ -184,7 +230,57 @@ class WindowsTemplateCloudStore {
     Map<String,dynamic> settings,String kind,Iterable<String> expected,
   ){
     return expected.every((id)=>importedAsset(
-      settings,kind,templateId:id)!=null);
+      settings,kind,templateId:id)!=null || settings[deletionKey(kind,id)]==true);
+  }
+
+  static final _publishing=<String,Future<Map<String,dynamic>>>{};
+
+  static Future<Map<String,dynamic>> publishApprovedLocalDraft(SchoolTemplateDraft draft) async {
+    final db=FirebaseFirestore.instance,origin=db.activeProfileId;
+    bool current()=>db.activeProfileId==origin &&
+      db.activeProfileIdentity['schoolSyncId']==draft.schoolId;
+    if(!current() || !await SchoolTemplateImportEngine.hasPendingPublication(draft))
+      throw StateError('Approved local publication marker unavailable.');
+    if(!current())throw StateError('School changed before retry.');
+    final key=draft.schoolId+':'+SchoolTemplateImportEngine.localDraftIdentity(draft);
+    final existing=_publishing[key];
+    if(existing!=null)return existing;
+    final future=() async {
+      final result=await publish(draft);
+      if(!current())throw StateError('School changed after publication.');
+      await SchoolTemplateImportEngine.clearPendingPublication(draft);
+      return result;
+    }();
+    _publishing[key]=future;
+    try{return await future;}
+    finally{if(identical(_publishing[key],future))_publishing.remove(key);}
+  }
+
+  /// Resume a bounded number of explicitly approved pending drafts when the
+  /// school opens Templates. Only managed storage has stable upload keys.
+  /// Do not repeatedly poll, retry unapproved drafts, or bypass Drive readback.
+  static Future<int> resumeApprovedPublications() async {
+    final db=FirebaseFirestore.instance,origin=db.activeProfileId;
+    final school=db.activeProfileIdentity['schoolSyncId']?.toString()??'';
+    bool current()=>db.activeProfileId==origin&&db.activeProfileIdentity['schoolSyncId']==school;
+    if(school.isEmpty)return 0;
+    final access=await WindowsTemplateFeatureAccess.read(force:true);
+    if(!access.canUpload)return 0;
+    final connection=await CentralSchoolCloud.saved();
+    if(!current()||connection['managed']!=true||connection['schoolId']!=school)return 0;
+    var attempts=0,completed=0;
+    for(final kind in SchoolTemplateKind.values){
+      if(!current()||attempts>=3)break;
+      final drafts=await SchoolTemplateImportEngine.loadLocalDrafts(kind:kind,schoolId:school,
+        pendingPublicationOnly:true);
+      for(final draft in drafts){
+        if(!current()||attempts>=3)break;
+        attempts++;
+        try{await publishApprovedLocalDraft(draft);completed++;}
+        catch(_){ /* Keep marker and exact bytes for the next explicit or page-open retry. */ }
+      }
+    }
+    return completed;
   }
 
   static Future<Map<String,dynamic>> publish(SchoolTemplateDraft draft) async {
@@ -198,14 +294,19 @@ class WindowsTemplateCloudStore {
       }
     }
     ensureSchool();
+    await WindowsTemplateFeatureAccess.requireUpload();
+    ensureSchool();
     SchoolTemplateImportEngine.validateDraft(draft);
-    if(draft.png.length>20*1024*1024){
+    final packed=SchoolTemplateImportEngine.packedArtwork(draft);
+    final dims=SchoolTemplateImportEngine.packedDimensions(draft);
+    final multi=draft.additionalPages.isNotEmpty;
+    if(packed.length>20*1024*1024){
       throw StateError('Template image is too large for verified Drive upload.');
     }
     // Use the existing Compression Engine in an isolate. Template artwork
     // is lossless-only: no raster text, QR, signature, or print pixels change.
     final artwork=await compute(DocumentProcessingEngine.templateArtworkUpload,
-      {'bytes':draft.png});
+      {'bytes':packed});
     ensureSchool();
     final uploadPng=artwork['optimized'] as Uint8List;
     final contentHash=sha256.convert(uploadPng).toString();
@@ -278,11 +379,12 @@ class WindowsTemplateCloudStore {
     }
 
     final manifest=<String,dynamic>{
-      'version':1,'approved':true,'schoolId':school,
+      'version':multi?2:1,'approved':true,'schoolId':school,
       'kind':draft.kind.name,'filename':draft.filename,
       'sourceHash':draft.sourceHash,'contentHash':contentHash,
       'templateId':templateId,'fileId':fileId,'fileUrl':fileUrl,
-      'width':draft.width,'height':draft.height,
+      'width':dims.width,'height':dims.height,
+      if(multi)'pages':SchoolTemplateImportEngine.pageMetadata(draft),
       'fields':draft.fields.map((f)=>f.toJson()).toList(),
       if(draft.visualSlots.isNotEmpty)
         'visualSlots':draft.visualSlots.map((s)=>s.toJson()).toList(),
@@ -294,6 +396,8 @@ class WindowsTemplateCloudStore {
     // serialized local-store read-dependency guard, not an unguarded set().
     // Only a true concurrent local change triggers a bounded retry.
     // Cross-device atomicity still needs verified cloud CAS acceptance.
+    await WindowsTemplateFeatureAccess.requireUpload();
+    ensureSchool();
     final settingsRef=db.collection('school_settings').doc('document_templates');
     Map<String,dynamic> latestSettings={};
     Map<String,dynamic> versions={};
@@ -307,9 +411,19 @@ class WindowsTemplateCloudStore {
       final allAssets=latestSettings['templateAssets'] is Map
         ?Map<String,dynamic>.from(latestSettings['templateAssets'] as Map)
         :<String,dynamic>{};
-      versions=appendedVersionHistory(
-        allAssets[draft.kind.name],templateId,manifest);
+      final kind=draft.kind.name;
+      final old=allAssets[kind];
+      final ids=old is Map
+        ? (old['version']==1 ? [(old['templateId']??old['sourceHash']).toString()]
+          : old.keys.map((key)=>key.toString()).toList())
+        : <String>[];
+      final inactiveIds=ids.where((id)=>latestSettings[deletionKey(kind,id)]==true ||
+        (isArchived(latestSettings,kind,id) && latestSettings[kind]!='imported:$id')).toSet();
+      versions=appendedVersionHistory(old,templateId,manifest,inactiveIds:inactiveIds);
       allAssets[draft.kind.name]=versions;
+      // Keep synced metadata bounded independently of the retained Drive bytes.
+      if(utf8.encode(jsonEncode(allAssets)).length>512*1024)
+        throw StateError('Template catalog exceeds safe metadata size. Existing versions retained.');
       final latest=latestSettings['templateAssetLatest'] is Map
         ?Map<String,dynamic>.from(latestSettings['templateAssetLatest'] as Map)
         :<String,dynamic>{};
@@ -354,6 +468,10 @@ class WindowsTemplateCloudStore {
     if(savedSettings[draft.kind.name]!=latestSettings[draft.kind.name]){
       throw StateError('Selected school template changed during upload.');
     }
+    // Reuse existing tenant-scoped verified image cache.
+    try { await WindowsSchoolImageCache.store(school,fileId,
+      WindowsSchoolImageCache.dataUrl(uploadPng),profileId:origin); } catch (_) { /* Durable local draft still exists. */ }
+    ensureSchool();
     return verified;
   }
 
@@ -373,8 +491,8 @@ class WindowsTemplateCloudStore {
     void Function() ensureSchool,
   ) async {
     final result=<String,Uint8List>{};
-    for(final slot in draft.visualSlots){
-      if(slot.role=='qrCode')continue;
+    for(final slot in draft.pageDrafts.expand((p)=>p.visualSlots)){
+      if(slot.role=='qrCode'||result.containsKey(slot.role))continue;
       final values=switch(slot.role){
         'studentPhoto'=>[record['photoUrl'],record['photoBase64']],
         'schoolLogo'=>[record['schoolLogoUrl'],record['logoUrl'],
@@ -448,14 +566,28 @@ class WindowsTemplateCloudStore {
       throw StateError('Imported template Drive identity is invalid.');
     }
     final origin=db.activeProfileId;
-    final bytes=await schoolImageBytes(url);
-    if(bytes==null)throw StateError('School template is not available from its private Drive.');
+    final fileId=manifest['fileId']?.toString()??'';
+    final hash=manifest['contentHash']?.toString()??'';
+    await WindowsTemplateFeatureAccess.requireUse();
+    if(db.activeProfileId!=origin||db.activeProfileIdentity['schoolSyncId']!=school)
+      throw StateError('School changed during template permission check.');
+    // Prefer the existing tenant-scoped verified local cache. First use
+    // still requires Drive; a stale or damaged cache is never trusted.
+    var bytes=await WindowsSchoolImageCache.read(school,fileId);
+    if(bytes==null || sha256.convert(bytes).toString()!=hash) {
+      bytes=await schoolImageBytes(url,preferCached:false);
+    }
+    if(bytes==null || sha256.convert(bytes).toString()!=hash)
+      throw StateError('School template is unavailable or failed integrity verification. Reconnect and retry.');
     if(db.activeProfileId!=origin ||
       db.activeProfileIdentity['schoolSyncId']!=school){
       throw StateError('School changed during template download.');
     }
     final draft=SchoolTemplateImportEngine.fromPublishedManifest(
       kind:parsed.single,schoolId:school,manifest:manifest,png:bytes);
+    // Cache only hash/manifest-verified artwork; this local cache never syncs.
+    try { await WindowsSchoolImageCache.store(school,fileId,
+      WindowsSchoolImageCache.dataUrl(bytes),profileId:origin); } catch (_) { /* Cache is optional. */ }
     void ensureSchool(){
       if(db.activeProfileId!=origin ||
         db.activeProfileIdentity['schoolSyncId']!=school){

@@ -16,6 +16,7 @@ import '../lib/windows_local_firestore.dart' as local;
 import '../lib/windows_runtime_flags.dart';
 import '../lib/windows_staff_payroll.dart';
 import '../lib/windows_document_templates.dart';
+import '../lib/windows_ui_localization.dart' show WindowsUiLanguage;
 import '../lib/windows_connection_center.dart';
 import '../lib/windows_sync_engine.dart';
 import '../lib/windows_platform_client.dart';
@@ -149,6 +150,23 @@ void main() {
             expect(WindowsAppearance.contrast(fg,bg),greaterThanOrEqualTo(4.5));
           }
           if(entry.key=='teachers')expect(find.text('Synthetic Teacher'),findsOneWidget);
+          if(entry.key=='templates' && size.width==1440 && mode==ThemeMode.dark) {
+            final original=WindowsUiLanguage.current;
+            try {
+              for(final language in ['hi','bn','as']){
+                WindowsUiLanguage.changed.value=language;
+                await tester.pump();
+                expect(WindowsUiLanguage.translate('School document templates'),
+                  isNot('School document templates'));
+                expect(find.text('School document templates'),findsOneWidget,
+                  reason:'Device UI language cannot translate the template catalog.');
+                expect(find.text(WindowsUiLanguage.translate('School document templates')),findsNothing);
+              }
+            } finally {
+              WindowsUiLanguage.changed.value=original;
+              await tester.pump();
+            }
+          }
           expect(tester.takeException(),isNull,reason:'${entry.key} ${mode.name} $size');
           if(Platform.isWindows||Platform.environment['SAARTHI_THEME_ATLAS']=='true') await tester.runAsync(() async {
             final image=await (key.currentContext!.findRenderObject() as RenderRepaintBoundary).toImage();

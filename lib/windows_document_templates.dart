@@ -28,11 +28,12 @@ import 'windows_save_pdf.dart';
 import 'windows_id_card_designer_entry.dart';
 import 'fitted_document_preview.dart';
 import 'windows_connect/school_drive_images.dart';
-import 'windows_ui_localization.dart';
+// Template catalog, preview and document text intentionally retain their own
+// language; device UI translation must not wrap these widgets.
 
 import 'dart:typed_data';
 
-import 'package:flutter/material.dart' hide Text, InputDecoration;
+import 'package:flutter/material.dart';
 import 'package:printing/printing.dart';
 
 import 'windows_local_firestore.dart';
@@ -40,6 +41,7 @@ import 'windows_reference_documents.dart';
 import 'windows_template_import_engine.dart';
 import 'windows_template_import_editor.dart';
 import 'windows_template_cloud_store.dart';
+import 'windows_template_feature_access.dart';
 import 'windows_student_id_cards.dart';
 import 'windows_sync_recovery.dart';
 
@@ -48,6 +50,24 @@ export 'windows_sync_recovery.dart' show IdCardPreparationFailure;
 
 class WindowsDocumentTemplates {
   static const manifestName = 'School ID • Manifest Front + Back';
+  static const plainSelection = 'plain';
+  static bool financialKind(String kind) =>
+      const {'receipt', 'reportCard', 'payslip'}.contains(kind);
+  static bool personKind(String kind) =>
+      const {'studentId', 'teacherId', 'otherStaffId'}.contains(kind);
+  static bool supportsPlain(String kind) => financialKind(kind) || personKind(kind);
+  static bool plainPrintSelection(String kind, Object? value) =>
+      supportsPlain(kind) && (value == null || value == plainSelection);
+
+  /// Missing selection is not a selected decorative layout. Existing explicit
+  /// numeric and imported choices remain unchanged.
+  static Object? financialSelection(String kind, Object? value) {
+    if (!financialKind(kind)) return value;
+    if (value == null || value == plainSelection) return plainSelection;
+    if (value is num && value.isFinite && value == value.toInt() && value >= 0)
+      return kind == 'payslip' ? 0 : windowsReferenceDocumentIndex(kind,value);
+    return value;
+  }
   static String studentCardSelection(Object? selection) {
     if (selection is String &&
         (selection.startsWith('manifest:') ||
@@ -71,6 +91,7 @@ class WindowsDocumentTemplates {
     Uint8List? logo,
     Uint8List? signature,
     Uint8List? seal,
+    bool printOnly=false,
   }) async {
     final entry = await IdCardCatalog.find(templateId);
     final manifest = reviewedManifest ?? await entry.manifest();
@@ -78,6 +99,7 @@ class WindowsDocumentTemplates {
       manifest,
       data,
       qr: qr,
+      printOnly:printOnly,
       backgrounds: await entry.backgrounds(),
       images: {
         if (photo != null) 'photo': photo,
@@ -109,9 +131,12 @@ class WindowsDocumentTemplates {
     }
     checkSchool();
     final settings = await selections();
-    final v = selection ?? (kind == 'studentId'
-        ? studentCardSelection(settings[kind])
-        : settings[kind] ?? 0);
+    final rawSelection = selection ?? settings[kind];
+    final plain = plainPrintSelection(kind,rawSelection);
+    // Use the already bundled undecorated manifest only for user-initiated
+    // preview/print. Do not rewrite an issued ID or its sync identity.
+    final v = plain ? 'manifest:school-id-v1' : kind == 'studentId'
+        ? studentCardSelection(rawSelection) : rawSelection ?? 0;
     if (!(v is String && (v.startsWith('manifest:') || v.startsWith('reviewed:'))) &&
         kind != 'otherStaffId') return null;
     final profile = (await db.collection('school_config').doc('school_profile_cache').get()).data() ?? {};
@@ -141,7 +166,8 @@ class WindowsDocumentTemplates {
     final templateId = reviewed?.id ?? (v is String && v.startsWith('manifest:')
         ? v.substring(9) : (await IdCardCatalog.load()).firstWhere((e) => e.kinds.contains(kind)).id);
     final entry = await IdCardCatalog.find(templateId);
-    if (!entry.kinds.contains(kind)) throw StateError('Selected template is not for this person category.');
+    if (!entry.kinds.contains(kind) && !(plain && entry.id=='school-id-v1'))
+      throw StateError('Selected template is not for this person category.');
     final manifest = reviewed ?? await entry.manifest();
     final backgrounds = await entry.backgrounds();
     checkSchool();
@@ -181,9 +207,17 @@ class WindowsDocumentTemplates {
     await Navigator.of(context).push<void>(MaterialPageRoute(builder: (previewContext) =>
       NativeIdCardPreview(template:card.template,data:card.data,images:card.images,
         backgrounds:card.backgrounds,qr:compact,
-        onPrint:hasPhoto ? (pages) async {
+        onPrintDocument:hasPhoto ? (frontOnly) async {
           checkSchool();
-          await WindowsBrowserPrint.openImages(previewContext,pages,title:'ID card',actualSize:true,isCurrent:(){try{checkSchool();return true;}catch(_){return false;}});
+          final bytes = await IdCardEngine.render(card.template,card.data,
+            images:card.images,backgrounds:card.backgrounds,qr:compact,frontOnly:frontOnly,printOnly:true);
+          checkSchool();
+          if(compact.isNotEmpty && card.template.regions.any((r)=>r.kind=='qr' &&
+              (!frontOnly || r.side=='front'))) await IdCardEngine.verifyExport(bytes,compact);
+          checkSchool();
+          if (!previewContext.mounted) return;
+          await WindowsBrowserPrint.open(previewContext,bytes,title:'ID card',
+            preserveActualSize:true,isCurrent:(){try{checkSchool();return true;}catch(_){return false;}});
         } : null,
         onDownload:hasPhoto ? () async {
           checkSchool();
@@ -229,8 +263,12 @@ class WindowsDocumentTemplates {
 
   static Future<Uint8List> renderImportedTemplate(
     String kind,Map<String,dynamic> manifest,Map<String,dynamic> record,
-  ) async => SchoolMediaBudgets.verifyGeneratedPdf(
-    kind, await WindowsTemplateCloudStore.render(kind,manifest,record));
+    {bool printOnly=false}
+  ) async {
+    final bytes=await WindowsTemplateCloudStore.render(kind,manifest,record);
+    return printOnly ? SchoolMediaBudgets.verifyPrintPdf(bytes)
+        : SchoolMediaBudgets.verifyGeneratedPdf(kind,bytes);
+  }
 
   static Future<Uint8List?> _image(dynamic raw) async {
     final source = raw?.toString().trim() ?? '';
@@ -288,7 +326,9 @@ class WindowsDocumentTemplates {
     // Sync Engine 3.0 publishes changed cards through publishChangedIdCards.
     bool publish = false,
     bool previewOnly = false,
+    bool printOnly = false,
   }) async {
+    if (publish && printOnly) throw ArgumentError('Print-only bytes cannot be published.');
     if (previewOnly && {'studentId', 'teacherId', 'otherStaffId'}.contains(kind)) {
       final origin = FirebaseFirestore.instance.activeProfileId;
       if (data['schoolId'] != null && data['schoolId'] !=
@@ -302,16 +342,28 @@ class WindowsDocumentTemplates {
       // A no-photo card must still be generated by the normal publication
       // owner. Only the interactive preview is withheld.
       if (photo == null || photo.isEmpty) return null;
+      final card = await nativePersonCard(kind,data);
+      if (card != null) {
+        qr = IdCardEngine.compactQr(qr);
+        final bytes=await IdCardEngine.render(card.template,card.data,
+          images:card.images,backgrounds:card.backgrounds,qr:qr,printOnly:printOnly);
+        if(qr.isNotEmpty) await IdCardEngine.verifyExport(bytes,qr);
+        if(FirebaseFirestore.instance.activeProfileId!=origin)
+          throw StateError('School changed during ID card export.');
+        return bytes;
+      }
     }
     qr = IdCardEngine.compactQr(qr);
-    final rendered = await _selected(kind, data, qr: qr);
-    final bytes = rendered == null ? null : SchoolMediaBudgets.verifyGeneratedPdf(kind, rendered);
+    final rendered = await _selected(kind, data, qr: qr,printOnly:printOnly);
+    final bytes = rendered == null ? null : printOnly
+        ? SchoolMediaBudgets.verifyPrintPdf(rendered)
+        : SchoolMediaBudgets.verifyGeneratedPdf(kind, rendered);
     if (bytes != null &&
         {'studentId', 'teacherId', 'otherStaffId'}.contains(kind) &&
         qr.isNotEmpty)
       await IdCardEngine.verifyExport(bytes, qr);
     if (bytes != null &&
-        publish &&
+        publish && !previewOnly &&
         {'studentId', 'teacherId'}.contains(kind) &&
         qr.isNotEmpty) {
       final identity = await CentralSchoolCloud.saved();
@@ -758,6 +810,8 @@ class WindowsDocumentTemplates {
     String kind,
     Map<String, dynamic> data, {
     String qr = '',
+    Object? selectionOverride,
+    bool printOnly=false,
   }) async {
     final origin = FirebaseFirestore.instance.activeProfileId;
     if (data['schoolId'] != null &&
@@ -776,11 +830,19 @@ class WindowsDocumentTemplates {
       }
     }
     final templateSettings=await selections();
+    final rawSelection = selectionOverride ?? (kind == 'receipt'
+        ? data['receiptTemplateSelection'] ?? templateSettings[kind]
+        : templateSettings[kind]);
     final v = kind == 'studentId'
-        ? studentCardSelection(templateSettings[kind])
-        : kind == 'receipt' && data['receiptTemplateSelection'] != null
-            ? data['receiptTemplateSelection']
-            : templateSettings[kind] ?? 0;
+        ? studentCardSelection(rawSelection)
+        : financialSelection(kind, rawSelection) ?? 0;
+    final plain = v == plainSelection;
+    if (financialKind(kind) && !plain &&
+        !(v is num && v.isFinite && v == v.toInt() && v >= 0 &&
+          v < (kind == 'payslip' ? 1 : windowsReferenceDocumentNames[kind]!.length)) &&
+        !(v is String && v.startsWith('imported:'))) {
+      throw StateError('Selected school template is invalid. Choose a template or Plain White.');
+    }
     final profile =
         (await FirebaseFirestore.instance
                 .collection('school_config')
@@ -811,14 +873,14 @@ class WindowsDocumentTemplates {
         if(kind=='reportCard' && (data['dateText']?.toString().trim().isEmpty??true))
           'dateText':_documentDate(data['timestamp']),
       };
-      return renderImportedTemplate(kind,manifest,record);
+      return renderImportedTemplate(kind,manifest,record,printOnly:printOnly);
     }
     if(kind=='payslip'){
       return renderWindowsPayslip({
         ...profile,...data,
         'netPaise':data['netPaise']??data['salaryNetPaise']??0,
         'paidPaise':data['paidPaise']??0,
-      },schoolName:schoolName);
+      },schoolName:schoolName,plain:plain);
     }
     final brandingSources = [data['schoolLogoUrl'] ?? profile['logoUrl'],
       data['principalSignatureUrl'] ?? profile['principalSignatureUrl'], profile['sealUrl']];
@@ -875,6 +937,7 @@ class WindowsDocumentTemplates {
         qr: qr,
         reviewedManifest: reviewed,
         templateId: templateId,
+        printOnly:printOnly,
         photo: assets[0],
         logo: assets[1],
         signature: assets[2],
@@ -900,6 +963,7 @@ class WindowsDocumentTemplates {
     return renderWindowsReferenceDocument(
       kind: kind,
       template: windowsReferenceDocumentIndex(kind, v),
+      plain: plain, printOnly:printOnly,
       data: {
         ...profile,
         'schoolName': profile['schoolName'] ?? profile['name'] ?? '',
@@ -928,6 +992,35 @@ class WindowsDocumentTemplates {
     Map<String, dynamic> data,
   ) async {
     final origin = FirebaseFirestore.instance.activeProfileId;
+    if (personKind(kind) && index == -1) {
+      final sample={...data,if ((data['schoolName']?.toString().trim()??'').isEmpty)
+        'schoolName':'Sample School'};
+      final card=await nativePersonCard(kind,sample,selection:plainSelection);
+      if(card==null)throw StateError('Plain ID preview unavailable.');
+      return IdCardEngine.render(card.template,card.data,images:card.images,
+        backgrounds:card.backgrounds,printOnly:true);
+    }
+    if (financialKind(kind)) {
+      final sample = kind == 'payslip' ? <String, dynamic>{
+        'name': 'Sample staff', 'employeeId': 'EMP-001',
+        'netPaise': 2850000, 'paidPaise': 2000000, 'basicPaise': 2500000,
+        'allowancePaise': 400000, 'deductionPaise': 50000,
+        'role': 'Teacher', 'month': '2026-10', 'status': 'Part paid', ...data,
+      } : Map<String, dynamic>.of(data);
+      Object choice = index == -1 ? plainSelection : index;
+      final base = importedTemplateIndex(kind);
+      if (index >= base) {
+        final settings = await selections();
+        final assets = availableImportedTemplates(settings, kind,
+          FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']?.toString() ?? '');
+        final position = index - base;
+        if (position >= assets.length) throw StateError('Template list changed. Reopen preview.');
+        choice = 'imported:${assets[position]['templateId'] ?? assets[position]['sourceHash']}';
+      }
+      if (FirebaseFirestore.instance.activeProfileId != origin)
+        throw StateError('School changed during template preview.');
+      return _selected(kind, sample, selectionOverride: choice,printOnly:true);
+    }
     final profile =
         (await FirebaseFirestore.instance
                 .collection('school_config')
@@ -982,6 +1075,7 @@ class WindowsDocumentTemplates {
       return manifestId(
         branding,
         templateId: entry.id,
+        printOnly:true,
         logo: images[0],
         signature: images[1],
         seal: images[2],
@@ -998,6 +1092,7 @@ class WindowsDocumentTemplates {
       kind: kind,
       template: index,
       data: branding,
+      printOnly:true,
       logo: images[0],
       signature: images[1],
       seal: images[2],
@@ -1069,6 +1164,8 @@ class WindowsDocumentTemplates {
       WindowsReportCardPreview.open(
         context,
         data,
+        // Explicit print preview: transient bytes only, never published.
+        createPdf: (record) => selected('reportCard', record, publish: false,printOnly:true),
       );
 }
 
@@ -1109,12 +1206,15 @@ class _SchoolDocumentTemplatesScreenState
         : List<String>.from(windowsReferenceDocumentNames[kind]??const <String>[]);
 
   int _chosen() {
+    if (WindowsDocumentTemplates.plainPrintSelection(_kind,_selected[_kind])) return -1;
     if (_kind == 'studentId') {
       final selection = WindowsDocumentTemplates.studentCardSelection(_selected[_kind]);
       final id = selection.split(':')[1];
-      return _choices(_kind).indexWhere((entry) => entry.id == id);
+      final position=_choices(_kind).indexWhere((entry) => entry.id == id);
+      return position<0?-2:position;
     }
-    final value = _selected[_kind];
+    final value = WindowsDocumentTemplates.financialSelection(_kind, _selected[_kind]);
+    if (value == WindowsDocumentTemplates.plainSelection) return -1;
     if(value is String && value.startsWith('imported:')){
       final templates=WindowsDocumentTemplates.availableImportedTemplates(
         _selected,_kind,
@@ -1122,11 +1222,11 @@ class _SchoolDocumentTemplatesScreenState
       final index=templates.indexWhere((asset)=>
         asset['approved']==true &&
         (asset['templateId']??asset['sourceHash'])==value.substring(9));
-      return index<0?-1:_baseTemplateCount(_kind)+index;
+      return index<0?-2:_baseTemplateCount(_kind)+index;
     }
     if (value is String && value.startsWith('manifest:')) {
       final i = _choices(_kind).indexWhere((e) => e.id == value.substring(9));
-      return i < 0 ? -1 : _legacyCount(_kind) + i;
+      return i < 0 ? -2 : _legacyCount(_kind) + i;
     }
     return _kind == 'studentId'
         ? windowsStudentIdIndex(value)
@@ -1141,6 +1241,27 @@ class _SchoolDocumentTemplatesScreenState
   final Map<String, Future<Uint8List>> _thumbnails = {};
   StreamSubscription? _templateChanges;
   bool _deletingTemplate=false;
+  bool _selectingTemplate=false;
+  TemplateFeatureAccess _feature=const TemplateFeatureAccess.unverified();
+  Timer? _featureTimer;
+  bool _refreshingFeature=false;
+  Future<void> _refreshFeature() async {
+    if(_refreshingFeature)return;
+    _refreshingFeature=true;
+    final origin=FirebaseFirestore.instance.activeProfileId;
+    try{
+      final next=await WindowsTemplateFeatureAccess.read(force:true);
+      if(mounted&&FirebaseFirestore.instance.activeProfileId==origin){
+        final resumed=next.canUpload&&!_feature.canUpload;
+        if(next.canUse!=_feature.canUse)_thumbnails.clear();
+        setState(()=>_feature=next);
+        if(resumed)unawaited(_resumeApprovedTemplates());
+      }
+    }catch(_){
+      if(mounted&&FirebaseFirestore.instance.activeProfileId==origin)
+        setState(()=>_feature=const TemplateFeatureAccess.unverified());
+    }finally{_refreshingFeature=false;}
+  }
 
   Future<Uint8List> _thumbnail(int index) {
     final kind = _kind;
@@ -1161,6 +1282,8 @@ class _SchoolDocumentTemplatesScreenState
   void initState() {
     super.initState();
     _initializeCatalog();
+    unawaited(_refreshFeature());
+    _featureTimer=Timer.periodic(const Duration(seconds:60),(_)=>unawaited(_refreshFeature()));
     final db=FirebaseFirestore.instance,origin=db.activeProfileId;
     _templateChanges=db.collection('school_settings').doc('document_templates')
       .snapshots().listen((_){
@@ -1169,7 +1292,7 @@ class _SchoolDocumentTemplatesScreenState
   }
 
   @override
-  void dispose(){_templateChanges?.cancel();super.dispose();}
+  void dispose(){_featureTimer?.cancel();_templateChanges?.cancel();super.dispose();}
 
   Future<void> _deleteUploaded(int index) async {
     final kind=_kind;
@@ -1195,6 +1318,50 @@ class _SchoolDocumentTemplatesScreenState
     } finally {if(mounted)setState(()=>_deletingTemplate=false);}
   }
 
+  Future<void> _archiveTemplate(int index) async {
+    final kind=_kind,school=FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'];
+    final asset=_uploadedTemplate(index);
+    if(asset==null || _deletingTemplate || _selectingTemplate)return;
+    final id=WindowsTemplateCloudStore.versionId(asset);
+    final confirmed=await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(
+      title:const Text('Archive uploaded template?'),
+      content:const Text('Hide this inactive design from the template list. The verified Drive asset and history remain available for restoration.'),
+      actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),
+        FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Archive'))]));
+    if(confirmed!=true || !mounted || FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']!=school)return;
+    setState(()=>_deletingTemplate=true);
+    try {await WindowsTemplateCloudStore.setArchived(kind,id,archive:true);if(mounted)await _initializeCatalog();}
+    catch(error){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Archive failed: $error')));}
+    finally {if(mounted)setState(()=>_deletingTemplate=false);}
+  }
+
+  Future<void> _showArchive() async {
+    final kind=_kind,db=FirebaseFirestore.instance,origin=db.activeProfileId;
+    final school=db.activeProfileIdentity['schoolSyncId']?.toString()??'';
+    final archived=WindowsTemplateCloudStore.archivedTemplates(_selected,kind,school);
+    final chosen=await showDialog<String>(context:context,builder:(ctx)=>AlertDialog(
+      title:const Text('Archived templates'),
+      content:SizedBox(width:500,child:archived.isEmpty?const Text('No archived templates'):
+        ListView(shrinkWrap:true,children:[for(final asset in archived)ListTile(
+          title:Text(asset['filename']?.toString()??'School template'),
+          trailing:TextButton(onPressed:()=>Navigator.pop(ctx,WindowsTemplateCloudStore.versionId(asset)),
+            child:const Text('Restore')))])),
+      actions:[TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Close'))]));
+    if(chosen==null || !mounted || db.activeProfileId!=origin || db.activeProfileIdentity['schoolSyncId']!=school)return;
+    setState(()=>_deletingTemplate=true);
+    try{await WindowsTemplateCloudStore.setArchived(kind,chosen,archive:false);if(mounted)await _initializeCatalog();}
+    catch(error){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Restore failed: $error')));}
+    finally{if(mounted)setState(()=>_deletingTemplate=false);}
+  }
+
+  Future<void> _resumeApprovedTemplates() async {
+    final origin=FirebaseFirestore.instance.activeProfileId;
+    try{
+      final count=await WindowsTemplateCloudStore.resumeApprovedPublications();
+      if(count>0&&mounted&&FirebaseFirestore.instance.activeProfileId==origin)await _initializeCatalog();
+    }catch(_){ /* Local approved drafts remain available for explicit retry. */ }
+  }
+
   int _catalogLoadGeneration=0;
   Future<void> _initializeCatalog() async {
     final generation=++_catalogLoadGeneration;
@@ -1209,6 +1376,7 @@ class _SchoolDocumentTemplatesScreenState
         setState(() {
           _catalog = entries;
           _selected = v;
+          _catalogError = null;
           for (final kind in ['studentId', 'teacherId', 'otherStaffId'])
             _names[kind] = [
               if (kind == 'studentId') ...windowsStudentIdNames,
@@ -1228,7 +1396,7 @@ class _SchoolDocumentTemplatesScreenState
           _loading = false;
         });
     } catch (e) {
-      if (mounted)
+      if (mounted && generation==_catalogLoadGeneration && FirebaseFirestore.instance.activeProfileId==origin)
         setState(() {
           _loading = false;
           _catalogError = 'Invalid template catalog: $e';
@@ -1281,7 +1449,8 @@ class _SchoolDocumentTemplatesScreenState
     try {
       final origin = FirebaseFirestore.instance.activeProfileId;
       final settings = await WindowsDocumentTemplates.selections();
-      final value = WindowsDocumentTemplates.studentCardSelection(settings['studentId']);
+      final value = WindowsDocumentTemplates.plainPrintSelection('studentId',settings['studentId'])
+        ? 'manifest:school-id-v1' : WindowsDocumentTemplates.studentCardSelection(settings['studentId']);
       final id = value.split(':')[1];
       final entry = await IdCardCatalog.find(id);
       if (mounted && FirebaseFirestore.instance.activeProfileId == origin)
@@ -1313,6 +1482,9 @@ class _SchoolDocumentTemplatesScreenState
   String? _uploadedPaperLabel(int index) {
     final asset=_uploadedTemplate(index);
     if(asset==null)return null;
+    if(asset['version']==2 && asset['pages'] is List){
+      return '${(asset['pages'] as List).length} verified source pages • A4 / Legal';
+    }
     final width=asset['width'],height=asset['height'];
     if(width is! num || height is! num)return 'Paper size unavailable';
     try {
@@ -1324,7 +1496,7 @@ class _SchoolDocumentTemplatesScreenState
 
   Future<void> _preview(int index) async {
     final kind=_kind;
-    final title=index<0?'Default preview':_names[kind]![index];
+    final title=index<0?'Plain White preview':_names[kind]![index];
     final entry = _manifestEntry(kind, index);
     if (entry != null) {
       try {
@@ -1343,19 +1515,18 @@ class _SchoolDocumentTemplatesScreenState
       }
       return;
     }
-    final paper=_uploadedPaperLabel(index);
-    final bytes = await WindowsDocumentTemplates.renderTemplate(
-      kind,
-      index,
-      _sample,
-    );
-    if (mounted)
-      await WindowsDocumentTemplates.preview(
-        context,
-        bytes!,
-        title:title,
+    try {
+      final paper=_uploadedPaperLabel(index);
+      final bytes = await WindowsDocumentTemplates.renderTemplate(kind,index,_sample);
+      if (bytes == null) throw StateError('Template renderer returned no document.');
+      if (mounted) await WindowsDocumentTemplates.preview(
+        context, bytes, title:title,
         notice:paper==null?null:'$paper. Print using matching paper at Actual size (100%).',
       );
+    } catch(error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Template preview unavailable. Retry Preview.')));
+    }
   }
 
   IdCardCatalogEntry? _manifestEntry(String kind, int index) {
@@ -1370,7 +1541,8 @@ class _SchoolDocumentTemplatesScreenState
     final origin=db.activeProfileId;
     final boundSchool=db.activeProfileIdentity['schoolSyncId'];
     final school=boundSchool?.toString()??'';
-    final settings=await WindowsDocumentTemplates.selections();
+    final settings=Map<String,dynamic>.of(_selected);
+    final sample=Map<String,dynamic>.of(_sample);
     if(db.activeProfileId!=origin ||
       db.activeProfileIdentity['schoolSyncId']!=boundSchool){
       throw StateError('School changed before template selection.');
@@ -1383,7 +1555,10 @@ class _SchoolDocumentTemplatesScreenState
     final isImported=['receipt','reportCard','payslip'].contains(kind) &&
       asset!=null && asset['approved']==true &&
       asset['schoolId']==school;
-    final value = isImported
+    if(isImported)await WindowsTemplateFeatureAccess.requireUse(force:true);
+    final value = index == -1 && WindowsDocumentTemplates.supportsPlain(kind)
+        ? WindowsDocumentTemplates.plainSelection
+        : isImported
         ? 'imported:${asset['templateId']??asset['sourceHash']}'
         : {'studentId', 'teacherId', 'otherStaffId'}.contains(kind) &&
             index >= count
@@ -1393,12 +1568,44 @@ class _SchoolDocumentTemplatesScreenState
       db.activeProfileIdentity['schoolSyncId']!=boundSchool){
       throw StateError('School changed before template selection was saved.');
     }
-    await db.collection('school_settings')
-        .doc('document_templates')
-        .set({
-          kind: value,
-          'updatedAt': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
+    if (isImported && (asset['version']==2 || ((asset['fields'] as List?)??const []).any((f)=>f is Map&&(f.containsKey('ink')||f.containsKey('bold')||f.containsKey('alignment'))))) {
+      if(!mounted)return;
+      final confirmed=await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(
+        title:const Text('Select updated template format?'),
+        content:const Text('All school PCs must use the current Windows app with support for this template format. Older apps cannot render this design. Update every PC before applying.'),
+        actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),
+          FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('All PCs updated'))]));
+      if(confirmed!=true || !mounted)return;
+      if(db.activeProfileId!=origin || db.activeProfileIdentity['schoolSyncId']!=boundSchool)
+        throw StateError('School changed before template selection.');
+    }
+    final ref = db.collection('school_settings').doc('document_templates');
+    // Validate the exact selected financial renderer before changing selection.
+    // The approved manifest cannot silently become a different version.
+    if (WindowsDocumentTemplates.supportsPlain(kind)) {
+      final preview = WindowsDocumentTemplates.financialKind(kind)
+        ? await WindowsDocumentTemplates._selected(kind,sample,selectionOverride:value,printOnly:true)
+        : await WindowsDocumentTemplates.renderTemplate(kind,index,sample);
+      if (preview == null || preview.isEmpty) throw StateError('Template is not printable.');
+    }
+    if(db.activeProfileId!=origin ||
+       db.activeProfileIdentity['schoolSyncId']!=boundSchool) {
+      throw StateError('School changed during template verification.');
+    }
+    final currentSnapshot = (await ref.get()).data();
+    final current = currentSnapshot ?? <String,dynamic>{};
+    if (current[kind] != settings[kind])
+      throw StateError('Template selection changed on another device. Refresh and retry.');
+    if (isImported && !WindowsDocumentTemplates.availableImportedTemplates(current,kind,school)
+        .any((asset)=>'imported:${WindowsTemplateCloudStore.versionId(asset)}'==value)) {
+      throw StateError('Uploaded template was removed. Reopen templates.');
+    }
+    if(db.activeProfileId!=origin || db.activeProfileIdentity['schoolSyncId']!=boundSchool)
+      throw StateError('School changed before template save.');
+    final batch = db.batch();
+    batch.requireUnchanged(ref,currentSnapshot);
+    batch.set(ref,{kind:value,'updatedAt':FieldValue.serverTimestamp()},const SetOptions(merge:true));
+    await batch.commit();
     if(db.activeProfileId!=origin ||
       db.activeProfileIdentity['schoolSyncId']!=boundSchool){
       throw StateError('School changed while template selection was saving.');
@@ -1414,7 +1621,9 @@ class _SchoolDocumentTemplatesScreenState
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (_catalogError != null) Text(_catalogError!),
+          if (!_loading && _chosen()==-2) const Text('Selected template unavailable. Retry or explicitly choose another design.'),
+          if (_catalogError != null) ...[Text(_catalogError!),
+            TextButton(onPressed:_initializeCatalog,child:const Text('Retry templates'))],
           Wrap(
             spacing: 8,
             runSpacing: 8,
@@ -1459,11 +1668,18 @@ class _SchoolDocumentTemplatesScreenState
             Align(
               alignment:Alignment.centerLeft,
               child:Wrap(spacing:12,runSpacing:8,children:[
+                OutlinedButton.icon(onPressed:_loading||_deletingTemplate||_selectingTemplate?null:() async {
+                  await SchoolTemplateImportEditor.previewSavedAutomatic(context,
+                    switch(_kind){'receipt'=>SchoolTemplateKind.receipt,'reportCard'=>SchoolTemplateKind.reportCard,_=>SchoolTemplateKind.payslip},_sample);
+                  if(mounted)await _initializeCatalog();
+                },icon:const Icon(Icons.replay),label:const Text('Local drafts / Retry')),
+                OutlinedButton.icon(onPressed:_loading||_deletingTemplate||_selectingTemplate?null:_showArchive,
+                  icon:const Icon(Icons.archive_outlined),label:const Text('Archived templates')),
                 OutlinedButton.icon(
                   key:ValueKey('upload-template-'+_kind),
-                  icon:const Icon(Icons.upload_file_outlined),
-                  label:const Text('Upload PDF / Image / Word / Excel template'),
-                  onPressed:_loading?null:() async {
+                  icon:Icon(_feature.canUpload?Icons.upload_file_outlined:Icons.lock_outline),
+                  label:const Text('Upload Word / Excel template'),
+                  onPressed:_loading||!_feature.canUpload?null:() async {
                     await SchoolTemplateImportEditor.pickAutomatic(
                       context,
                       switch (_kind) {
@@ -1473,14 +1689,16 @@ class _SchoolDocumentTemplatesScreenState
                       },
                       _sample,
                     );
-                    if(mounted)await _initializeCatalog();
+                    if(mounted){await _initializeCatalog();await _refreshFeature();}
                   },
                 ),
+                Tooltip(message:_feature.uploadExplanation,waitDuration:const Duration(milliseconds:250),
+                  child:IconButton(tooltip:null,onPressed:()=>_refreshFeature(),icon:const Icon(Icons.info_outline,size:19))),
               ]),
             ),
             const Padding(
               padding:EdgeInsets.symmetric(vertical:9),
-              child:Text('A4 and Legal (8.5 × 14 in) designs keep their original paper size and orientation. Verified uploads are stored in this school’s Drive and appear below as selectable versions.',
+              child:Text('Upload a blank Word (.docx) or Excel (.xlsx) school form with supported A4 / Legal layout. Review the generated design before saving. No Office installation is required.',
                 style:TextStyle(fontSize:12)),
             ),
           ],
@@ -1493,9 +1711,10 @@ class _SchoolDocumentTemplatesScreenState
                 crossAxisSpacing: 16,
                 mainAxisSpacing: 16,
               ),
-              itemCount: _names[_kind]!.length,
+              itemCount: _names[_kind]!.length +
+                  (WindowsDocumentTemplates.supportsPlain(_kind) ? 1 : 0),
               itemBuilder: (ctx, n) {
-                final i = n;
+                final i = n - (WindowsDocumentTemplates.supportsPlain(_kind) ? 1 : 0);
                 final chosen = _chosen();
                 final active = i == chosen;
                 final entry = _manifestEntry(_kind, i);
@@ -1528,6 +1747,11 @@ class _SchoolDocumentTemplatesScreenState
                             ),
                             const Spacer(),
                             if(const ['receipt','reportCard','payslip'].contains(_kind) &&
+                                i>=_baseTemplateCount(_kind) && !active)
+                              IconButton(tooltip:'Archive uploaded template',
+                                onPressed:_deletingTemplate||_selectingTemplate?null:()=>_archiveTemplate(i),
+                                icon:const Icon(Icons.archive_outlined)),
+                            if(const ['receipt','reportCard','payslip'].contains(_kind) &&
                                 i>=_baseTemplateCount(_kind))
                               IconButton(tooltip:'Delete uploaded template',
                                 onPressed:_deletingTemplate?null:()=>_deleteUploaded(i),
@@ -1550,9 +1774,9 @@ class _SchoolDocumentTemplatesScreenState
                                   : FutureBuilder<Uint8List>(
                                 future: _thumbnail(i),
                                 builder: (context, snapshot) { WindowsAppearance.watch(context); return  snapshot.hasData
-                                    ? Image.memory(
-                                        snapshot.data!,
-                                        fit: BoxFit.contain,
+                                    ? DecoratedBox(
+                                        decoration: const BoxDecoration(color: Colors.white),
+                                        child: Image.memory(snapshot.data!,fit:BoxFit.contain),
                                       )
                                     : snapshot.hasError
                                     ? const Text(
@@ -1565,13 +1789,13 @@ class _SchoolDocumentTemplatesScreenState
                           const SizedBox(height: 12),
                         ],
                         Text(
-                          i < 0 ? 'Default' : _names[_kind]![i],
+                          i < 0 ? 'Plain White' : _names[_kind]![i],
                           style: const TextStyle(fontFamily: 'Segoe UI', fontWeight: FontWeight.bold),
                         ),
                         const SizedBox(height: 8),
                         Text(
                           i < 0
-                              ? 'Standard school layout'
+                              ? 'No decorative template'
                               : portrait
                               ? 'Front | Back • each 54 × 85.6 mm'
                               : _kind.endsWith('Id')
@@ -1591,9 +1815,19 @@ class _SchoolDocumentTemplatesScreenState
                             ),
                             const SizedBox(width: 10),
                             FilledButton(
-                              onPressed: active || _catalogError != null
+                              onPressed: active || _loading || _selectingTemplate || _catalogError != null ||
+                                  (_uploadedTemplate(i)!=null&&!_feature.canUse)
                                   ? null
-                                  : () => _select(i),
+                                  : () async {
+                                      setState(() => _selectingTemplate = true);
+                                      try { await _select(i); }
+                                      catch (_) {
+                                        if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(content: Text('Template selection failed. Existing selection retained. Retry.')));
+                                      } finally {
+                                        if (mounted) setState(() => _selectingTemplate = false);
+                                      }
+                                    },
                               child: Text(
                                 active ? 'Selected' : 'Use for school',
                               ),
