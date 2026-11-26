@@ -10783,14 +10783,16 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
     required int count,
     required IconData icon,
     required Color color,
+    VoidCallback? onTap,
+    bool selected = false,
   }) {
-    return Container(
+    final card = Container(
       width: 185,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: WindowsAppearance.background(const Color(0xFF172229)),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: color.withOpacity(0.30)),
+        border: Border.all(color: color.withOpacity(selected ? 0.85 : 0.30), width: selected ? 1.5 : 1),
       ),
       child: Row(
         children: [
@@ -10824,6 +10826,12 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
         ],
       ),
     );
+    if (onTap == null) return card;
+    return Semantics(button: true, selected: selected, child: Material(
+      color: Colors.transparent,
+      child: InkWell(borderRadius: BorderRadius.circular(16),
+        onTap: onTap, child: card),
+    ));
   }
 
 Future<Map<String, dynamic>> _getClassFeeSettings(
@@ -12219,16 +12227,6 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
               color: WindowsAppearance.foreground(Colors.white54),
               fontSize: 10)),
           const SizedBox(height: 6),
-          Wrap(spacing: 6, children: [
-            ChoiceChip(label: Text('Not paid (${unpaid.length})'),
-              selected: !_showPartialStudents,
-              onSelected: _isSavingPayment ? null : (_) =>
-                  setState(() => _showPartialStudents = false)),
-            ChoiceChip(label: Text('Partial (${partial.length})'),
-              selected: _showPartialStudents,
-              onSelected: _isSavingPayment ? null : (_) =>
-                  setState(() => _showPartialStudents = true)),
-          ]),
           const SizedBox(height: 10),
           Divider(height: 1, color: WindowsAppearance.outline(Colors.white10)),
           Expanded(
@@ -12546,12 +12544,16 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                         _summaryCard(
                           title: 'Partial Paid',
                           count: partialCount,
+                          selected: _showPartialStudents,
+                          onTap: _isSavingPayment ? null : () => setState(() => _showPartialStudents = true),
                           icon: Icons.timelapse_rounded,
                           color: WindowsAppearance.foreground(Colors.orangeAccent),
                         ),
                         _summaryCard(
                           title: 'Due',
                           count: dueCount,
+                          selected: !_showPartialStudents,
+                          onTap: _isSavingPayment ? null : () => setState(() => _showPartialStudents = false),
                           icon: Icons.warning_amber_rounded,
                           color: WindowsAppearance.foreground(Colors.redAccent),
                         ),
@@ -23286,7 +23288,7 @@ class _ExamMarksEntryScreenState
     final controllers = <String, TextEditingController>{
       for (final subject in _subjects)
         subject: TextEditingController(
-          text: existingMarks[subject]?.toString() ?? '',
+          text: WindowsExamPolicy.markEntryText(existingMarks[subject]),
         ),
     };
 
@@ -23329,6 +23331,9 @@ class _ExamMarksEntryScreenState
                       child: TextField(
                         controller: controllers[subject],
                         keyboardType: TextInputType.number,
+                        inputFormatters: [TextInputFormatter.withFunction((oldValue, newValue) =>
+                          WindowsExamPolicy.validMarkEntry(newValue.text, _fullMarks, allowEmpty: true)
+                            ? newValue : oldValue)],
                         style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                         decoration: InputDecoration(
                           labelText:
@@ -23391,16 +23396,13 @@ class _ExamMarksEntryScreenState
                   : () async {
                       final marks = <String, double>{};
                       for (final subject in _subjects) {
-                        final value = WindowsExamPolicy.finiteNumber(
-                            controllers[subject]!.text.trim());
-                        if (value == null ||
-                            value < 0 ||
-                            value > _fullMarks) {
+                        final raw = controllers[subject]!.text;
+                        if (!WindowsExamPolicy.validMarkEntry(raw, _fullMarks)) {
                           setDialogState(() => dialogError =
                               '$subject marks invalid hain.');
                           return;
                         }
-                        marks[subject] = value;
+                        marks[subject] = int.parse(raw).toDouble();
                       }
 
                       setDialogState(() {
@@ -23670,7 +23672,7 @@ class _ExamMarksEntryScreenState
                                   ),
                                   Text(
                                     'Roll ${student['rollNo'] ?? ''}'
-                                    '${result == null ? ' • Marks pending' : ' • ${result['totalMarks'] ?? result['total'] ?? 0}/${result['maximum'] ?? (_subjects.length * _fullMarks)} • ${result['percentage'] ?? 0}%'}',
+                                    '${result == null ? ' • Marks pending' : ' • ${result['totalMarks'] ?? result['total'] ?? 0}/${result['maximum'] ?? (_subjects.length * _fullMarks)} • ${(WindowsExamPolicy.finiteNumber(result['percentage']) ?? 0).toStringAsFixed(2)}%'}',
                                     style:  TextStyle(fontFamily: 'Segoe UI', 
                                         color: WindowsAppearance.foreground(Colors.white38),
                                         fontSize: 10),
