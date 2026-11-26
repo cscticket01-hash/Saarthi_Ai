@@ -18,6 +18,7 @@ const {planStudentImport,canonicalHash}=require('./student-import-plan');
 const {createAttendanceQueue,firestoreAttendanceStore}=require('./attendance-queue');
 const {randomUUID,randomBytes,createHash,createHmac,timingSafeEqual,createCipheriv,createDecipheriv}=require('node:crypto');
 const {createSchoolDeltaSingleflight}=require('./school-delta-singleflight');
+const {isDeepStrictEqual}=require('node:util');
 const SCHOOL=/^vs-[a-f0-9]{32}$/;
 const COLLECTIONS=new Set(['students_directory','teachers_directory','attendance_logs','teacher_attendance','attendance_records','teacher_schedules','school_notices','school_calendar','exam_results','teacher_salary','school_config','school_settings','fee_settings','fee_ledger','fee_payments','school_expenses','student_scan_index','scanner_devices','documents','backups','exams','exam_center_results']);
 const hash=s=>createHash('sha256').update(s).digest('hex');
@@ -311,6 +312,54 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
  }
  // Canonical template artwork already uses this reserved upload namespace.
  function isTemplateUpload(b){return typeof b.name==='string'&&/^school_template_/i.test(b.name);}
+ // Do not let a generic media filename and ordinary record write bypass
+ // the upload switch. Existing immutable assets may be replayed unchanged;
+ // selection of an existing layout remains independent of global maintenance.
+ // Use the authoritative record owner (Drive or Cloudflare live) and leave
+ // the existing record/field CAS checks in charge of concurrent writes.
+ async function guardTemplateManifest(m,op){
+  if(op.collection!=='school_settings'||op.id!=='document_templates'||
+     !['write','recover'].includes(op.operation))return;
+  const patch=op.data?._syncFieldPatch;
+  const values=patch?patch.set:op.data;
+  if(!values||typeof values!=='object'||Array.isArray(values))return;
+  const assets=['templateAssets','templateAssetLatest'];
+  const kinds=['receipt','reportCard','payslip'];
+  const changes=assets.filter(k=>Object.hasOwn(values,k));
+  const selections=kinds.filter(k=>typeof values[k]==='string'&&values[k].startsWith('imported:'));
+  if(!changes.length&&!selections.length)return;
+  const policy=await templatePolicy(m);
+  if(policy.customTemplates&&policy.uploadEnabled)return;
+  const reply=await signed(m,{action:'managed_records',operation:'read',
+    collection:'school_settings',id:'document_templates',syncProtocol:2,
+    ...(op.liveProtocol===1?{liveProtocol:1}:{})});
+  if(reply?.success!==true||reply.schoolId!==m.schoolId||
+     reply.syncProtocol!==2||reply.pointRead!==true||
+     !reply.records||typeof reply.records!=='object'||Array.isArray(reply.records))
+   fail(503,'Template catalog verification is pending; existing changes retained','TEMPLATE_CATALOG_UNVERIFIED');
+  const current=reply.records.document_templates||{};
+  if(current.schoolId&&current.schoolId!==m.schoolId)
+   fail(502,'Template catalog belongs to a different school','TEMPLATE_CATALOG_UNVERIFIED');
+  const base=current._syncDeleted===true?{}:current;
+  if(changes.some(k=>!isDeepStrictEqual(values[k],base[k])))
+   fail(policy.customTemplates?503:403,
+    policy.customTemplates?'TemplateForge uploads are under maintenance. Existing templates remain available.':'Custom TemplateForge is not activated for this school',
+    policy.customTemplates?'TEMPLATE_UPLOAD_MAINTENANCE':'TEMPLATE_FEATURE_LOCKED');
+  for(const kind of selections){
+   if(!policy.customTemplates&&values[kind]!==base[kind])
+    fail(403,'Custom TemplateForge is not activated for this school','TEMPLATE_FEATURE_LOCKED');
+   if(policy.customTemplates&&values[kind]!==base[kind]){
+    const selected=values[kind].slice('imported:'.length),catalog=base.templateAssets?.[kind];
+    const candidates=catalog?.version===1||catalog?.version===2?[catalog]:
+      catalog&&typeof catalog==='object'?Object.values(catalog):[];
+    if(!candidates.some(asset=>asset&&asset.approved===true&&asset.schoolId===m.schoolId&&
+       asset.kind===kind&&(asset.templateId||asset.sourceHash)===selected)||
+       base['templateDeleted_'+kind+'_'+selected]===true||
+       base['templateArchived_'+kind+'_'+selected]===true)
+     fail(409,'Select an existing verified template during maintenance','TEMPLATE_SELECTION_UNVERIFIED');
+   }
+  }
+ }
  function lease(m){const e=m.entitlement,t=now(),paid=e.status!=='trial',end=Number(e.expiresAt||0);return {success:true,managed:true,schoolId:m.schoolId,uid:m.uid,projectId,serverTime:t,activated:e.activated===true,expiresAt:end,allowed:e.startsAt<=t&&end>t,status:e.startsAt>t?'pending':end>t?(paid?'licensed':'trial'):'expired'};}
  // Context is attached only after identity/entitlement verification, never from
  // an unauthenticated request's schoolId or arbitrary Script response.
@@ -1893,6 +1942,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
    seen.add(op.collection+'/'+op.id);operationIds.add(op.operationId);return {action:'managed_records',operation:'write',collection:op.collection,id:op.id,...(b.liveProtocol===1?{liveProtocol:1,createIntent:op.createIntent===true}:{}),
     syncProtocol:2,operationId:op.operationId,expectedRecordRevision:op.expectedRecordRevision,data:{...clean(op.data),schoolId:m.schoolId}};
   });
+  for(const op of operations)await guardTemplateManifest(m,op);
   if(liveSync.enabled(m.schoolId)){
    const states=await Promise.all(operations.map(op=>liveMigration.state(m.schoolId,op.collection)));
    const rolledBackNotices=operations.some(op=>op.collection==='school_notices')&&await liveMigration.rolledBack(m.schoolId,'school_notices');
@@ -1936,6 +1986,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   if(b.deletedTeacherGeneration!==undefined&&(b.collection!=='teachers_directory'||b.operation!=='delete'||typeof b.deletedTeacherGeneration!=='string'||!b.deletedTeacherGeneration||b.deletedTeacherGeneration.length>200))fail(400,'Invalid teacher deletion generation');
   if(b.deletedStudentGeneration!==undefined&&(b.collection!=='students_directory'||b.operation!=='delete'||typeof b.deletedStudentGeneration!=='string'||!b.deletedStudentGeneration||b.deletedStudentGeneration.length>200))fail(400,'Invalid student deletion generation');
   if(b.deleteEverywhereVersion!==undefined&&(b.deleteEverywhereVersion!==1||b.operation!=='delete'||b.syncProtocol!==2))fail(400,'Invalid delete-everywhere operation');
+  await guardTemplateManifest(m,{...b,data});
   const acknowledged=await signed(m,{action:'managed_records',operation:b.operation,collection:b.collection,
     ...(b.liveProtocol===1?{liveProtocol:1,createIntent:b.createIntent===true,...(b.cachedBaseline?{cachedBaseline:clean(b.cachedBaseline)}:{})}:{}),
     ...(b.syncProtocol===2?{syncProtocol:2,...(b.operation==='read'?{knownRevision:typeof b.knownRevision==='string'?b.knownRevision:''}:{operationId:b.operationId,expectedRecordRevision:b.expectedRecordRevision})}:{}),...(b.id?{id:b.id}:{}),...(data?{data}:{}),...(b.deletedStudentGeneration!==undefined?{deletedStudentGeneration:b.deletedStudentGeneration}:{}),...(b.deletedTeacherGeneration!==undefined?{deletedTeacherGeneration:b.deletedTeacherGeneration}:{}),...(b.expectedRevision!==undefined?{expectedRevision:b.expectedRevision}:{}),...(b.deleteEverywhereVersion===1?{deleteEverywhereVersion:1}:{}),...(Number.isFinite(b.expectedUploadedAt)?{expectedUploadedAt:b.expectedUploadedAt}:{})});

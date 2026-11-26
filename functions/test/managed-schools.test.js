@@ -53,6 +53,38 @@ test('developer controls school TemplateForge separately from global upload main
  await assert.rejects(f.call(upload),e=>e.code==='TEMPLATE_FEATURE_LOCKED');
  assert.equal([...f.docs.keys()].filter(k=>k.startsWith('platform_audit/')).length,4);
 });
+test('generic template manifest writes cannot publish new assets during maintenance or paid lock',async()=>{
+ const manifest={version:1,approved:true,schoolId:A,kind:'receipt',templateId:'old',sourceHash:'old',fileId:'old-file'};
+ const assets={receipt:{old:manifest}};
+ const existing={schoolId:A,templateAssets:assets,templateAssetLatest:{receipt:'old'},receipt:'plain',_syncRevision:'r1'};
+ const f=fixture(async(_,opt)=>{
+  const envelope=JSON.parse(opt.body),body=JSON.parse(envelope.payload);
+  const payload=body.operation==='read'?{pointRead:true,records:{document_templates:existing}}:
+    {recordRevision:'r2'};
+  return {ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:envelope.schoolId,syncProtocol:2,...payload})};
+ });
+ const write={action:'managed/records',collection:'school_settings',id:'document_templates',operation:'write',syncProtocol:2,
+  operationId:'template-manifest-policy-test-01',expectedRecordRevision:'r1'};
+ const added={receipt:{...assets.receipt,new:{...manifest,templateId:'new',fileId:'generic-upload'}}};
+ const send=data=>f.call({...write,data});
+ const patch=set=>({_syncFieldPatch:{version:1,set,remove:[],before:{}}});
+ await assert.rejects(send({templateAssets:added}),e=>e.code==='TEMPLATE_FEATURE_LOCKED');
+ await assert.rejects(send(patch({receipt:'imported:old'})),e=>e.code==='TEMPLATE_FEATURE_LOCKED');
+ await f.call({action:'developer/managed/features/set',schoolId:A,enabled:true,expectedRevision:0},'developer');
+ await f.call({action:'developer/managed/features/global/set',uploadEnabled:false,expectedRevision:0},'developer');
+ await assert.rejects(send(patch({templateAssets:added})),e=>e.code==='TEMPLATE_UPLOAD_MAINTENANCE');
+ await assert.rejects(send({templateAssetLatest:{receipt:'new'}}),e=>e.code==='TEMPLATE_UPLOAD_MAINTENANCE');
+ await assert.rejects(send(patch({receipt:'imported:unknown'})),e=>e.code==='TEMPLATE_SELECTION_UNVERIFIED');
+ await assert.rejects(f.call({action:'managed/records/batch',operations:[{...write,data:patch({templateAssets:added})}]}),
+  e=>e.code==='TEMPLATE_UPLOAD_MAINTENANCE');
+ await send({templateAssets:assets,templateAssetLatest:{receipt:'old'},receipt:'imported:old'});
+ await send(patch({templateArchived_receipt_old:true}));
+ await send(patch({receipt:'plain'}));
+ const writes=f.sent.map(x=>JSON.parse(JSON.parse(x.opt.body).payload)).filter(x=>x.operation==='write');
+ assert.equal(writes.length,3);
+ await f.call({action:'developer/managed/features/global/set',uploadEnabled:true,expectedRevision:1},'developer');
+ await send(patch({templateAssets:added}));
+});
 test('new school session routes to combined setup and contact restores on another PC',async()=>{
  const f=fixture();f.docs.get('platform_schools/'+A).registrationState='new';
  assert.equal((await f.call({action:'managed/session'})).registrationState,'new');
