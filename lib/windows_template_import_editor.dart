@@ -56,11 +56,14 @@ class SchoolTemplateImportEditor {
       await WidgetsBinding.instance.endOfFrame;
       final raw=await file.readAsBytes();
       stage('Converting document to a printable page… Word/Excel requires installed Microsoft Office or LibreOffice.');
-      final draft=await SchoolTemplateImportEngine.importBytes(
+      final sources=await SchoolTemplateImportEngine.importPages(
         kind:kind,schoolId:school,filename:file.name,
         bytes:Uint8List.fromList(raw));
       if(!sameSchool())throw StateError('School changed while uploading.');
-      final paperLabel=SchoolTemplateImportEngine.pageSizeLabel(draft.width,draft.height);
+      final verifiedPages=<SchoolTemplateDraft>[];
+      for(var pageIndex=0;pageIndex<sources.length;pageIndex++){
+      final draft=sources[pageIndex];
+      final paperLabel='Page ${pageIndex+1} of ${sources.length} • '+SchoolTemplateImportEngine.pageSizeLabel(draft.width,draft.height);
       stage('Checking '+paperLabel+' page orientation…');
       final oriented=await TemplateForgeOfflineOcr.normalizeOrientation(draft);
       if(!sameSchool())throw StateError('School changed during orientation detection.');
@@ -125,6 +128,9 @@ class SchoolTemplateImportEditor {
           +missing+'. Recognition warnings: '+warnings+
           '. Use a clearer A4 or Legal source; existing school templates remain unchanged.');
       }
+      verifiedPages.add(result.draft);
+      }
+      final approved=SchoolTemplateImportEngine.joinVerifiedPages(verifiedPages);
       final profile=(await db.collection('school_config')
         .doc('school_profile_cache').get()).data()??{};
       if(!sameSchool())throw StateError('School changed before preview.');
@@ -137,18 +143,18 @@ class SchoolTemplateImportEditor {
         'schoolAddress':profile['address']??example['schoolAddress']??'',
         'schoolEmail':profile['schoolEmail']??profile['email']??example['schoolEmail']??'',
       };
-      SchoolTemplateImportEngine.validatePreviewRecord(result.draft,record);
+      SchoolTemplateImportEngine.validatePreviewRecord(approved,record);
       stage('Loading verified school images and preparing preview…');
       final imageAssets=await WindowsTemplateCloudStore.previewVisualAssets(
-        result.draft,record);
+        approved,record);
       if(!sameSchool())throw StateError('School changed during image preview.');
       // Render the complete source+live-record preview before any Drive write.
       final output=await SchoolTemplateImportEngine.previewPdf(
-        result.draft,record,visualAssets:imageAssets);
+        approved,record,visualAssets:imageAssets);
       if(!sameSchool())throw StateError('School changed before publication.');
       // Keep one immutable, verified local draft even if the school Drive
       // becomes unavailable after recognition; repeat uploads are idempotent.
-      await SchoolTemplateImportEngine.saveLocalDraft(result.draft,
+      await SchoolTemplateImportEngine.saveLocalDraft(approved,
         currentSchoolId:()=>db.activeProfileIdentity['schoolSyncId']
           ?.toString()??'');
       if(!sameSchool())throw StateError('School changed before publication.');
@@ -156,12 +162,11 @@ class SchoolTemplateImportEditor {
       // Reuse the already validated PDF instead of downloading all assets
       // and rendering the identical preview a second time.
       stage('Saving to school Drive and verifying upload…');
-      await WindowsDocumentTemplates.publishImportedTemplate(result.draft);
+      await WindowsDocumentTemplates.publishImportedTemplate(approved);
       if(!sameSchool()||!context.mounted)return;
       closeProgress();
       await WindowsDocumentTemplates.preview(context,output,
-        title:kind.title+' • '+SchoolTemplateImportEngine.pageSizeLabel(
-          result.draft.width,result.draft.height)+' • School template preview',
+        title:kind.title+' • '+approved.pageDrafts.length.toString()+' source page(s) • School template preview',
         notice:'Use matching A4 or Legal paper at Actual Size (100%) when printing. Drive image read-back and content hash verified. This template is saved to this PC’s school catalog; other PCs receive its manifest through school sync. Select “Use for school” after preview to apply it to future prints.');
     } catch(error) {
       closeProgress();

@@ -1450,6 +1450,9 @@ class _SchoolDocumentTemplatesScreenState
   String? _uploadedPaperLabel(int index) {
     final asset=_uploadedTemplate(index);
     if(asset==null)return null;
+    if(asset['version']==2 && asset['pages'] is List){
+      return '${(asset['pages'] as List).length} verified source pages • A4 / Legal';
+    }
     final width=asset['width'],height=asset['height'];
     if(width is! num || height is! num)return 'Paper size unavailable';
     try {
@@ -1644,7 +1647,7 @@ class _SchoolDocumentTemplatesScreenState
             ),
             const Padding(
               padding:EdgeInsets.symmetric(vertical:9),
-              child:Text('A4 and Legal (8.5 × 14 in) designs keep their original paper size and orientation. Verified uploads are stored in this school’s Drive and appear below as selectable versions.',
+              child:Text('One to four independently recognized A4 or Legal source pages keep their paper size and orientation. Every page must pass field verification. Verified uploads are stored in this school’s Drive and appear below as selectable versions.',
                 style:TextStyle(fontSize:12)),
             ),
           ],

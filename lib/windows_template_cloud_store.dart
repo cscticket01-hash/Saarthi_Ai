@@ -26,6 +26,7 @@ class WindowsTemplateCloudStore {
       .doc('document_templates').get()).data()??{};
 
   static String _idFor(SchoolTemplateDraft draft,String contentHash) {
+    if(draft.additionalPages.isNotEmpty)return SchoolTemplateImportEngine.bundleIdentity(draft,contentHash,_engineVersion);
     final fields=jsonEncode(draft.fields.map((f)=>f.toJson()).toList());
     final visuals=draft.visualSlots.isEmpty?'':':'+jsonEncode(
       draft.visualSlots.map((s)=>s.toJson()).toList());
@@ -243,13 +244,16 @@ class WindowsTemplateCloudStore {
     }
     ensureSchool();
     SchoolTemplateImportEngine.validateDraft(draft);
-    if(draft.png.length>20*1024*1024){
+    final packed=SchoolTemplateImportEngine.packedArtwork(draft);
+    final dims=SchoolTemplateImportEngine.packedDimensions(draft);
+    final multi=draft.additionalPages.isNotEmpty;
+    if(packed.length>20*1024*1024){
       throw StateError('Template image is too large for verified Drive upload.');
     }
     // Use the existing Compression Engine in an isolate. Template artwork
     // is lossless-only: no raster text, QR, signature, or print pixels change.
     final artwork=await compute(DocumentProcessingEngine.templateArtworkUpload,
-      {'bytes':draft.png});
+      {'bytes':packed});
     ensureSchool();
     final uploadPng=artwork['optimized'] as Uint8List;
     final contentHash=sha256.convert(uploadPng).toString();
@@ -322,11 +326,12 @@ class WindowsTemplateCloudStore {
     }
 
     final manifest=<String,dynamic>{
-      'version':1,'approved':true,'schoolId':school,
+      'version':multi?2:1,'approved':true,'schoolId':school,
       'kind':draft.kind.name,'filename':draft.filename,
       'sourceHash':draft.sourceHash,'contentHash':contentHash,
       'templateId':templateId,'fileId':fileId,'fileUrl':fileUrl,
-      'width':draft.width,'height':draft.height,
+      'width':dims.width,'height':dims.height,
+      if(multi)'pages':SchoolTemplateImportEngine.pageMetadata(draft),
       'fields':draft.fields.map((f)=>f.toJson()).toList(),
       if(draft.visualSlots.isNotEmpty)
         'visualSlots':draft.visualSlots.map((s)=>s.toJson()).toList(),
@@ -427,8 +432,8 @@ class WindowsTemplateCloudStore {
     void Function() ensureSchool,
   ) async {
     final result=<String,Uint8List>{};
-    for(final slot in draft.visualSlots){
-      if(slot.role=='qrCode')continue;
+    for(final slot in draft.pageDrafts.expand((p)=>p.visualSlots)){
+      if(slot.role=='qrCode'||result.containsKey(slot.role))continue;
       final values=switch(slot.role){
         'studentPhoto'=>[record['photoUrl'],record['photoBase64']],
         'schoolLogo'=>[record['schoolLogoUrl'],record['logoUrl'],

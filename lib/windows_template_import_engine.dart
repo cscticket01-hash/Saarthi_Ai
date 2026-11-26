@@ -107,23 +107,28 @@ class SchoolTemplateDraft {
   const SchoolTemplateDraft({required this.kind,required this.schoolId,
     required this.filename,required this.sourceHash,required this.png,
     required this.width,required this.height,this.fields=const [],
-    this.visualSlots=const []});
+    this.visualSlots=const [],this.additionalPages=const []});
   final SchoolTemplateKind kind;
   final String schoolId,filename,sourceHash;
   final Uint8List png;
   final int width,height;
   final List<SchoolTemplateField> fields;
   final List<ForgeVisualSlot> visualSlots;
+  final List<SchoolTemplateDraft> additionalPages;
+  List<SchoolTemplateDraft> get pageDrafts=>[this,...additionalPages];
   SchoolTemplateDraft copyWith({
     List<SchoolTemplateField>? fields,List<ForgeVisualSlot>? visualSlots,
+    List<SchoolTemplateDraft>? additionalPages,
   }) =>
     SchoolTemplateDraft(kind:kind,schoolId:schoolId,filename:filename,
       sourceHash:sourceHash,png:png,width:width,height:height,
-      fields:fields??this.fields,visualSlots:visualSlots??this.visualSlots);
+      fields:fields??this.fields,visualSlots:visualSlots??this.visualSlots,
+      additionalPages:additionalPages??this.additionalPages);
 }
 
 class SchoolTemplateImportEngine {
   static const maxSourceBytes=16*1024*1024;
+  static const maxSourcePages=4;
   static const maxPngBytes=18*1024*1024;
   static const maxPixels=12000000;
   static const maxTableRows=12;
@@ -213,6 +218,24 @@ class SchoolTemplateImportEngine {
   }
 
   static void validateDraft(SchoolTemplateDraft draft) {
+    if(draft.additionalPages.length>=maxSourcePages)
+      throw const FormatException('Too many source template pages.');
+    var pixels=0,bytes=0;
+    for(final page in draft.pageDrafts){
+      if(page.kind!=draft.kind || page.schoolId!=draft.schoolId ||
+          page.sourceHash!=draft.sourceHash ||
+          (!identical(page,draft) && page.additionalPages.isNotEmpty)){
+        throw const FormatException('Template pages must share one source and school.');
+      }
+      _validateSinglePage(page);
+      pixels+=page.width*page.height;
+      bytes+=page.png.length;
+    }
+    if(pixels>maxPixels || bytes>maxPngBytes)
+      throw const FormatException('Combined template pages exceed safe raster limits.');
+  }
+
+  static void _validateSinglePage(SchoolTemplateDraft draft) {
     verifySchool(draft.schoolId);
     if(draft.png.isEmpty || draft.png.length>maxPngBytes ||
       draft.width<80 || draft.height<80 ||
@@ -382,6 +405,153 @@ class SchoolTemplateImportEngine {
       width:decoded.width,height:decoded.height);
   }
 
+  /// The original single-page API remains strict for existing callers. The
+  /// editor uses this bounded page API and OCR-verifies each returned page.
+  static Future<List<SchoolTemplateDraft>> importPages({
+    required SchoolTemplateKind kind,required String schoolId,
+    required String filename,required Uint8List bytes,
+    Future<List<Uint8List>> Function(Uint8List)? pdfPagesRasterizer,
+    Future<Uint8List> Function(String,Uint8List)? officePdfConverter,
+  }) async {
+    verifySchool(schoolId);
+    if(bytes.isEmpty || bytes.length>maxSourceBytes || filename.isEmpty ||
+      filename.length>180 || filename.contains('/') || filename.contains('\\\\')){
+      throw const FormatException('Invalid template source.');
+    }
+    final office=SchoolTemplateOfficeConverter.supports(filename);
+    final ext=filename.split('.').last.toLowerCase();
+    if(!office && ext!='pdf')return [await importBytes(kind:kind,schoolId:schoolId,
+      filename:filename,bytes:bytes)];
+    var pdf=bytes;
+    if(office){
+      SchoolTemplateOfficeConverter.validateSource(filename,bytes);
+      pdf=officePdfConverter!=null?await officePdfConverter(filename,bytes):
+        await SchoolTemplateOfficeConverter.convert(filename:filename,bytes:bytes);
+    }
+    if(pdf.length>maxSourceBytes || !isPdf(pdf))
+      throw const FormatException('Source did not convert to a safe PDF.');
+    final rasters=pdfPagesRasterizer!=null?await pdfPagesRasterizer(pdf):
+      await Printing.raster(pdf,dpi:110).take(maxSourcePages+1)
+        .asyncMap((page)=>page.toPng()).toList().timeout(const Duration(seconds:45));
+    if(rasters.isEmpty || rasters.length>maxSourcePages)
+      throw const FormatException('Upload one to four A4 or Legal source pages. No pages are dropped.');
+    final sourceHash=sha256.convert(bytes).toString();
+    final pages=<SchoolTemplateDraft>[];
+    var totalBytes=0,totalPixels=0;
+    for(final raster in rasters){
+      totalBytes+=raster.length;
+      if(totalBytes>maxPngBytes)throw const FormatException('Combined template image size exceeds limit.');
+      final page=await importBytes(kind:kind,schoolId:schoolId,filename:'source.pdf',
+        bytes:pdf,pdfPagesRasterizer:(_) async=>[raster]);
+      totalPixels+=page.width*page.height;
+      if(totalPixels>maxPixels)throw const FormatException('Combined template pixels exceed limit.');
+      pages.add(SchoolTemplateDraft(kind:kind,schoolId:schoolId,filename:filename,
+        sourceHash:sourceHash,png:page.png,width:page.width,height:page.height));
+    }
+    return pages;
+  }
+
+  static SchoolTemplateDraft joinVerifiedPages(List<SchoolTemplateDraft> pages){
+    if(pages.isEmpty || pages.length>maxSourcePages)
+      throw const FormatException('Invalid source page count.');
+    final draft=pages.first.copyWith(additionalPages:List.unmodifiable(pages.skip(1)));
+    validateDraft(draft);
+    return draft;
+  }
+
+  static int pageRowSlots(SchoolTemplateDraft page){
+    final prefix=page.kind==SchoolTemplateKind.receipt?'feeName':
+      page.kind==SchoolTemplateKind.reportCard?'subjectName':null;
+    return prefix==null?0:page.fields.where((f)=>f.key.startsWith(prefix)).length;
+  }
+
+  /// Keep original totals/identity unchanged; only row lookup advances
+  /// across independently verified page table slots.
+  static Map<String,dynamic> recordForPage(SchoolTemplateDraft draft,
+      Map<String,dynamic> record,int pageIndex){
+    final key=draft.kind==SchoolTemplateKind.receipt?'feeItems':
+      draft.kind==SchoolTemplateKind.reportCard?'marks':null;
+    final offset=draft.pageDrafts.take(pageIndex).fold<int>(0,(n,p)=>n+pageRowSlots(p));
+    final raw=key==null?null:record[key];
+    if(raw is! Map || offset==0)return record;
+    return {...record,key!:Map<dynamic,dynamic>.fromEntries(raw.entries.skip(offset))};
+  }
+
+  static List<Map<String,dynamic>> pageMetadata(SchoolTemplateDraft draft)=>[
+    for(final page in draft.pageDrafts) {
+      'width':page.width,'height':page.height,
+      'fields':page.fields.map((f)=>f.toJson()).toList(),
+      'visualSlots':page.visualSlots.map((v)=>v.toJson()).toList(),
+    },
+  ];
+
+  // Store all independently verified pages in one lossless PNG asset using
+  // the existing school Drive route. Version 2 metadata binds every crop,
+  // field map and the complete artwork hash; old readers reject version 2.
+  static Uint8List packedArtwork(SchoolTemplateDraft draft){
+    if(draft.additionalPages.isEmpty)return draft.png;
+    validateDraft(draft);
+    final width=draft.pageDrafts.map((p)=>p.width).reduce(math.max);
+    final height=draft.pageDrafts.fold<int>(0,(n,p)=>n+p.height);
+    if(width*height>maxPixels)throw const FormatException('Combined page canvas exceeds limit.');
+    final atlas=img.Image(width:width,height:height,numChannels:4);
+    var y=0;
+    for(final page in draft.pageDrafts){
+      final source=img.decodePng(page.png)!;
+      if(source.iccProfile!=null)throw const FormatException('Multi-page color profile requires a standard RGB PDF.');
+      img.compositeImage(atlas,source,dstX:0,dstY:y,blend:img.BlendMode.direct);
+      y+=page.height;
+    }
+    final bytes=Uint8List.fromList(img.encodePng(atlas));
+    if(bytes.length>maxPngBytes)throw const FormatException('Combined template artwork exceeds limit.');
+    return bytes;
+  }
+
+  static String bundleIdentity(SchoolTemplateDraft draft,String contentHash,String engine)=>
+    sha256.convert(utf8.encode(jsonEncode([
+      draft.schoolId,draft.kind.name,draft.sourceHash,contentHash,pageMetadata(draft),engine,
+    ]))).toString();
+
+  static ({int width,int height}) packedDimensions(SchoolTemplateDraft draft)=>(
+    width:draft.pageDrafts.map((p)=>p.width).reduce(math.max),
+    height:draft.pageDrafts.fold<int>(0,(n,p)=>n+p.height),
+  );
+
+  static SchoolTemplateDraft _unpackPages(SchoolTemplateKind kind,String schoolId,
+      Map<String,dynamic> manifest,Uint8List png){
+    final raw=manifest['pages'];
+    if(raw is! List || raw.length<2 || raw.length>maxSourcePages)
+      throw const FormatException('Invalid multi-page template manifest.');
+    final atlas=img.decodePng(png);
+    if(atlas==null || atlas.width!=manifest['width'] || atlas.height!=manifest['height'] ||
+      atlas.width*atlas.height>maxPixels)throw const FormatException('Invalid combined template dimensions.');
+    final drafts=<SchoolTemplateDraft>[];
+    var y=0,maxWidth=0;
+    for(final item in raw){
+      if(item is! Map || item['width'] is! int || item['height'] is! int ||
+          item['fields'] is! List || item['visualSlots'] is! List)
+        throw const FormatException('Invalid page mapping.');
+      final w=item['width'] as int,h=item['height'] as int;
+      final fields=item['fields'] as List,slots=item['visualSlots'] as List;
+      if(w<80||h<80||w>atlas.width||y+h>atlas.height||fields.length>maxFields||slots.length>5)
+        throw const FormatException('Invalid page bounds.');
+      final cropped=img.copyCrop(atlas,x:0,y:y,width:w,height:h);
+      drafts.add(SchoolTemplateDraft(kind:kind,schoolId:schoolId,
+        filename:manifest['filename']?.toString()??'School template',
+        sourceHash:manifest['sourceHash']?.toString()??'',
+        png:Uint8List.fromList(img.encodePng(cropped)),width:w,height:h,
+        fields:fields.map((f)=>SchoolTemplateField.fromJson(Map<String,dynamic>.from(f as Map))).toList(),
+        visualSlots:slots.map((v)=>ForgeVisualSlot.fromJson(Map<String,dynamic>.from(v as Map))).toList()));
+      y+=h;maxWidth=math.max(maxWidth,w);
+    }
+    if(y!=atlas.height||maxWidth!=atlas.width)throw const FormatException('Unmapped source page pixels.');
+    final result=joinVerifiedPages(drafts);
+    final id=manifest['templateId'];
+    if(id!=null && id!=bundleIdentity(result,manifest['contentHash'].toString(),manifest['engine']?.toString()??''))
+      throw const FormatException('Multi-page field-map identity is invalid.');
+    return result;
+  }
+
   static String valueFor(String key,Map<String,dynamic> record) {
     final rowKey=RegExp(r'^(feeName|feeAmount|subjectName|subjectMarks)(1[01]|[0-9])$').firstMatch(key);
     if(rowKey!=null){
@@ -447,14 +617,13 @@ class SchoolTemplateImportEngine {
     if(!isFee && draft.kind!=SchoolTemplateKind.reportCard)return const [];
     final raw=record[isFee?'feeItems':'marks'];
     if(raw is! Map)return const [];
-    final prefix=isFee?'feeName':'subjectName';
-    final slots=draft.fields.where((f)=>f.key.startsWith(prefix)).length;
+    final slots=draft.pageDrafts.fold<int>(0,(n,p)=>n+pageRowSlots(p));
     if(slots==0){
       if(raw.isNotEmpty)throw const FormatException('No verified table slots.');
       return const [];
     }
     final rows=raw.entries.toList();
-    if(rows.length>maxRecordRows ||
+    if(rows.length>math.max(maxRecordRows,slots+continuationRowsPerPage*maxContinuationPages) ||
         rows.length>slots+continuationRowsPerPage*maxContinuationPages){
       throw const FormatException('Excessive continuation row count.');
     }
@@ -476,30 +645,34 @@ class SchoolTemplateImportEngine {
   static void validatePreviewRecord(
     SchoolTemplateDraft draft,Map<String,dynamic> record,
   ) {
-    validateFieldSet(draft.kind,draft.fields);
+    for(var index=0;index<draft.pageDrafts.length;index++){
+    final page=draft.pageDrafts[index];
+    final pageRecord=recordForPage(draft,record,index);
+    validateFieldSet(page.kind,page.fields);
     final keys=<String>{};
-    for(final field in draft.fields){
+    for(final field in page.fields){
       field.validate(draft.kind);
       if(!keys.add(field.key)){
         throw FormatException('Ambiguous duplicate field: '+field.key);
       }
-      final value=valueFor(field.key,record);
+      final value=valueFor(field.key,pageRecord);
       if(value.isEmpty){
         final rowKey=RegExp(
           r'^(feeName|feeAmount|subjectName|subjectMarks)(1[01]|[0-9])$',
         ).firstMatch(field.key);
         if(rowKey!=null){
           final rows=rowKey.group(1)!.startsWith('fee')
-            ?record['feeItems']:record['marks'];
+            ?pageRecord['feeItems']:pageRecord['marks'];
           final index=int.parse(rowKey.group(2)!);
           // Unused pre-detected row slots are intentionally white-masked.
           if(rows is Map && index>=rows.length)continue;
         }
         throw FormatException('Missing record value for '+field.key);
       }
-      final pageFormat=pageFormatForDimensions(draft.width,draft.height);
+      final pageFormat=pageFormatForDimensions(page.width,page.height);
       fittedTextSize(field,value,
         pageWidth:pageFormat.width,pageHeight:pageFormat.height);
+    }
     }
 
     // Extra record rows are printed on separately labelled matching-stock sheets.
@@ -614,7 +787,7 @@ class SchoolTemplateImportEngine {
     SchoolTemplateDraft draft,Map<String,dynamic> record,
     Map<String,Uint8List> visualAssets,
   ){
-    for(final slot in draft.visualSlots){
+    for(final slot in draft.pageDrafts.expand((p)=>p.visualSlots)){
       if(slot.role=='qrCode'){
         final data=(record['qr']??record['qrText'])?.toString().trim()??'';
         if(data.isEmpty||data.length>1024){
@@ -668,8 +841,8 @@ class SchoolTemplateImportEngine {
     // printed overlay must also contain their glyphs. Load the already
     // bundled fonts only when the current school record needs them.
     final indic=RegExp(r'[\u0900-\u097f\u0980-\u09ff]');
-    final needIndic=draft.fields.any(
-      (field)=>indic.hasMatch(valueFor(field.key,record)));
+    final needIndic=List.generate(draft.pageDrafts.length,(index)=>index).any((index)=>
+      draft.pageDrafts[index].fields.any((field)=>indic.hasMatch(valueFor(field.key,recordForPage(draft,record,index)))));
     final fontFallback=needIndic?<pw.Font>[
       pw.Font.ttf(await rootBundle.load(
         'assets/fonts/NotoSansDevanagari[wdth,wght].ttf')),
@@ -678,23 +851,28 @@ class SchoolTemplateImportEngine {
     ]:<pw.Font>[];
     // The original imported sheet remains A4 or Legal at real paper size.
     final pageFormat=pageFormatForDimensions(draft.width,draft.height);
-    final width=pageFormat.width,height=pageFormat.height;
-    final background=pw.MemoryImage(draft.png);
     final pdf=pw.Document();
-    pdf.addPage(pw.Page(
-      pageFormat:pageFormat,margin:pw.EdgeInsets.zero,
+    for(var index=0;index<draft.pageDrafts.length;index++){
+      final source=draft.pageDrafts[index];
+      final pageRecord=recordForPage(draft,record,index);
+      final format=pageFormatForDimensions(source.width,source.height);
+      final width=format.width,height=format.height;
+      final background=pw.MemoryImage(source.png);
+      pdf.addPage(pw.Page(
+      pageFormat:format,margin:pw.EdgeInsets.zero,
       build:(_)=>pw.Stack(children:[
         // Give the stack the exact source page dimensions. Positioned-only
         // stacks have no intrinsic size in the PDF widget layout engine.
         pw.SizedBox(width:width,height:height),
         pw.Positioned(left:0,top:0,
           child:pw.Image(background,width:width,height:height,fit:pw.BoxFit.fill)),
-        for(final f in draft.fields)
-          _renderField(f,record,normal,fontFallback,width,height),
-        for(final slot in draft.visualSlots)
+        for(final f in source.fields)
+          _renderField(f,pageRecord,normal,fontFallback,width,height),
+        for(final slot in source.visualSlots)
           _renderVisualSlot(slot,record,visualAssets,width,height),
       ]),
     ));
+    }
     final extra=continuationRows(draft,record);
     final pages=(extra.length+continuationRowsPerPage-1)~/
       continuationRowsPerPage;
@@ -718,7 +896,7 @@ class SchoolTemplateImportEngine {
             pw.Text('Student: '+valueFor('studentName',record),style:font),
             pw.Text('Reference: '+valueFor(
               isFee?'receiptNo':'examName',record),style:font),
-            pw.Text('Continuation ${index+1} / $pages – original sheet is page 1',
+            pw.Text('Continuation ${index+1} / $pages – original source sheets retained',
               style:font),
             pw.SizedBox(height:12),
             pw.Divider(),
@@ -787,7 +965,7 @@ class SchoolTemplateImportEngine {
     required Uint8List png,
   }) {
     verifySchool(schoolId);
-    if (manifest['version'] != 1 || manifest['approved'] != true ||
+    if (!const [1,2].contains(manifest['version']) || manifest['approved'] != true ||
         manifest['schoolId'] != schoolId || manifest['kind'] != kind.name ||
         manifest['contentHash'] is! String ||
         sha256.convert(png).toString() != manifest['contentHash']) {
@@ -795,6 +973,11 @@ class SchoolTemplateImportEngine {
     }
     if (png.isEmpty || png.length > maxPngBytes) {
       throw const FormatException('Published template image exceeds safe limits.');
+    }
+    if(manifest['version']==2){
+      if(manifest['templateId'] is! String || manifest['engine']!='TemplateForge-3')
+        throw const FormatException('Multi-page template identity is missing.');
+      return _unpackPages(kind,schoolId,manifest,png);
     }
     final decoded = img.decodePng(png);
     if (decoded == null || decoded.width != manifest['width'] ||
@@ -877,7 +1060,7 @@ class SchoolTemplateImportEngine {
     for (final manifest in manifests.take(30)) {
       try {
         final meta = jsonDecode(await manifest.readAsString());
-        if (meta is! Map<String, dynamic> || meta['version'] != 1 ||
+        if (meta is! Map<String, dynamic> || !const [1,2].contains(meta['version']) ||
             meta['approved'] != false || meta['schoolId'] != schoolId ||
             meta['kind'] != kind.name) continue;
         final hash = meta['sourceHash']?.toString() ?? '';
@@ -888,6 +1071,11 @@ class SchoolTemplateImportEngine {
         if (imageBytes.length > maxPngBytes) continue;
         if(meta['contentHash']!=null &&
           meta['contentHash']!=sha256.convert(imageBytes).toString())continue;
+        if(meta['version']==2){
+          final candidate=_unpackPages(kind,schoolId,meta,imageBytes);
+          if(meta['draftIdentity']!=bundleIdentity(candidate,meta['contentHash'].toString(),'local-draft'))continue;
+          drafts.add(candidate);continue;
+        }
         final decoded = img.decodePng(imageBytes);
         if (decoded == null || decoded.width != meta['width'] ||
             decoded.height != meta['height'] ||
@@ -927,6 +1115,8 @@ class SchoolTemplateImportEngine {
   /// Stable across retries: the same source, OCR fields and verified image
   /// geometry are one draft, not a new duplicate on every upload attempt.
   static String localDraftIdentity(SchoolTemplateDraft draft){
+    if(draft.additionalPages.isNotEmpty)return bundleIdentity(draft,
+      sha256.convert(packedArtwork(draft)).toString(),'local-draft');
     final digest=sha256.convert(draft.png).toString();
     final map=jsonEncode([
       draft.schoolId,draft.kind.name,draft.sourceHash,digest,
@@ -951,8 +1141,10 @@ class SchoolTemplateImportEngine {
       Platform.pathSeparator + scope + Platform.pathSeparator + draft.kind.name);
     await folder.create(recursive: true);
     if (currentSchoolId() != draft.schoolId) throw StateError('School changed.');
-    final identity=localDraftIdentity(draft);
-    final contentHash=sha256.convert(draft.png).toString();
+    final packed=packedArtwork(draft),dims=packedDimensions(draft);
+    final contentHash=sha256.convert(packed).toString();
+    final multi=draft.additionalPages.isNotEmpty;
+    final identity=multi?bundleIdentity(draft,contentHash,'local-draft'):localDraftIdentity(draft);
     final base = folder.path + Platform.pathSeparator + draft.sourceHash + '-' +
       identity.substring(0,24);
     final finalPng=File('$base.png'),finalJson=File('$base.json');
@@ -971,17 +1163,18 @@ class SchoolTemplateImportEngine {
     final tmpPng = File('$base.$attempt.png.tmp');
     final tmpJson = File('$base.$attempt.json.tmp');
     final metadata = {
-      'version': 1, 'approved': false, 'schoolId': draft.schoolId,
+      'version': multi?2:1, 'approved': false, 'schoolId': draft.schoolId,
       'kind': draft.kind.name, 'filename': draft.filename,
-      'sourceHash': draft.sourceHash, 'width': draft.width,
-      'height': draft.height, 'contentHash':contentHash,
+      'sourceHash': draft.sourceHash, 'width': dims.width,
+      'height': dims.height, 'contentHash':contentHash,
+      if(multi)'pages':pageMetadata(draft),
       'draftIdentity':identity,
       'fields': draft.fields.map((f) => f.toJson()).toList(),
       if(draft.visualSlots.isNotEmpty)
         'visualSlots':draft.visualSlots.map((s)=>s.toJson()).toList(),
     };
     try {
-      await tmpPng.writeAsBytes(draft.png, flush: true);
+      await tmpPng.writeAsBytes(packed, flush: true);
       await tmpJson.writeAsString(jsonEncode(metadata), flush: true);
       if (currentSchoolId() != draft.schoolId) {
         throw StateError('School switched before template save.');
