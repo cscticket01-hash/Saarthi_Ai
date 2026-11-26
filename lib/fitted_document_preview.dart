@@ -20,6 +20,7 @@ class FittedDocumentPreview extends StatefulWidget {
 class _FittedDocumentPreviewState extends State<FittedDocumentPreview> {
   late Future<List<Uint8List>> pages;
   int generation = 0;
+  double? paperRatio;
   Future<List<Uint8List>> raster() async {
     final current = ++generation;
     final bytes = widget.bytes;
@@ -30,6 +31,7 @@ class _FittedDocumentPreviewState extends State<FittedDocumentPreview> {
         if (!mounted || current != generation) return result;
         if (!reported) {
           reported = true;
+          paperRatio = page.width / page.height;
           widget.onPageFormat?.call(PdfPageFormat(
             page.width * PdfPageFormat.inch / 200,
             page.height * PdfPageFormat.inch / 200));
@@ -67,9 +69,21 @@ class _FittedDocumentPreviewState extends State<FittedDocumentPreview> {
       if (snapshot.data!.isEmpty)
         return const Center(child: Text('Document has no pages.'));
       if (snapshot.data!.length == 1) {
-        if(widget.showPaperOutline)return ColoredBox(color:const Color(0xFF263036),child:Padding(
-          padding:const EdgeInsets.all(16),child:Center(child:Image.memory(snapshot.data!.first,
-            fit:BoxFit.contain,semanticLabel:'Complete document preview',gaplessPlayback:true))));
+        if (widget.showPaperOutline) {
+          return ColoredBox(color: const Color(0xFF263036),
+            child: Padding(padding: const EdgeInsets.all(16),
+              child: Center(child: AspectRatio(
+                aspectRatio: paperRatio ?? (210 / 297),
+                child: DecoratedBox(
+                  decoration: const BoxDecoration(color: Colors.white,
+                    boxShadow: [BoxShadow(color: Colors.black38, blurRadius: 5)]),
+                  child: Image.memory(snapshot.data!.first, fit: BoxFit.contain,
+                    semanticLabel: 'Complete document preview', gaplessPlayback: true),
+                ),
+              )),
+            ),
+          );
+        }
         return Padding(
           padding: const EdgeInsets.all(12),
           child: SizedBox.expand(
@@ -91,6 +105,7 @@ class _FittedDocumentPreviewState extends State<FittedDocumentPreview> {
         useActions: false,
         canChangePageFormat: false,
         canChangeOrientation: false,
+        pdfPreviewPageDecoration: const BoxDecoration(color: Colors.white),
       );
     },
   );

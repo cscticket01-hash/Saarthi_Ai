@@ -55,7 +55,7 @@ void main() {
     expect(find.widgetWithText(FilledButton,'Print'),findsNothing);
     expect(jobs,0);
   });
-  testWidgets('driver-supported duplex is submitted as one explicit mode without default print',(tester)async{
+  testWidgets('advanced settings are simplified and direct print uses driver defaults',(tester)async{
     await tester.binding.setSurfaceSize(const Size(1200,1000));
     addTearDown(()=>tester.binding.setSurfaceSize(null));
     final original=Uint8List.fromList([1,2,3]);
@@ -71,12 +71,15 @@ void main() {
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('More settings'));
     await tester.tap(find.text('More settings'));await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Driver default'));
-    await tester.tap(find.text('Driver default'));await tester.pumpAndSettle();
-    await tester.tap(find.text('Double-sided • Long edge').last);await tester.pumpAndSettle();
+    expect(find.text('Print on both sides'), findsNothing);
+    expect(find.text('Headers and footers'), findsNothing);
+    expect(find.text('Reset to original layout'), findsNothing);
+    expect(find.text('More printers / system print dialog'), findsNothing);
+    expect(find.widgetWithText(TextButton, 'Cancel'), findsNothing);
+    expect(find.text('Save PDF'), findsNothing);
     await tester.ensureVisible(find.widgetWithText(FilledButton,'Print'));
     await tester.tap(find.widgetWithText(FilledButton,'Print'));await tester.pumpAndSettle();
-    expect(defaultCalls,0);expect(submitted,[WindowsDuplexMode.longEdge]);
+    expect(defaultCalls,1);expect(submitted,isEmpty);
   });
   test('paper layout geometry preserves aspect and rejects invalid pages and clipping',(){
     expect(WindowsPrintLayout.parseRange('1,3-5,3'),{1,3,4,5});
@@ -111,7 +114,7 @@ void main() {
     expect(original,[1,2,3]);
   });
   for(final landscape in [false,true]) {
-    testWidgets('Legal ${landscape?'landscape':'portrait'} preview selects matching printer stock without another raster', (tester) async {
+    testWidgets('Legal ${landscape?'landscape':'portrait'} is composed to default A4 portrait', (tester) async {
       tester.view.devicePixelRatio=1;
       tester.view.physicalSize=const Size(1200,1000);
       addTearDown(tester.view.resetDevicePixelRatio);
@@ -121,21 +124,29 @@ void main() {
       PrintingPlatform.instance=platform;
       addTearDown(()=>PrintingPlatform.instance=native);
       final bytes=Uint8List.fromList([37,80,68,70,45]);
+      final prepared=Uint8List.fromList([37,80,68,70,45,1]);
       PdfPageFormat? sent;
+      int layouts=0;
       await tester.pumpWidget(MaterialApp(home:Scaffold(body:WindowsReceiptPrintDialog(
         receipt:Future.value(bytes),title:'Legal receipt',subtitle:'School',isCurrent:()=>true,
-        printers:()async=>[printer],printJob:(_,original,format) async {
-          expect(identical(original,bytes),isTrue);sent=format;return true;
+        printers:()async=>[printer],composeLayout:(source,format) async {
+          expect(identical(source,bytes),isTrue);
+          expect(format.width,PdfPageFormat.a4.width);
+          expect(format.height,PdfPageFormat.a4.height);
+          layouts++;
+          return prepared;
+        },printJob:(_,original,format) async {
+          expect(identical(original,prepared),isTrue);sent=format;return true;
         }))));
       await tester.pumpAndSettle();
-      expect(find.text('Legal (216 × 356 mm)'),findsOneWidget);
-      expect(find.text(landscape?'Landscape':'Portrait'),findsOneWidget);
+      expect(find.text('A4 (210 × 297 mm)'),findsOneWidget);
+      expect(find.text('Portrait'),findsOneWidget);
       await tester.ensureVisible(find.widgetWithText(FilledButton,'Print'));
       await tester.tap(find.widgetWithText(FilledButton,'Print'));
       await tester.pumpAndSettle();
-      expect(sent?.width,landscape?PdfPageFormat.legal.height:PdfPageFormat.legal.width);
-      expect(sent?.height,landscape?PdfPageFormat.legal.width:PdfPageFormat.legal.height);
-      expect(platform.rasterCalls,1,reason:'Reuse the normal preview raster for paper detection');
+      expect(sent?.width,PdfPageFormat.a4.width);
+      expect(sent?.height,PdfPageFormat.a4.height);
+      expect(layouts,1,reason:'Default A4 must be composed, not just relabelled');
       expect(tester.takeException(),isNull);
     });
   }
@@ -178,8 +189,8 @@ void main() {
       }))));
     await tester.pumpAndSettle();
     expect(find.text('Full page preview'), findsOneWidget);
-    expect(find.text('Save PDF'), findsOneWidget);
-    expect(find.widgetWithText(TextButton, 'Cancel'), findsOneWidget);
+    expect(find.text('Save PDF'), findsNothing);
+    expect(find.widgetWithText(TextButton, 'Cancel'), findsNothing);
     expect(find.text('A4 (210 × 297 mm)'), findsOneWidget);
     expect(calls, isEmpty);
     await tester.enterText(find.byType(TextField), '2');
@@ -201,15 +212,15 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     const offline=Printer(url:'installed-hp',name:'HP offline USB',
       isDefault:false,isAvailable:false);
-    var opened=0,systemDialog=0;
+    var opened=0,directPrint=0;
     await tester.pumpWidget(MaterialApp(home:Scaffold(
       body:WindowsReceiptPrintDialog(
         receipt:Future.value(Uint8List.fromList([37,80,68,70,45])),
         title:'Printer TEST',subtitle:'Any school printer',isCurrent:()=>true,
         printers:()async=>[printer,offline],
         openPrinterSettings:()async{opened++;},
-        systemPrintJob:(bytes,format)async{
-          systemDialog++;
+        printJob:(_,bytes,format)async{
+          directPrint++;
           expect(format.width,PdfPageFormat.legal.width);
           expect(bytes.take(5).toList(),[37,80,68,70,45]);
           return true;
@@ -233,10 +244,11 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Legal (216 × 356 mm)').last);
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('More printers / system print dialog'));
-    await tester.tap(find.text('More printers / system print dialog'));
+    expect(find.text('More printers / system print dialog'), findsNothing);
+    await tester.ensureVisible(find.widgetWithText(FilledButton,'Print'));
+    await tester.tap(find.widgetWithText(FilledButton,'Print'));
     await tester.pumpAndSettle();
-    expect(systemDialog,1);
+    expect(directPrint,1);
     expect(tester.takeException(),isNull);
   });
 

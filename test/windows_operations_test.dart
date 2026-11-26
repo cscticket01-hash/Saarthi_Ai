@@ -945,8 +945,13 @@ void main() {
       await tester.pumpAndSettle();
       // No installed printer is exposed by the synthetic printing platform.
       expect(find.widgetWithText(FilledButton, 'Save as PDF'), findsOneWidget);
-      expect(find.text('Save PDF'), findsOneWidget);
-      expect(find.widgetWithText(TextButton,'Cancel'), findsOneWidget);
+      // The common preview retains the PDF printer destination, not duplicate
+      // footer actions. Closing the preview must still leave payroll intact.
+      expect(find.text('Save PDF'), findsNothing);
+      expect(find.widgetWithText(TextButton,'Cancel'), findsNothing);
+      expect(find.text('More printers / system print dialog'), findsNothing);
+      expect(tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, 'Save as PDF')).onPressed, isNotNull);
       await tester.tap(find.byIcon(Icons.close));
       await tester.pumpAndSettle();
     } finally { PrintingPlatform.instance = nativePrinting; }

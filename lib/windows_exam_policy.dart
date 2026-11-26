@@ -29,6 +29,24 @@ class WindowsExamPolicy {
     return value != null && value.isFinite ? value : null;
   }
 
+  /// Input and paste must be a whole, non-negative mark with at most three digits.
+  static bool validMarkEntry(String text, double fullMarks, {bool allowEmpty = false}) {
+    if (text.isEmpty) return allowEmpty;
+    if (!RegExp(r'^[0-9]{1,3}$').hasMatch(text) || !fullMarks.isFinite) return false;
+    final value = int.tryParse(text);
+    return value != null && value <= fullMarks;
+  }
+
+  /// Existing whole-number records may have been stored as doubles (e.g. 45.0).
+  /// Do not silently round historical fractional marks.
+  static String markEntryText(dynamic raw) {
+    final value = finiteNumber(raw);
+    if (value != null && value == value.roundToDouble()) {
+      return value.toStringAsFixed(0);
+    }
+    return raw?.toString() ?? '';
+  }
+
   static List<String> subjects(Iterable<dynamic> values) {
     final parsed = <String>[];
     final seen = <String>{};
@@ -62,7 +80,8 @@ class WindowsExamPolicy {
     final marks = <String, double>{};
     for (final subject in expected) {
       final value = finiteNumber(input[subject]);
-      if (value == null || value < 0 || value > fullMarks) {
+      if (value == null || value < 0 || value > fullMarks || value > 999 ||
+          value != value.roundToDouble()) {
         throw StateError('Invalid marks for $subject.');
       }
       marks[subject] = value;

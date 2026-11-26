@@ -352,9 +352,15 @@ void main() {
     expect(find.byKey(const ValueKey('fees-student-S2')),findsOneWidget);
     // Keep the existing not-yet-paid queue intact; partial installments are
     // selectable from their own tab on the same screen.
-    await tester.tap(find.text('Partial (1)'));
+    expect(find.text('Partial (1)'), findsNothing);
+    expect(find.text('Not paid (1)'), findsNothing);
+    await tester.tap(find.text('Partial Paid'));
     await flush();
     expect(find.byKey(const ValueKey('fees-student-S1')), findsOneWidget);
+    await tester.tap(find.text('Due'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('fees-student-S1')), findsNothing);
+    expect(find.byKey(const ValueKey('fees-student-S2')), findsOneWidget);
     expect(find.text('WhatsApp Receipt'),findsOneWidget);
     expect(tester.takeException(),isNull);
     await tester.pumpWidget(const SizedBox());

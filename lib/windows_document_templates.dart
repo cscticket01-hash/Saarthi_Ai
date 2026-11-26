@@ -1069,8 +1069,6 @@ class WindowsDocumentTemplates {
       WindowsReportCardPreview.open(
         context,
         data,
-        // PDF rendering is user-initiated from Download Report Card only.
-        createPdf: () => selected('reportCard', data),
       );
 }
 

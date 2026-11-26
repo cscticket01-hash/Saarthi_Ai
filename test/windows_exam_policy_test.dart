@@ -83,6 +83,23 @@ void main() {
         throwsStateError);
     });
 
+    test('marks entry rejects text, paste, fractions, extra digits and overflow', () {
+      for (final input in ['0', '75', '100']) {
+        expect(WindowsExamPolicy.validMarkEntry(input, 100), isTrue);
+      }
+      for (final input in ['', 'ABC', '1a', '-10', '45.5', '101', '1234', '1e2', ' 75']) {
+        expect(WindowsExamPolicy.validMarkEntry(input, 100), isFalse);
+      }
+      expect(WindowsExamPolicy.validMarkEntry('', 100, allowEmpty: true), isTrue);
+      expect(WindowsExamPolicy.validMarkEntry('999', 999), isTrue);
+      expect(WindowsExamPolicy.markEntryText(45.0), '45');
+      expect(WindowsExamPolicy.markEntryText(45.5), '45.5');
+      for (final value in [45.5, 1000]) {
+        expect(() => WindowsExamPolicy.validateMarks({'English': value},
+          subjects: ['English'], fullMarks: 1200, passMarks: 33), throwsStateError);
+      }
+    });
+
     test('per-subject PASS rule is not replaced by average percentage', () {
       final marks = {'Maths': 100.0, 'English': 20.0};
       expect(WindowsExamPolicy.total(marks), 120);
