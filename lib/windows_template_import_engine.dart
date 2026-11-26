@@ -506,9 +506,9 @@ class SchoolTemplateImportEngine {
     // No over-capacity row can disappear from a document.
     continuationRows(draft,record);
 
-    if(draft.kind==SchoolTemplateKind.receipt &&
-       record['feeItems'] is Map && record['totalAmount'] is num){
+    if(draft.kind==SchoolTemplateKind.receipt && record['feeItems'] is Map){
       final fees=record['feeItems'] as Map;
+      final expected=record['expectedAmount'] ?? record['totalAmount'];
       num sum=0;
       for(final amount in fees.values){
         if(amount is! num || !amount.isFinite || amount<0){
@@ -516,8 +516,23 @@ class SchoolTemplateImportEngine {
         }
         sum+=amount;
       }
-      if(fees.isNotEmpty && (sum-(record['totalAmount'] as num)).abs()>.011){
-        throw const FormatException('Receipt total does not match fee items.');
+      if(expected != null && (expected is! num || !expected.isFinite || expected < 0 ||
+          (fees.isNotEmpty && (sum-expected).abs()>.011))){
+        throw const FormatException('Receipt assessed total does not match fee items.');
+      }
+      // Installments are not the full assessed fee. When saved ledger totals
+      // exist, verify their own relationship rather than summing fee heads
+      // against this payment. Legacy records without these fields still work.
+      final installment=record['installmentAmount'], paid=record['totalPaid'], due=record['balance'];
+      for(final amount in [installment,paid,due]){
+        if(amount!=null && (amount is! num || !amount.isFinite || amount<0)){
+          throw const FormatException('Invalid receipt payment totals.');
+        }
+      }
+      if(installment is num && paid is num && installment-paid>.011 ||
+          expected is num && paid is num && paid-expected>.011 ||
+          expected is num && paid is num && due is num && (paid+due-expected).abs()>.011){
+        throw const FormatException('Receipt payment totals do not reconcile.');
       }
     }
 

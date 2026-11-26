@@ -45,6 +45,15 @@ const record = <String, dynamic>{
 };
 
 void main() {
+  test('financial selection distinguishes missing/white from explicit design zero', () {
+    for(final kind in ['receipt','reportCard','payslip']) {
+      expect(WindowsDocumentTemplates.financialSelection(kind,null), 'plain');
+      expect(WindowsDocumentTemplates.financialSelection(kind,'plain'), 'plain');
+      expect(WindowsDocumentTemplates.financialSelection(kind,0), 0);
+      expect(WindowsDocumentTemplates.financialSelection(kind,'imported:version'), 'imported:version');
+    }
+    expect(WindowsDocumentTemplates.supportsPlain('studentId'), isFalse);
+  });
   TestWidgetsFlutterBinding.ensureInitialized();
   final db = FirebaseFirestore.instance;
   late ReportPreviewPrinting platform;

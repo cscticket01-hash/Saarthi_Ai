@@ -150,10 +150,11 @@ Future<Uint8List> renderWindowsReferenceDocument({
   Uint8List? signature,
   Uint8List? seal,
   int printPass = 0,
+  bool plain = false,
 }) => _renderWindowsReferenceDocument(
   kind: kind, template: template, data: data, qr: qr,
   photo: photo, logo: logo, signature: signature, seal: seal,
-  printPass: printPass,
+  printPass: printPass, plain: plain,
 );
 
 Future<Uint8List> _renderWindowsReferenceDocument({
@@ -166,6 +167,7 @@ Future<Uint8List> _renderWindowsReferenceDocument({
   Uint8List? signature,
   Uint8List? seal,
   int printPass = 0,
+  bool plain = false,
   ({Uint8List? photo, Uint8List? logo, Uint8List? seal, Uint8List? signature})? preparedMedia,
 }) async {
   if (printPass < 0 || printPass > 4) {
@@ -940,7 +942,7 @@ Future<Uint8List> _renderWindowsReferenceDocument({
     validateIdSide(back, w, h);
     addIdCardPair(pdf, front, back, w, h, landscape: landscape);
   } else if (kind == 'reportCard') {
-    return renderMaroonMarksheet(data, photo:embeddedPhoto,logo:embeddedLogo,signature:printSignature,seal:embeddedSeal);
+    return renderMaroonMarksheet(data, photo:embeddedPhoto,logo:embeddedLogo,signature:printSignature,seal:embeddedSeal,plain:plain);
   } else {
     final items = data['feeItems'] is Map
         ? Map<String, dynamic>.from(data['feeItems'])
@@ -1144,7 +1146,7 @@ Future<Uint8List> _renderWindowsReferenceDocument({
     return _renderWindowsReferenceDocument(
       kind: kind, template: template, data: data, qr: qr,
       photo: photo, logo: logo, signature: signature, seal: seal,
-      printPass: printPass + 1,
+      printPass: printPass + 1, plain: plain,
       preparedMedia: (photo: embeddedPhoto, logo: embeddedLogo,
           seal: embeddedSeal, signature: printSignature),
     );

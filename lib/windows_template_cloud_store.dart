@@ -70,7 +70,7 @@ class WindowsTemplateCloudStore {
       throw StateError('Only this school’s uploaded template can be deleted.');
     }
     return {deletionKey(kind,id):true,
-      if(settings[kind]=='imported:$id')kind:0};
+      if(settings[kind]=='imported:$id')kind:'plain'};
   }
 
   static Future<void> deleteTemplate(String kind,String id) async {

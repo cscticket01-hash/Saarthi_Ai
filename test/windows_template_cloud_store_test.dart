@@ -14,7 +14,7 @@ void main(){
     };
     final original=catalog(a),other=catalog(b);
     final patch=WindowsTemplateCloudStore.deletionPatch(original,'receipt','receipt-one',a);
-    expect(patch['receipt'],0);
+    expect(patch['receipt'],'plain');
     for(var pc=0;pc<5;pc++){
       final received={...original,...patch};
       // A late manifest upload cannot remove an independent deletion marker.

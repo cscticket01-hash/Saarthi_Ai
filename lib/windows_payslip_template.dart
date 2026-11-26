@@ -5,7 +5,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
 /// Print colours are fixed to paper/ink; never inherited from the app theme.
-Future<Uint8List> renderWindowsPayslip(Map<String,dynamic> row,{String schoolName=''}) async {
+Future<Uint8List> renderWindowsPayslip(Map<String,dynamic> row,{String schoolName='',bool plain=false}) async {
   final regular=pw.Font.ttf(await rootBundle.load('assets/id_card_regular.ttf'));
   final bold=pw.Font.ttf(await rootBundle.load('assets/id_card_bold.ttf'));
   final doc=pw.Document(theme:pw.ThemeData.withFont(base:regular,bold:bold));
@@ -14,7 +14,7 @@ Future<Uint8List> renderWindowsPayslip(Map<String,dynamic> row,{String schoolNam
   final earnings=amount('basicPaise')+amount('allowancePaise')+amount('bonusPaise')+amount('overtimePaise');
   final net=(row['netPaise'] as num?)?.toInt()??earnings-amount('deductionPaise');
   final paid=amount('paidPaise');
-  final ink=PdfColor.fromHex('#183347'),tint=PdfColor.fromHex('#EEF3F6');
+  final ink=plain?PdfColors.black:PdfColor.fromHex('#183347'),tint=plain?PdfColors.white:PdfColor.fromHex('#EEF3F6');
   pw.Widget table(List<List<String>> rows)=>pw.TableHelper.fromTextArray(data:rows,
     headerStyle:pw.TextStyle(fontWeight:pw.FontWeight.bold,color:ink),headerDecoration:pw.BoxDecoration(color:tint),
     cellStyle:const pw.TextStyle(color:PdfColors.black,fontSize:11),cellPadding:const pw.EdgeInsets.all(10),
