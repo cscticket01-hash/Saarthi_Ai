@@ -56,6 +56,14 @@ class WindowsDocumentTemplates {
   static bool personKind(String kind) =>
       const {'studentId', 'teacherId', 'otherStaffId'}.contains(kind);
   static bool supportsPlain(String kind) => financialKind(kind) || personKind(kind);
+  // Presentation-only filtering: never renumber existing renderer indices,
+  // modify saved school selections, or remove historical template assets.
+  static List<int> visibleCatalogIndices(String kind,List<String> names)=>[
+    if(kind=='otherStaffId'||kind=='payslip') -1,
+    for(var i=0;i<names.length;i++)
+      if(!(kind=='payslip'&&i==0)&&
+         !((kind=='teacherId'||kind=='otherStaffId')&&names[i]==manifestName)) i,
+  ];
   static bool plainPrintSelection(String kind, Object? value) =>
       supportsPlain(kind) && (value == null || value == plainSelection);
 
@@ -1245,21 +1253,29 @@ class _SchoolDocumentTemplatesScreenState
   TemplateFeatureAccess _feature=const TemplateFeatureAccess.unverified();
   Timer? _featureTimer;
   bool _refreshingFeature=false;
+  String _featureSchoolLabel='';
+  List<int> get _visibleIndices=>WindowsDocumentTemplates.visibleCatalogIndices(_kind,_names[_kind]!);
   Future<void> _refreshFeature() async {
     if(_refreshingFeature)return;
     _refreshingFeature=true;
-    final origin=FirebaseFirestore.instance.activeProfileId;
+    final db=FirebaseFirestore.instance,origin=db.activeProfileId;
+    final school=db.activeProfileIdentity['schoolSyncId'];
+    bool current()=>mounted&&db.activeProfileId==origin&&db.activeProfileIdentity['schoolSyncId']==school;
     try{
       final next=await WindowsTemplateFeatureAccess.read(force:true);
-      if(mounted&&FirebaseFirestore.instance.activeProfileId==origin){
+      var label='';
+      try{
+        final saved=await CentralSchoolCloud.saved();
+        if(saved['schoolId']==school)label=saved['schoolName']?.toString()??'';
+      }catch(_){}
+      if(current()){
         final resumed=next.canUpload&&!_feature.canUpload;
         if(next.canUse!=_feature.canUse)_thumbnails.clear();
-        setState(()=>_feature=next);
+        setState((){_feature=next;_featureSchoolLabel=label;});
         if(resumed)unawaited(_resumeApprovedTemplates());
       }
     }catch(_){
-      if(mounted&&FirebaseFirestore.instance.activeProfileId==origin)
-        setState(()=>_feature=const TemplateFeatureAccess.unverified());
+      if(current())setState(()=>_feature=const TemplateFeatureAccess.unverified());
     }finally{_refreshingFeature=false;}
   }
 
@@ -1283,7 +1299,9 @@ class _SchoolDocumentTemplatesScreenState
     super.initState();
     _initializeCatalog();
     unawaited(_refreshFeature());
-    _featureTimer=Timer.periodic(const Duration(seconds:60),(_)=>unawaited(_refreshFeature()));
+    _featureTimer=Timer.periodic(const Duration(seconds:15),(_){
+      if(WindowsDocumentTemplates.financialKind(_kind))unawaited(_refreshFeature());
+    });
     final db=FirebaseFirestore.instance,origin=db.activeProfileId;
     _templateChanges=db.collection('school_settings').doc('document_templates')
       .snapshots().listen((_){
@@ -1316,42 +1334,6 @@ class _SchoolDocumentTemplatesScreenState
     } catch(error) {
       if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Template deletion failed: $error')));
     } finally {if(mounted)setState(()=>_deletingTemplate=false);}
-  }
-
-  Future<void> _archiveTemplate(int index) async {
-    final kind=_kind,school=FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'];
-    final asset=_uploadedTemplate(index);
-    if(asset==null || _deletingTemplate || _selectingTemplate)return;
-    final id=WindowsTemplateCloudStore.versionId(asset);
-    final confirmed=await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(
-      title:const Text('Archive uploaded template?'),
-      content:const Text('Hide this inactive design from the template list. The verified Drive asset and history remain available for restoration.'),
-      actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),
-        FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Archive'))]));
-    if(confirmed!=true || !mounted || FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']!=school)return;
-    setState(()=>_deletingTemplate=true);
-    try {await WindowsTemplateCloudStore.setArchived(kind,id,archive:true);if(mounted)await _initializeCatalog();}
-    catch(error){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Archive failed: $error')));}
-    finally {if(mounted)setState(()=>_deletingTemplate=false);}
-  }
-
-  Future<void> _showArchive() async {
-    final kind=_kind,db=FirebaseFirestore.instance,origin=db.activeProfileId;
-    final school=db.activeProfileIdentity['schoolSyncId']?.toString()??'';
-    final archived=WindowsTemplateCloudStore.archivedTemplates(_selected,kind,school);
-    final chosen=await showDialog<String>(context:context,builder:(ctx)=>AlertDialog(
-      title:const Text('Archived templates'),
-      content:SizedBox(width:500,child:archived.isEmpty?const Text('No archived templates'):
-        ListView(shrinkWrap:true,children:[for(final asset in archived)ListTile(
-          title:Text(asset['filename']?.toString()??'School template'),
-          trailing:TextButton(onPressed:()=>Navigator.pop(ctx,WindowsTemplateCloudStore.versionId(asset)),
-            child:const Text('Restore')))])),
-      actions:[TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Close'))]));
-    if(chosen==null || !mounted || db.activeProfileId!=origin || db.activeProfileIdentity['schoolSyncId']!=school)return;
-    setState(()=>_deletingTemplate=true);
-    try{await WindowsTemplateCloudStore.setArchived(kind,chosen,archive:false);if(mounted)await _initializeCatalog();}
-    catch(error){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Restore failed: $error')));}
-    finally{if(mounted)setState(()=>_deletingTemplate=false);}
   }
 
   Future<void> _resumeApprovedTemplates() async {
@@ -1622,6 +1604,8 @@ class _SchoolDocumentTemplatesScreenState
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (!_loading && _chosen()==-2) const Text('Selected template unavailable. Retry or explicitly choose another design.'),
+          if(!_loading&&_chosen()!=-2&&!_visibleIndices.contains(_chosen()))
+            const Text('Current saved layout is retained. Choose a displayed design to change it.',style:TextStyle(fontSize:12)),
           if (_catalogError != null) ...[Text(_catalogError!),
             TextButton(onPressed:_initializeCatalog,child:const Text('Retry templates'))],
           Wrap(
@@ -1641,7 +1625,10 @@ class _SchoolDocumentTemplatesScreenState
                       }[k]!,
                     ),
                     selected: _kind == k,
-                    onSelected: (_) => setState(() => _kind = k),
+                    onSelected: (_) {
+                      setState(()=>_kind=k);
+                      if(WindowsDocumentTemplates.financialKind(k))unawaited(_refreshFeature());
+                    },
                   ),
                 )
                 .toList(),
@@ -1668,13 +1655,6 @@ class _SchoolDocumentTemplatesScreenState
             Align(
               alignment:Alignment.centerLeft,
               child:Wrap(spacing:12,runSpacing:8,children:[
-                OutlinedButton.icon(onPressed:_loading||_deletingTemplate||_selectingTemplate?null:() async {
-                  await SchoolTemplateImportEditor.previewSavedAutomatic(context,
-                    switch(_kind){'receipt'=>SchoolTemplateKind.receipt,'reportCard'=>SchoolTemplateKind.reportCard,_=>SchoolTemplateKind.payslip},_sample);
-                  if(mounted)await _initializeCatalog();
-                },icon:const Icon(Icons.replay),label:const Text('Local drafts / Retry')),
-                OutlinedButton.icon(onPressed:_loading||_deletingTemplate||_selectingTemplate?null:_showArchive,
-                  icon:const Icon(Icons.archive_outlined),label:const Text('Archived templates')),
                 OutlinedButton.icon(
                   key:ValueKey('upload-template-'+_kind),
                   icon:Icon(_feature.canUpload?Icons.upload_file_outlined:Icons.lock_outline),
@@ -1692,7 +1672,7 @@ class _SchoolDocumentTemplatesScreenState
                     if(mounted){await _initializeCatalog();await _refreshFeature();}
                   },
                 ),
-                Tooltip(message:_feature.uploadExplanation,waitDuration:const Duration(milliseconds:250),
+                Tooltip(message:[if(_featureSchoolLabel.isNotEmpty)'School: $_featureSchoolLabel',_feature.uploadExplanation,'Click to refresh access.'].join('\n'),waitDuration:const Duration(milliseconds:250),
                   child:IconButton(tooltip:null,onPressed:()=>_refreshFeature(),icon:const Icon(Icons.info_outline,size:19))),
               ]),
             ),
@@ -1711,10 +1691,9 @@ class _SchoolDocumentTemplatesScreenState
                 crossAxisSpacing: 16,
                 mainAxisSpacing: 16,
               ),
-              itemCount: _names[_kind]!.length +
-                  (WindowsDocumentTemplates.supportsPlain(_kind) ? 1 : 0),
+              itemCount: _visibleIndices.length,
               itemBuilder: (ctx, n) {
-                final i = n - (WindowsDocumentTemplates.supportsPlain(_kind) ? 1 : 0);
+                final i = _visibleIndices[n];
                 final chosen = _chosen();
                 final active = i == chosen;
                 final entry = _manifestEntry(_kind, i);
@@ -1746,11 +1725,6 @@ class _SchoolDocumentTemplatesScreenState
                               color: WindowsAppearance.foreground(Colors.tealAccent),
                             ),
                             const Spacer(),
-                            if(const ['receipt','reportCard','payslip'].contains(_kind) &&
-                                i>=_baseTemplateCount(_kind) && !active)
-                              IconButton(tooltip:'Archive uploaded template',
-                                onPressed:_deletingTemplate||_selectingTemplate?null:()=>_archiveTemplate(i),
-                                icon:const Icon(Icons.archive_outlined)),
                             if(const ['receipt','reportCard','payslip'].contains(_kind) &&
                                 i>=_baseTemplateCount(_kind))
                               IconButton(tooltip:'Delete uploaded template',

@@ -20,10 +20,10 @@ class TemplateFeatureAccess {
   bool get canUpload=>canUse&&online&&uploadEnabled;
   String get uploadExplanation {
     if(!verified)return 'Connect to verify Custom TemplateForge access.';
-    if(!enabled)return 'Premium feature. Contact the developer for activation.';
+    if(!enabled)return 'Custom TemplateForge is not enabled for this school. Contact the developer for activation.';
     if(!online)return 'Connect to upload a new template. Existing verified templates remain usable.';
     if(!uploadEnabled)return 'TemplateForge uploads are under maintenance. Existing templates continue working.';
-    return 'Upload a blank Word or Excel form. Review it before saving.';
+    return 'Custom TemplateForge is enabled for this school. Upload a blank Word or Excel form.';
   }
 }
 
@@ -84,10 +84,11 @@ class WindowsTemplateFeatureAccess {
     final future=()async{
       final cloud=CentralSchoolCloud(endpoint:endpoint,expectedSchoolId:school);
       try{
-        final data=await cloud.api({
-          'action':'managed/features',
-          'schoolId':school,
-        },token:await CentralSchoolCloud.firebaseToken()).timeout(const Duration(seconds:15));
+        final data=await (()async{
+          final token=await CentralSchoolCloud.firebaseToken();
+          if(!current())throw StateError('School changed before feature verification.');
+          return cloud.api({'action':'managed/features','schoolId':school},token:token);
+        })().timeout(const Duration(seconds:25));
         if(!current())return const TemplateFeatureAccess.unverified();
         final access=decode(data,school:school,uid:uid,
           nowMs:DateTime.now().millisecondsSinceEpoch,online:true);
@@ -95,7 +96,10 @@ class WindowsTemplateFeatureAccess {
           await _storage.delete(key:key);
           return const TemplateFeatureAccess.unverified();
         }
-        await _storage.write(key:key,value:jsonEncode(data));
+        // A verified live response must not be discarded just because the
+        // optional offline cache cannot be written. Never extend an old lease.
+        try{await _storage.write(key:key,value:jsonEncode(data));}
+        catch(_){try{await _storage.delete(key:key);}catch(_){}}
         if(current())_recent[scope]=(access:access,at:DateTime.now().millisecondsSinceEpoch);
         return current()?access:const TemplateFeatureAccess.unverified();
       }catch(e){
