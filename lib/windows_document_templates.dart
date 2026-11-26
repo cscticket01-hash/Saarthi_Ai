@@ -89,6 +89,7 @@ class WindowsDocumentTemplates {
     Uint8List? logo,
     Uint8List? signature,
     Uint8List? seal,
+    bool printOnly=false,
   }) async {
     final entry = await IdCardCatalog.find(templateId);
     final manifest = reviewedManifest ?? await entry.manifest();
@@ -96,6 +97,7 @@ class WindowsDocumentTemplates {
       manifest,
       data,
       qr: qr,
+      printOnly:printOnly,
       backgrounds: await entry.backgrounds(),
       images: {
         if (photo != null) 'photo': photo,
@@ -206,7 +208,7 @@ class WindowsDocumentTemplates {
         onPrintDocument:hasPhoto ? (frontOnly) async {
           checkSchool();
           final bytes = await IdCardEngine.render(card.template,card.data,
-            images:card.images,backgrounds:card.backgrounds,qr:compact,frontOnly:frontOnly);
+            images:card.images,backgrounds:card.backgrounds,qr:compact,frontOnly:frontOnly,printOnly:true);
           checkSchool();
           if(compact.isNotEmpty && card.template.regions.any((r)=>r.kind=='qr' &&
               (!frontOnly || r.side=='front'))) await IdCardEngine.verifyExport(bytes,compact);
@@ -342,7 +344,7 @@ class WindowsDocumentTemplates {
       if (card != null) {
         qr = IdCardEngine.compactQr(qr);
         final bytes=await IdCardEngine.render(card.template,card.data,
-          images:card.images,backgrounds:card.backgrounds,qr:qr);
+          images:card.images,backgrounds:card.backgrounds,qr:qr,printOnly:printOnly);
         if(qr.isNotEmpty) await IdCardEngine.verifyExport(bytes,qr);
         if(FirebaseFirestore.instance.activeProfileId!=origin)
           throw StateError('School changed during ID card export.');
@@ -933,6 +935,7 @@ class WindowsDocumentTemplates {
         qr: qr,
         reviewedManifest: reviewed,
         templateId: templateId,
+        printOnly:printOnly,
         photo: assets[0],
         logo: assets[1],
         signature: assets[2],
@@ -993,7 +996,7 @@ class WindowsDocumentTemplates {
       final card=await nativePersonCard(kind,sample,selection:plainSelection);
       if(card==null)throw StateError('Plain ID preview unavailable.');
       return IdCardEngine.render(card.template,card.data,images:card.images,
-        backgrounds:card.backgrounds);
+        backgrounds:card.backgrounds,printOnly:true);
     }
     if (financialKind(kind)) {
       final sample = kind == 'payslip' ? <String, dynamic>{
@@ -1070,6 +1073,7 @@ class WindowsDocumentTemplates {
       return manifestId(
         branding,
         templateId: entry.id,
+        printOnly:true,
         logo: images[0],
         signature: images[1],
         seal: images[2],
@@ -1086,6 +1090,7 @@ class WindowsDocumentTemplates {
       kind: kind,
       template: index,
       data: branding,
+      printOnly:true,
       logo: images[0],
       signature: images[1],
       seal: images[2],

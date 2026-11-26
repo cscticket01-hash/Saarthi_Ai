@@ -224,7 +224,7 @@ class IdCardEngine {
   static Future<pw.Font> loadFont() async =>
       pw.Font.ttf(await rootBundle.load('assets/id_card_regular.ttf'));
 
-  static Future<Uint8List> render(IdCardManifest template, Map<String,dynamic> data, {Map<String,Uint8List> images=const {},String qr='',Map<String,Uint8List> backgrounds=const {},bool frontOnly=false}) => _render(template,data,images:images,qr:qr,backgrounds:backgrounds,frontOnly:frontOnly);
+  static Future<Uint8List> render(IdCardManifest template, Map<String,dynamic> data, {Map<String,Uint8List> images=const {},String qr='',Map<String,Uint8List> backgrounds=const {},bool frontOnly=false,bool printOnly=false}) => _render(template,data,images:images,qr:qr,backgrounds:backgrounds,frontOnly:frontOnly,printOnly:printOnly);
 
   static Future<Uint8List> _render(
     IdCardManifest template,
@@ -235,6 +235,7 @@ class IdCardEngine {
     bool useCompactVectorFont = false,
     bool compactBitmapAssets = false,
     bool frontOnly = false,
+    bool printOnly = false,
   }) async {
     // Embed school-owned source backgrounds at their actual CR80 print size.
     // This is bitmap-only optimization; the original image assets, vector
@@ -281,6 +282,7 @@ class IdCardEngine {
       ),
     );
     final output = await pdf.save();
+    if (printOnly) return SchoolMediaBudgets.verifyPrintPdf(output);
     if (!useCompactVectorFont && output.length > SchoolMediaBudgets.idCard) {
       // Original catalog font wins when it fits. Only ASCII-only oversized
       // cards retry with a non-embedded vector font; no QR/text rasterization,

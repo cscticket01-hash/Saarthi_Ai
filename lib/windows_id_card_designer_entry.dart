@@ -143,7 +143,7 @@ class WindowsIdCardDesignerEntry {
           onPrintDocument:(frontOnly) async {
             checkSchool();
             final bytes=await IdCardEngine.render(manifest,data,backgrounds:backgrounds,
-              images:images,qr:qr,frontOnly:frontOnly);
+              images:images,qr:qr,frontOnly:frontOnly,printOnly:true);
             checkSchool();
             if(qr.isNotEmpty && manifest.regions.any((r)=>r.kind=='qr' &&
                 (!frontOnly || r.side=='front'))) await IdCardEngine.verifyExport(bytes,qr);

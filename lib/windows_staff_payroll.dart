@@ -1074,7 +1074,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
           StaffPayroll._sameSchool(_profile);
           final bytes=await WindowsDocumentTemplates.selected('payslip',{
             ...r,'payslipRecordId':r['id'],'netPaise':StaffPayroll.total(r),'paidPaise':StaffPayroll.paid(r),
-          });
+          },printOnly:true);
           StaffPayroll._sameSchool(_profile);
           if(bytes==null)throw StateError('Selected payslip template could not be rendered.');
           return bytes;

@@ -14901,13 +14901,13 @@ errorBuilder: (_, __, ___) => _teacherFallback(
     // renderer is migrated and visual/QR equivalence verified.
     final bytes = await WindowsDocumentTemplates.selected('teacherId',
         person, qr: qrData,
-        previewOnly: true);
+        previewOnly: true,printOnly:true);
     if (bytes != null && mounted) {
       await WindowsDocumentTemplates.preview(context, bytes,
           title: 'Teacher ID card • Front & back',
           notice: 'Android login needs this ID card record synced to the school backend and the matching Android app update.',
           onPrint: () async {
-            try { if(mounted) await WindowsBrowserPrint.open(context,bytes,title:'Teacher ID card'); }
+            try { if(mounted) await WindowsBrowserPrint.open(context,bytes,title:'Teacher ID card',preserveActualSize:true); }
             catch(e) { if(mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Print preview unavailable: $e'))); }
           },
           onDownload: () async {

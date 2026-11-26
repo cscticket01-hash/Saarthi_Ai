@@ -8,6 +8,7 @@ import 'package:pdf/pdf.dart';
 import 'package:printing/printing.dart';
 import 'fitted_document_preview.dart';
 import 'windows_save_pdf.dart';
+import 'school_media_budgets.dart';
 
 typedef ReceiptPrinterJob = Future<bool> Function(Printer printer, Uint8List bytes, PdfPageFormat format);
 
@@ -43,7 +44,7 @@ class WindowsReceiptPrintDialog extends StatefulWidget {
       if (!isCurrent()) throw StateError('School changed. Reopen document.');
       final bytes = await prepare().timeout(const Duration(seconds:45));
       if (!isCurrent()) throw StateError('School changed. Reopen document.');
-      return bytes;
+      return SchoolMediaBudgets.verifyPrintPdf(bytes);
     }
     Future<Uint8List> guarded() {
       final next=start();
