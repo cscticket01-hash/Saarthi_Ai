@@ -675,6 +675,12 @@ void main() {
       'totalAmount':250};
     expect(()=>SchoolTemplateImportEngine.validatePreviewRecord(draft,tooMany),
       throwsFormatException);
+    final partial={'receiptNo':'VS-PART','studentName':'Mira',
+      'feeItems':{'Tuition':100,'Exam':50},'expectedAmount':150,
+      'installmentAmount':50,'totalPaid':100,'balance':50};
+    expect(()=>SchoolTemplateImportEngine.validatePreviewRecord(draft,partial),returnsNormally);
+    expect(()=>SchoolTemplateImportEngine.validatePreviewRecord(draft,{...partial,'balance':40}),
+      throwsFormatException);
     final badAmount={'receiptNo':'VS-BAD','studentName':'Mira',
       'feeItems':{'Tuition':100,'Exam':-10},'totalAmount':90};
     expect(()=>SchoolTemplateImportEngine.validatePreviewRecord(draft,badAmount),

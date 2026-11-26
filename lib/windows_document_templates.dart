@@ -54,9 +54,13 @@ class WindowsDocumentTemplates {
 
   /// Missing selection is not a selected decorative layout. Existing explicit
   /// numeric and imported choices remain unchanged.
-  static Object? financialSelection(String kind, Object? value) =>
-      supportsPlain(kind) && (value == null || value == plainSelection)
-          ? plainSelection : value;
+  static Object? financialSelection(String kind, Object? value) {
+    if (!supportsPlain(kind)) return value;
+    if (value == null || value == plainSelection) return plainSelection;
+    if (value is num && value.isFinite && value == value.toInt() && value >= 0)
+      return kind == 'payslip' ? 0 : windowsReferenceDocumentIndex(kind,value);
+    return value;
+  }
   static String studentCardSelection(Object? selection) {
     if (selection is String &&
         (selection.startsWith('manifest:') ||
@@ -190,9 +194,17 @@ class WindowsDocumentTemplates {
     await Navigator.of(context).push<void>(MaterialPageRoute(builder: (previewContext) =>
       NativeIdCardPreview(template:card.template,data:card.data,images:card.images,
         backgrounds:card.backgrounds,qr:compact,
-        onPrint:hasPhoto ? (pages) async {
+        onPrintDocument:hasPhoto ? (frontOnly) async {
           checkSchool();
-          await WindowsBrowserPrint.openImages(previewContext,pages,title:'ID card',actualSize:true,isCurrent:(){try{checkSchool();return true;}catch(_){return false;}});
+          final bytes = await IdCardEngine.render(card.template,card.data,
+            images:card.images,backgrounds:card.backgrounds,qr:compact,frontOnly:frontOnly);
+          checkSchool();
+          if(compact.isNotEmpty && card.template.regions.any((r)=>r.kind=='qr' &&
+              (!frontOnly || r.side=='front'))) await IdCardEngine.verifyExport(bytes,compact);
+          checkSchool();
+          if (!previewContext.mounted) return;
+          await WindowsBrowserPrint.open(previewContext,bytes,title:'ID card',
+            preserveActualSize:true,isCurrent:(){try{checkSchool();return true;}catch(_){return false;}});
         } : null,
         onDownload:hasPhoto ? () async {
           checkSchool();
@@ -1414,7 +1426,8 @@ class _SchoolDocumentTemplatesScreenState
     final origin=db.activeProfileId;
     final boundSchool=db.activeProfileIdentity['schoolSyncId'];
     final school=boundSchool?.toString()??'';
-    final settings=await WindowsDocumentTemplates.selections();
+    final settings=Map<String,dynamic>.of(_selected);
+    final sample=Map<String,dynamic>.of(_sample);
     if(db.activeProfileId!=origin ||
       db.activeProfileIdentity['schoolSyncId']!=boundSchool){
       throw StateError('School changed before template selection.');
@@ -1443,7 +1456,7 @@ class _SchoolDocumentTemplatesScreenState
     // Validate the exact selected financial renderer before changing selection.
     // The approved manifest cannot silently become a different version.
     if (WindowsDocumentTemplates.supportsPlain(kind)) {
-      final preview = await WindowsDocumentTemplates.renderTemplate(kind,index,_sample);
+      final preview = await WindowsDocumentTemplates._selected(kind,sample,selectionOverride:value);
       if (preview == null || preview.isEmpty) throw StateError('Template is not printable.');
     }
     if(db.activeProfileId!=origin ||
@@ -1452,6 +1465,8 @@ class _SchoolDocumentTemplatesScreenState
     }
     final currentSnapshot = (await ref.get()).data();
     final current = currentSnapshot ?? <String,dynamic>{};
+    if (current[kind] != settings[kind])
+      throw StateError('Template selection changed on another device. Refresh and retry.');
     if (isImported && WindowsDocumentTemplates.importedAsset(current,kind,
         templateId:value.toString().substring(9)) == null) {
       throw StateError('Uploaded template was removed. Reopen templates.');

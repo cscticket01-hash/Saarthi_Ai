@@ -140,9 +140,17 @@ class WindowsIdCardDesignerEntry {
       await Navigator.of(context).push<void>(MaterialPageRoute(builder: (previewContext) =>
         NativeIdCardPreview(template:manifest,data:data,images:images,
           backgrounds:backgrounds,qr:qr,
-          onPrint:(pages) async {
+          onPrintDocument:(frontOnly) async {
             checkSchool();
-            await WindowsBrowserPrint.openImages(previewContext,pages,title:'ID card draft',actualSize:true,isCurrent:(){try{checkSchool();return true;}catch(_){return false;}});
+            final bytes=await IdCardEngine.render(manifest,data,backgrounds:backgrounds,
+              images:images,qr:qr,frontOnly:frontOnly);
+            checkSchool();
+            if(qr.isNotEmpty && manifest.regions.any((r)=>r.kind=='qr' &&
+                (!frontOnly || r.side=='front'))) await IdCardEngine.verifyExport(bytes,qr);
+            checkSchool();
+            if (!previewContext.mounted) return;
+            await WindowsBrowserPrint.open(previewContext,bytes,title:'ID card draft',
+              preserveActualSize:true,isCurrent:(){try{checkSchool();return true;}catch(_){return false;}});
           },
           onDownload:() async {
             checkSchool();
