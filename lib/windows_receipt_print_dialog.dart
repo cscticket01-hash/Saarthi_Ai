@@ -443,7 +443,7 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
               const Text('Document unavailable.'),
               if(widget.onRetryDocument!=null) ...[
                 const SizedBox(height:8),
-                const Text('Could not prepare the report card. Retry or reopen it.'),
+                const Text('Could not prepare the document. Retry or reopen it.'),
                 TextButton.icon(onPressed:locked?null:widget.onRetryDocument,
                   icon:const Icon(Icons.refresh),label:const Text('Retry document')),
               ],
