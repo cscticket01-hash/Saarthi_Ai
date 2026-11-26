@@ -16,6 +16,75 @@ test('website exam reads require developer auth, retain tenant isolation and sup
  await assert.rejects(foreign.call({action:'developer/managed/exams',schoolId:A},'developer'),e=>e.status===502);
 });
 const {fixture,A,B,key,secret,time}=require('./helpers/managed-school-broker');
+test('developer controls school TemplateForge separately from global upload maintenance',async()=>{
+ const f=fixture(), global='developer/managed/features/global/', feature='developer/managed/features/';
+ const upload={action:'managed/file/upload',name:'school_template_receipt_'+'a'.repeat(64)+'.png',mime:'image/png',base64:'YQ=='};
+ const initial=await f.call({action:'managed/features'});
+ assert.equal(initial.customTemplates,false);assert.equal(initial.uploadEnabled,true);
+ assert.equal(initial.expiresAt,time+86400000);
+ await assert.rejects(f.call({action:feature+'set',schoolId:A,enabled:true,expectedRevision:0}),e=>e.status===403);
+ await assert.rejects(f.call(upload),e=>e.code==='TEMPLATE_FEATURE_LOCKED');
+ assert.equal(f.sent.length,0);
+ await assert.rejects(f.call({action:'managed/features',schoolId:B}),e=>e.status===403);
+ const entitlement={...f.docs.get('school_entitlements/'+A)};
+ const enabled=await f.call({action:feature+'set',schoolId:A,enabled:true,expectedRevision:0},'developer');
+ assert.equal(enabled.revision,1);assert.equal(enabled.enabled,true);
+ assert.equal(f.docs.get('school_entitlements/'+A).expiresAt,entitlement.expiresAt);
+ assert.equal((await f.call({action:'managed/features'},'B')).customTemplates,false);
+ assert.equal((await f.call({action:'managed/features'},'A-new-pc')).customTemplates,true);
+ await f.call(upload);
+ const paused=await f.call({action:global+'set',uploadEnabled:false,expectedRevision:0},'developer');
+ assert.equal(paused.revision,1);
+ const policy=await f.call({action:'managed/features'});
+ assert.equal(policy.customTemplates,true);assert.equal(policy.uploadEnabled,false);
+ await assert.rejects(f.call(upload),e=>e.code==='TEMPLATE_UPLOAD_MAINTENANCE');
+ await assert.rejects(f.call({...upload,action:'managed/file/upload/resumable',operation:'part'}),e=>e.code==='TEMPLATE_UPLOAD_MAINTENANCE');
+ await assert.rejects(f.call({action:'managed/features/template-upload'}),e=>e.code==='TEMPLATE_UPLOAD_MAINTENANCE');
+ // Ordinary media, existing template reads and record synchronization must
+ // remain usable during maintenance.
+ await f.call({...upload,name:'ordinary-photo.png'});
+ await f.call({action:'managed/file/read',fileId:'existing-template'});
+ await f.call({action:'managed/records',collection:'school_settings',operation:'read'});
+ await assert.rejects(f.call({action:global+'set',uploadEnabled:true,expectedRevision:0},'developer'),e=>e.status===409);
+ await f.call({action:global+'set',uploadEnabled:true,expectedRevision:1},'developer');
+ await f.call({action:'managed/features/template-upload'});
+ await f.call({action:feature+'set',schoolId:A,enabled:false,expectedRevision:1},'developer');
+ assert.equal((await f.call({action:'managed/features'})).customTemplates,false);
+ await assert.rejects(f.call(upload),e=>e.code==='TEMPLATE_FEATURE_LOCKED');
+ assert.equal([...f.docs.keys()].filter(k=>k.startsWith('platform_audit/')).length,4);
+});
+test('generic template manifest writes cannot publish new assets during maintenance or paid lock',async()=>{
+ const manifest={version:1,approved:true,schoolId:A,kind:'receipt',templateId:'old',sourceHash:'old',fileId:'old-file'};
+ const assets={receipt:{old:manifest}};
+ const existing={schoolId:A,templateAssets:assets,templateAssetLatest:{receipt:'old'},receipt:'plain',_syncRevision:'r1'};
+ const f=fixture(async(_,opt)=>{
+  const envelope=JSON.parse(opt.body),body=JSON.parse(envelope.payload);
+  const payload=body.operation==='read'?{pointRead:true,records:{document_templates:existing}}:
+    {recordRevision:'r2'};
+  return {ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:envelope.schoolId,syncProtocol:2,...payload})};
+ });
+ const write={action:'managed/records',collection:'school_settings',id:'document_templates',operation:'write',syncProtocol:2,
+  operationId:'template-manifest-policy-test-01',expectedRecordRevision:'r1'};
+ const added={receipt:{...assets.receipt,new:{...manifest,templateId:'new',fileId:'generic-upload'}}};
+ const send=data=>f.call({...write,data});
+ const patch=set=>({_syncFieldPatch:{version:1,set,remove:[],before:{}}});
+ await assert.rejects(send({templateAssets:added}),e=>e.code==='TEMPLATE_FEATURE_LOCKED');
+ await assert.rejects(send(patch({receipt:'imported:old'})),e=>e.code==='TEMPLATE_FEATURE_LOCKED');
+ await f.call({action:'developer/managed/features/set',schoolId:A,enabled:true,expectedRevision:0},'developer');
+ await f.call({action:'developer/managed/features/global/set',uploadEnabled:false,expectedRevision:0},'developer');
+ await assert.rejects(send(patch({templateAssets:added})),e=>e.code==='TEMPLATE_UPLOAD_MAINTENANCE');
+ await assert.rejects(send({templateAssetLatest:{receipt:'new'}}),e=>e.code==='TEMPLATE_UPLOAD_MAINTENANCE');
+ await assert.rejects(send(patch({receipt:'imported:unknown'})),e=>e.code==='TEMPLATE_SELECTION_UNVERIFIED');
+ await assert.rejects(f.call({action:'managed/records/batch',operations:[{...write,data:patch({templateAssets:added})}]}),
+  e=>e.code==='TEMPLATE_UPLOAD_MAINTENANCE');
+ await send({templateAssets:assets,templateAssetLatest:{receipt:'old'},receipt:'imported:old'});
+ await send(patch({templateArchived_receipt_old:true}));
+ await send(patch({receipt:'plain'}));
+ const writes=f.sent.map(x=>JSON.parse(JSON.parse(x.opt.body).payload)).filter(x=>x.operation==='write');
+ assert.equal(writes.length,3);
+ await f.call({action:'developer/managed/features/global/set',uploadEnabled:true,expectedRevision:1},'developer');
+ await send(patch({templateAssets:added}));
+});
 test('new school session routes to combined setup and contact restores on another PC',async()=>{
  const f=fixture();f.docs.get('platform_schools/'+A).registrationState='new';
  assert.equal((await f.call({action:'managed/session'})).registrationState,'new');
