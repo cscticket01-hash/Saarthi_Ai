@@ -1,35 +1,34 @@
-import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
-import 'package:printing/printing.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:flutter/material.dart';
+import 'windows_local_firestore.dart';
+import 'windows_receipt_print_dialog.dart';
+import 'windows_print_layout.dart';
 
-/// Local browser print preview, with printer, copies, pages and paper controls.
+/// Compatibility entry point for existing native preview Print actions.
+/// Opens the shared in-app print dialog; no browser tabs or saved temp files.
 class WindowsBrowserPrint {
-  static Future<void> open(Uint8List pdf) async {
-    final pages = <({Uint8List png, int width, int height})>[];
-    await for (final page in Printing.raster(pdf, dpi: 300)) {
-      pages.add((png:await page.toPng(),width:page.width,height:page.height));
-    }
-    await openImages(pages);
+  static Future<void> open(BuildContext context, Uint8List pdf,
+      {String title='Print document', bool Function()? isCurrent,bool preserveActualSize=false}) async {
+    final db=FirebaseFirestore.instance,profile=db.activeProfileId;
+    final school=db.activeProfileIdentity['schoolSyncId'];
+    bool current()=>db.activeProfileId==profile &&
+      db.activeProfileIdentity['schoolSyncId']==school && (isCurrent?.call()??true);
+    if(!context.mounted || !current())return;
+    await showDialog<void>(context:context,builder:(_)=>WindowsReceiptPrintDialog(
+      receipt:Future.value(pdf),title:title,subtitle:'Print preview',isCurrent:current,preserveActualSize:preserveActualSize));
   }
 
-  static Future<void> openImages(
+  static Future<void> openImages(BuildContext context,
     List<({Uint8List png, int width, int height})> pages,
+    {String title='Print document',bool actualSize=false,bool Function()? isCurrent}
   ) async {
-    if (pages.isEmpty) throw StateError('No printable pages.');
-    final directory = await Directory.systemTemp.createTemp('vidya-print-');
-    final file = File('${directory.path}${Platform.pathSeparator}print.html');
-    await file.writeAsString(html(pages),flush:true);
-    if (!await launchUrl(Uri.file(file.path), mode: LaunchMode.externalApplication)) {
-      throw StateError('Could not open browser print preview. Download the PDF and open it in your browser.');
-    }
-  }
-  static String html(List<({Uint8List png, int width, int height})> pages) {
-    final images=[for(final page in pages)
-      '<section><img style="width:${page.width*25.4/300}mm" src="data:image/png;base64,${base64Encode(page.png)}"></section>'];
-    return '''<!doctype html><html><head><meta charset="utf-8"><title>Vidya Saarthi Print</title>
-<style>@page{size:A4;margin:10mm}body{margin:0;background:#ddd}section{background:white;break-after:page;padding:0}section:last-child{break-after:auto}img{display:block;max-width:190mm;max-height:277mm;height:auto;object-fit:contain}@media print{body{background:white}button{display:none}}</style></head>
-<body><button onclick="window.print()">Print</button>${images.join()}<script>window.onload=()=>window.print();</script></body></html>''';
+    final db=FirebaseFirestore.instance,profile=db.activeProfileId;
+    final school=db.activeProfileIdentity['schoolSyncId'];
+    bool current()=>db.activeProfileId==profile &&
+      db.activeProfileIdentity['schoolSyncId']==school && (isCurrent?.call()??true);
+    if(!current())return;
+    final pdf=await WindowsPrintLayout.fromImages(pages,actualSize:actualSize);
+    if(!context.mounted||!current())return;
+    await open(context,pdf,title:title,isCurrent:current,preserveActualSize:actualSize);
   }
 }

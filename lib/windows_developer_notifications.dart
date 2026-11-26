@@ -14,7 +14,9 @@ import 'windows_local_firestore.dart' as local;
 
 /// Developer messages and verified school complaints. Reads never enter the school sync outbox.
 class DeveloperInbox extends ChangeNotifier {
-  DeveloperInbox({this.readPage, this.readComplaints, this.playNotificationSound});
+  DeveloperInbox({this.readPage, this.readComplaints, this.playNotificationSound,this.exchangeReadReceipts});
+  // Injectable boundary for two independent profile/device regression tests.
+  final Future<Map<String,dynamic>> Function(List<String> keys,List<String> marked)? exchangeReadReceipts;
   final Future<void> Function()? playNotificationSound;
   bool _soundBaselineEstablished = false;
   final Future<Map<String, dynamic>> Function(String audience, String? cursor)?
@@ -30,6 +32,8 @@ class DeveloperInbox extends ChangeNotifier {
   void acceptResolvedTicket(Map<String,dynamic> row) {
     if (!current || _disposed || row['schoolId'] != _school || row['status'] != 'resolved' || _tickets == null) return;
     _tickets = _tickets!.map((ticket) => ticket['id'] == row['id'] ? row : ticket).toList();
+    messages=messages.map((m)=>m['complaintId']==row['id'] && kind(m)=='support'
+      ? <String,dynamic>{...m,'status':'resolved','title':'Support • resolved'} : m).toList();
     _notify();
   }
   final Map<String,String> _read = {};
@@ -58,10 +62,11 @@ class DeveloperInbox extends ChangeNotifier {
       ? [m['key'],m['developerUpdatedAt'],m['developerNote']]
       : [m['key'],m['title'],m['message'],m['status'],m['createdAt']],
   ))).toString();
-  bool isRead(Map m) => _read[m['key']] == receiptRevision(m);
+  // Resolved is server-owned school-wide state, not a new unread event.
+  bool isRead(Map m) => (m['complaintId'] != null && m['status']=='resolved') || _read[m['key']] == receiptRevision(m);
 
   Future<void> _syncReadReceipts() async {
-    if(readPage!=null || readComplaints!=null || !current || _disposed) return;
+    if((exchangeReadReceipts==null && (readPage!=null || readComplaints!=null)) || !current || _disposed) return;
     final support=SchoolSupportClient();
     final rows=messages.where((m)=>!complaintExpired(m)).toList();
     // Each exchange is bounded; recent alerts first, with pending older reads included.
@@ -80,7 +85,7 @@ class DeveloperInbox extends ChangeNotifier {
       if(!current||_disposed)return;
       final chunk=keys.skip(start).take(100).toList();
       final marked=chunk.where(_pendingRead.contains).toList();
-      final result=await support.call('managed/support/readReceipts',{'keys':chunk,'marked':marked});
+      final result=await (exchangeReadReceipts?.call(chunk,marked) ?? support.call('managed/support/readReceipts',{'keys':chunk,'marked':marked}));
       if(!current||_disposed)return;
       final returned=result['read'];
       if(returned is! List || returned.any((r)=>r is! String||!chunk.contains(r)))throw StateError('Invalid read receipt response.');
@@ -463,7 +468,7 @@ class DeveloperInbox extends ChangeNotifier {
       _sort();
       final changedRevisions = changed.where((m) =>
         existing[m['key']] == null || receiptRevision(existing[m['key']]!) != receiptRevision(m)).toList();
-      if(!announcementsOnly) {
+      if(!announcementsOnly || changedRevisions.isNotEmpty) {
         try{await _syncReadReceipts();}catch(_){/* retain local read receipts for retry */}
       }
       if (!current || _disposed) return;
@@ -471,7 +476,7 @@ class DeveloperInbox extends ChangeNotifier {
         changedRevisions.any((m) => !complaintExpired(m) && !isRead(m));
       if (!more) _soundBaselineEstablished = true;
       if (shouldSound) {
-        final player = playNotificationSound ?? (readPage == null && readComplaints == null ? WindowsNotificationSound.playIfEnabled : null);
+        final player = playNotificationSound ?? (readPage == null && readComplaints == null ? (() => WindowsNotificationSound.play(70)) : null);
         if (player != null) unawaited(_playQuietly(player));
       }
     } catch (e) {
@@ -555,11 +560,6 @@ class _DeveloperInboxScreenState extends State<DeveloperInboxScreen> {
             tooltip: 'Mark all loaded notifications as read',
             onPressed: inbox.unread == 0 ? null : () => inbox.markAllLoadedRead(),
             icon: const Icon(Icons.done_all),
-          ),
-          IconButton(
-            tooltip: 'Notification sound settings',
-            onPressed: () => showDialog<void>(context: context, builder: (ctx) => const AlertDialog(title: Text('Notification sound'), content: SizedBox(width: 380, child: WindowsNotificationSoundCard()))),
-            icon: const Icon(Icons.volume_up_outlined),
           ),
           IconButton(
             tooltip: 'Refresh notifications',

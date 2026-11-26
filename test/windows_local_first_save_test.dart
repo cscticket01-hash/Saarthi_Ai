@@ -12,7 +12,7 @@ import '../lib/windows_admin_security.dart';
 import '../lib/windows_school_image_cache.dart';
 import '../lib/windows_connect/school_drive_images.dart';
 import 'dart:typed_data';
-import '../lib/windows_browser_print.dart';
+import '../lib/windows_print_layout.dart';
 import '../lib/windows_pending_school_sync.dart';
 import '../lib/windows_school_profile_restore.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -351,12 +351,14 @@ void main() {
     expect(restored['schoolName'],'New offline name');expect(restored['logoUrl'],'data:image/png;base64,YWJj');
   });
 
-  test('browser preview retains both print pages locally and fits printable paper',() {
-    final html=WindowsBrowserPrint.html([(png:Uint8List.fromList([1,2,3]),width:638,height:1011),(png:Uint8List.fromList([4,5,6]),width:638,height:1011)]);
-    expect('<section>'.allMatches(html),hasLength(2));
-    expect(html,contains('AQID'));expect(html,contains('BAUG'));expect(html,contains('window.print()'));
-    expect(html,contains('max-width:190mm;max-height:277mm;height:auto'));
-    expect(html, isNot(contains('https://')));
+  test('native print images produce a local two-page print-only PDF without browser files',() async {
+    final first=Uint8List.fromList(img.encodePng(img.Image(width:2,height:2)));
+    final second=Uint8List.fromList(img.encodePng(img.Image(width:3,height:3)));
+    final bytes=await WindowsPrintLayout.fromImages([
+      (png:first,width:638,height:1011),(png:second,width:638,height:1011),
+    ],actualSize:true);
+    expect(bytes.take(5),[37,80,68,70,45]);
+    expect(latin1.decode(bytes),contains('/Count 2'));
   });
 
   test('uploaded Drive images remain available offline and never enter another school cache',() async {

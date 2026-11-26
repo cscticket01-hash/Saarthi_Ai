@@ -51,7 +51,6 @@ import 'windows_ui_localization.dart';
 import 'windows_preferences_reset.dart';
 import 'windows_school_operations.dart';
 import 'windows_developer_notifications.dart';
-import 'windows_notification_sound.dart';
 import 'windows_staff_payroll.dart';
 import 'windows_school_identity.dart';
 import 'windows_document_templates.dart';
@@ -5416,7 +5415,8 @@ Future<void> _printIdCard() async {
     final pdfBytes =
         await _buildIdCardPdf();
 
-    await WindowsBrowserPrint.open(pdfBytes);
+    if (!mounted) return;
+    await WindowsBrowserPrint.open(context, pdfBytes, title:'ID card');
 
   } catch (e) {
     debugPrint(
@@ -9673,8 +9673,6 @@ class SettingsScreen extends StatelessWidget {
         const WindowsAppUpdateCard(),
         const SizedBox(height: 12),
         const WindowsSyncStatusCard(),
-        const SizedBox(height: 12),
-        const WindowsNotificationSoundCard(),
         FutureBuilder<Map<String,dynamic>>(
           future:CentralSchoolCloud.saved(),
           builder:(context,snapshot) {
@@ -14905,7 +14903,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
           title: 'Teacher ID card • Front & back',
           notice: 'Android login needs this ID card record synced to the school backend and the matching Android app update.',
           onPrint: () async {
-            try { await WindowsBrowserPrint.open(bytes); }
+            try { if(mounted) await WindowsBrowserPrint.open(context,bytes,title:'Teacher ID card'); }
             catch(e) { if(mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Print preview unavailable: $e'))); }
           },
           onDownload: () async {

@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:printing/printing.dart';
+import 'windows_browser_print.dart';
 
 import 'id_card_bulk_engine.dart';
 import 'id_card_bulk_job_store.dart';
@@ -112,6 +113,6 @@ class _OriginGuardedPdfState extends State<_OriginGuardedPdf> {
   @override void dispose(){timer?.cancel();super.dispose();}
   @override Widget build(BuildContext context){
     try{widget.source.ensureActive();}catch(_){changed=true;}
-    return Scaffold(appBar:AppBar(title:const Text('Exact bulk front/back PDF')),body:changed?const Center(child:Text('School changed; reopen ID tools.')):PdfPreview(build:(_){widget.source.ensureActive();return widget.bytes;},canChangePageFormat:false,canChangeOrientation:false,allowPrinting:true,allowSharing:true));
+    return Scaffold(appBar:AppBar(title:const Text('Exact bulk front/back PDF'),actions:[IconButton(tooltip:'Print',icon:const Icon(Icons.print),onPressed:changed?null:()=>WindowsBrowserPrint.open(context,widget.bytes,title:'Bulk ID cards',isCurrent:(){try{widget.source.ensureActive();return true;}catch(_){return false;}}))]),body:changed?const Center(child:Text('School changed; reopen ID tools.')):PdfPreview(build:(_){widget.source.ensureActive();return widget.bytes;},canChangePageFormat:false,canChangeOrientation:false,allowPrinting:false,allowSharing:true));
   }
 }

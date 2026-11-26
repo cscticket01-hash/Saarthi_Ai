@@ -942,9 +942,11 @@ void main() {
       }
       expect(find.byType(Dialog), findsOneWidget);
       expect(find.byType(FittedDocumentPreview), findsOneWidget);
-      expect(find.widgetWithText(FilledButton, 'Print'), findsOneWidget);
+      await tester.pumpAndSettle();
+      // No installed printer is exposed by the synthetic printing platform.
+      expect(find.widgetWithText(FilledButton, 'Save as PDF'), findsOneWidget);
       expect(find.text('Save PDF'), findsOneWidget);
-      expect(find.text('Cancel'), findsNothing);
+      expect(find.widgetWithText(TextButton,'Cancel'), findsOneWidget);
       await tester.tap(find.byIcon(Icons.close));
       await tester.pumpAndSettle();
     } finally { PrintingPlatform.instance = nativePrinting; }
