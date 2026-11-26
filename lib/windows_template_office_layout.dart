@@ -263,20 +263,16 @@ class SchoolTemplateOfficeLayout {
   static Future<SchoolTemplateDraft> importSource({
     required SchoolTemplateKind kind,required String schoolId,required String filename,required Uint8List bytes,
     Future<List<Uint8List>> Function(Uint8List)? pdfPagesRasterizer,
-  }) async {
+  }) {
     SchoolTemplateImportEngine.verifySchool(schoolId);
     final docs=_open(filename,bytes);
     final page=filename.toLowerCase().endsWith('.docx')?_word(docs):_sheet(docs);
     if(page.margin<12||page.margin>100||page.rows.isEmpty||page.rows.length>60)_reject('Unsupported page margins or row count.');
     final format=page.format;
     final fields=<SchoolTemplateField>[],slots=<ForgeVisualSlot>[];
-    final widgets=<pw.Widget>[];
-    final normal=pw.Font.ttf(await rootBundle.load('assets/id_card_regular.ttf'));
-    final bold=pw.Font.ttf(await rootBundle.load('assets/id_card_bold.ttf'));
-    final fallback=<pw.Font>[
-      pw.Font.ttf(await rootBundle.load('assets/fonts/NotoSansDevanagari[wdth,wght].ttf')),
-      pw.Font.ttf(await rootBundle.load('assets/fonts/NotoSansBengali[wdth,wght].ttf')),
-    ];
+    // All source validation is synchronous and precedes asset loading.
+    // Invalid sources never reach the asynchronous renderer or rasterizer.
+    final widgets=<pw.Widget Function(pw.Font,pw.Font,List<pw.Font>)>[];
     final token=RegExp(r'^\{\{([A-Za-z][A-Za-z0-9]*)\}\}$');
     final nameHeaders=kind==SchoolTemplateKind.receipt
       ?const ['particulars','description','fee details','fee head','fee name','বিবরণ','विवरण']
@@ -364,13 +360,16 @@ class SchoolTemplateOfficeLayout {
         if(match==null&&RegExp(r'[\r\n\t]').hasMatch(value))_reject('Multiline cell text is unsupported.');
         if(match==null&&kind.fields.any((k)=>(aliases[k]??const <String>[]).any((a)=>TemplateForgeAutoMapper.normalized(value).startsWith(a+' '))))
           _reject('Use a blank cell or an explicit field placeholder instead of prefilled personal data.');
-        final style=pw.TextStyle(font:cell.bold?bold:normal,fontFallback:fallback,fontSize:cell.size,color:PdfColor.fromHex('#'+cell.ink));
         if(match==null&&value.isNotEmpty&&(value.runes.length*cell.size*.62>cell.width-6||cell.size*1.6>h-4))
           _reject('Static text does not fit its source cell. Enlarge the source cell.');
-        widgets.add(pw.Positioned(left:x,top:y,child:pw.Container(width:cell.width,height:h,
+        // Capture immutable coordinates before the loop advances.
+        final left=x,top=y;
+        widgets.add((normal,bold,fallback)=>pw.Positioned(left:left,top:top,
+          child:pw.Container(width:cell.width,height:h,
           decoration:pw.BoxDecoration(color:cell.fill==null?PdfColors.white:PdfColor.fromHex('#'+cell.fill!),border:cell.border?pw.Border.all(color:PdfColors.black,width:.5):null),
           padding:const pw.EdgeInsets.all(3),
-          child:match!=null||value.isEmpty?null:pw.Text(value,maxLines:1,style:style,
+          child:match!=null||value.isEmpty?null:pw.Text(value,maxLines:1,
+            style:pw.TextStyle(font:cell.bold?bold:normal,fontFallback:fallback,fontSize:cell.size,color:PdfColor.fromHex('#'+cell.ink)),
             textAlign:cell.align=='center'?pw.TextAlign.center:cell.align=='right'?pw.TextAlign.right:pw.TextAlign.left))));
         if(match!=null){
           final key=match.group(1)!;
@@ -388,14 +387,33 @@ class SchoolTemplateOfficeLayout {
       y+=h;
     }
     SchoolTemplateImportEngine.validateFieldSet(kind,fields);
+    return _renderValidated(kind:kind,schoolId:schoolId,filename:filename,
+      sourceHash:sha256.convert(bytes).toString(),format:format,fields:fields,slots:slots,
+      widgets:widgets,pdfPagesRasterizer:pdfPagesRasterizer);
+  }
+
+  static Future<SchoolTemplateDraft> _renderValidated({
+    required SchoolTemplateKind kind,required String schoolId,required String filename,
+    required String sourceHash,required PdfPageFormat format,
+    required List<SchoolTemplateField> fields,required List<ForgeVisualSlot> slots,
+    required List<pw.Widget Function(pw.Font,pw.Font,List<pw.Font>)> widgets,
+    Future<List<Uint8List>> Function(Uint8List)? pdfPagesRasterizer,
+  }) async {
+    final normal=pw.Font.ttf(await rootBundle.load('assets/id_card_regular.ttf'));
+    final bold=pw.Font.ttf(await rootBundle.load('assets/id_card_bold.ttf'));
+    final fallback=<pw.Font>[
+      pw.Font.ttf(await rootBundle.load('assets/fonts/NotoSansDevanagari[wdth,wght].ttf')),
+      pw.Font.ttf(await rootBundle.load('assets/fonts/NotoSansBengali[wdth,wght].ttf')),
+    ];
     final pdf=pw.Document();
     pdf.addPage(pw.Page(pageFormat:format,margin:pw.EdgeInsets.zero,build:(_)=>pw.Stack(children:[
-      pw.SizedBox(width:format.width,height:format.height),...widgets,
+      pw.SizedBox(width:format.width,height:format.height),
+      for(final widget in widgets)widget(normal,bold,fallback),
     ])));
     final raster=await SchoolTemplateImportEngine.importBytes(kind:kind,schoolId:schoolId,filename:'native.pdf',
       bytes:await pdf.save(),pdfPagesRasterizer:pdfPagesRasterizer??(bytes) =>
         Printing.raster(bytes,dpi:180).take(2).asyncMap((page)=>page.toPng()).toList().timeout(const Duration(seconds:30)));
-    final draft=SchoolTemplateDraft(kind:kind,schoolId:schoolId,filename:filename,sourceHash:sha256.convert(bytes).toString(),png:raster.png,width:raster.width,height:raster.height,fields:fields,visualSlots:slots);
+    final draft=SchoolTemplateDraft(kind:kind,schoolId:schoolId,filename:filename,sourceHash:sourceHash,png:raster.png,width:raster.width,height:raster.height,fields:fields,visualSlots:slots);
     SchoolTemplateImportEngine.validateDraft(draft);
     return draft;
   }

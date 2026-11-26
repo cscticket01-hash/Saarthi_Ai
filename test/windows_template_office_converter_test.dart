@@ -167,24 +167,26 @@ void main(){
       expect(SchoolTemplateOfficeConverter.isPdf(output),isTrue);
     }
   });
-  test('native import rejects wrong category, old populated data and formulas',() async {
+  test('native import rejects wrong category, old populated data and formulas',() {
+    var rasterCalls=0;
     Future<SchoolTemplateDraft> run(String filename,Uint8List bytes,SchoolTemplateKind kind)=>
       SchoolTemplateOfficeLayout.importSource(kind:kind,schoolId:school,filename:filename,bytes:bytes,
-        pdfPagesRasterizer:(_) async=>[a4Png()]);
-    Future<void> rejected(String file,Uint8List bytes,SchoolTemplateKind kind) async {
-      FormatException? failure;
-      try { await run(file,bytes,kind); }
-      on FormatException catch(error) { failure=error; }
-      expect(failure,isNotNull,reason:'Invalid source must be rejected: $file');
+        pdfPagesRasterizer:(_) async{rasterCalls++;return [a4Png()];});
+    // Validate real import entry point, not an isolated helper. Invalid
+    // source must fail before any asynchronous font loading or rendering.
+    void rejected(String file,Uint8List bytes,SchoolTemplateKind kind) {
+      expect(()=>run(file,bytes,kind),throwsFormatException,
+        reason:'Invalid source must be rejected: $file');
     }
-    await rejected('wrong.docx',nativeDocx(title:'Report Card'),SchoolTemplateKind.receipt);
-    await rejected('wrong.docx',nativeDocx(),SchoolTemplateKind.reportCard);
-    await rejected('filled.docx',nativeDocx(student:'Old Student'),SchoolTemplateKind.receipt);
-    await rejected('formula.xlsx',nativeXlsx(formula:true),SchoolTemplateKind.receipt);
-    await rejected('literal.docx',nativeDocx(title:'Unverified personal data'),SchoolTemplateKind.receipt);
+    rejected('wrong.docx',nativeDocx(title:'Report Card'),SchoolTemplateKind.receipt);
+    rejected('wrong.docx',nativeDocx(),SchoolTemplateKind.reportCard);
+    rejected('filled.docx',nativeDocx(student:'Old Student'),SchoolTemplateKind.receipt);
+    rejected('formula.xlsx',nativeXlsx(formula:true),SchoolTemplateKind.receipt);
+    rejected('literal.docx',nativeDocx(title:'Unverified personal data'),SchoolTemplateKind.receipt);
     for(final file in ['old.doc','old.xls','source.pdf','photo.png','source.docm','source.xlsm']){
-      await rejected(file,nativeDocx(),SchoolTemplateKind.receipt);
+      rejected(file,nativeDocx(),SchoolTemplateKind.receipt);
     }
+    expect(rasterCalls,0);
   });
 
   test('multiple pages and failed conversions cannot publish a template',() async {
