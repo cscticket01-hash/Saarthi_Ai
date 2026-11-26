@@ -9,6 +9,7 @@ import 'id_card_layout.dart';
 Future<Uint8List> renderMaroonMarksheet(Map<String, dynamic> data, {
   Uint8List? photo, Uint8List? logo, Uint8List? signature, Uint8List? seal,
   bool plain = false,
+  bool printOnly=false,
 }) async {
   final regular=pw.Font.ttf(await rootBundle.load('assets/id_card_regular.ttf'));
   final bold=pw.Font.ttf(await rootBundle.load('assets/id_card_bold.ttf'));
@@ -110,5 +111,6 @@ Future<Uint8List> renderMaroonMarksheet(Map<String, dynamic> data, {
     ];
     pdf.addPage(pw.Page(pageFormat:PdfPageFormat.a4,margin:pw.EdgeInsets.zero,build:(_)=>pw.Stack(children:layers)));
   }
-  return SchoolMediaBudgets.verifyGeneratedPdf('reportCard', await pdf.save());
+  final bytes=await pdf.save();
+  return printOnly?SchoolMediaBudgets.verifyPrintPdf(bytes):SchoolMediaBudgets.verifyGeneratedPdf('reportCard',bytes);
 }

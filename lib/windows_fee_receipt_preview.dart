@@ -10,7 +10,7 @@ import 'windows_local_firestore.dart';
 /// Receipts stay inside the application. Drive is read through the authenticated
 /// owner; no public URLs, browser navigation or new Google sign-in window.
 class WindowsFeeReceiptPreview {
-  static Future<Uint8List> bytes(Map<String, dynamic> payment) async {
+  static Future<Uint8List> bytes(Map<String, dynamic> payment,{bool printOnly=false}) async {
     final db = FirebaseFirestore.instance,
         origin = FirebaseFirestore.instance.activeProfileId;
     void scope() {
@@ -41,7 +41,7 @@ class WindowsFeeReceiptPreview {
       return result;
     }
     // Older payments store the complete receipt snapshot, without a document ID.
-    final result = await WindowsDocumentTemplates.selected('receipt', payment);
+    final result = await WindowsDocumentTemplates.selected('receipt', payment,printOnly:printOnly);
     scope();
     if (result == null) throw StateError('Receipt record cannot be rendered.');
     return result;
@@ -68,7 +68,7 @@ class WindowsFeeReceiptPreview {
     Future<Uint8List> prepare() async {
       if (!current()) throw StateError('School changed. Reopen receipt history.');
       final source = Map<String, dynamic>.of(saved)..remove('receiptTemplateSelection');
-      final result = await bytes(source);
+      final result = await bytes(source,printOnly:true);
       if (!current()) throw StateError('School changed. Reopen receipt history.');
       return result;
     }

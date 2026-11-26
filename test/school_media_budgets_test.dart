@@ -31,6 +31,16 @@ void main() {
       throwsFormatException);
   });
 
+  test('transient print PDF has a separate ceiling without loosening storage', () {
+    final bytes=Uint8List(160*1024);
+    bytes.setRange(0,5,utf8.encode('%PDF-'));
+    bytes.setRange(bytes.length-5,bytes.length,utf8.encode('%%EOF'));
+    expect(identical(SchoolMediaBudgets.verifyPrintPdf(bytes),bytes),isTrue);
+    for(final kind in ['idCard','receipt','reportCard']) {
+      expect(()=>SchoolMediaBudgets.verifyGeneratedPdf(kind,bytes),throwsFormatException);
+    }
+    expect(()=>SchoolMediaBudgets.verifyPrintPdf(Uint8List(20)),throwsFormatException);
+  });
   test('ID, report card, fee and expenses have exact binary KB budgets', () {
     expect(SchoolMediaBudgets.idCard, 85 * 1024);
     expect(SchoolMediaBudgets.reportCard, 150 * 1024);

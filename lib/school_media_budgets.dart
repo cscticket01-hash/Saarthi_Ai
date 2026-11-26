@@ -39,6 +39,21 @@ class SchoolMediaBudgets {
   /// enters the durable sync queue. Never rewrite arbitrary PDF bytes to meet
   /// a budget: vector text, school signatures and QR must stay intact.
   static Uint8List verifyGeneratedPdf(String kind, Uint8List bytes) {
+    verifyPdfEnvelope(bytes);
+    return enforcePdf(kind, bytes);
+  }
+
+  // Bounded transient printing only. Cloud/outbox owners keep strict limits.
+  static const int maxPrintBytes = 80 * 1024 * 1024;
+  static Uint8List verifyPrintPdf(Uint8List bytes) {
+    verifyPdfEnvelope(bytes);
+    if (bytes.lengthInBytes > maxPrintBytes) {
+      throw const FormatException('Print document exceeds 80 MiB. Print fewer pages or use a smaller source.');
+    }
+    return bytes;
+  }
+
+  static void verifyPdfEnvelope(Uint8List bytes) {
     final hasHeader = bytes.length >= 16 &&
         bytes[0] == 0x25 && bytes[1] == 0x50 &&
         bytes[2] == 0x44 && bytes[3] == 0x46 && bytes[4] == 0x2d;
@@ -50,7 +65,6 @@ class SchoolMediaBudgets {
         'Generated school PDF is incomplete; local document retained for retry.',
       );
     }
-    return enforcePdf(kind, bytes);
   }
 
   static Uint8List enforcePdf(String kind, Uint8List bytes) {

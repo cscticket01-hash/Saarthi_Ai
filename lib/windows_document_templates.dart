@@ -259,8 +259,12 @@ class WindowsDocumentTemplates {
 
   static Future<Uint8List> renderImportedTemplate(
     String kind,Map<String,dynamic> manifest,Map<String,dynamic> record,
-  ) async => SchoolMediaBudgets.verifyGeneratedPdf(
-    kind, await WindowsTemplateCloudStore.render(kind,manifest,record));
+    {bool printOnly=false}
+  ) async {
+    final bytes=await WindowsTemplateCloudStore.render(kind,manifest,record);
+    return printOnly ? SchoolMediaBudgets.verifyPrintPdf(bytes)
+        : SchoolMediaBudgets.verifyGeneratedPdf(kind,bytes);
+  }
 
   static Future<Uint8List?> _image(dynamic raw) async {
     final source = raw?.toString().trim() ?? '';
@@ -318,7 +322,9 @@ class WindowsDocumentTemplates {
     // Sync Engine 3.0 publishes changed cards through publishChangedIdCards.
     bool publish = false,
     bool previewOnly = false,
+    bool printOnly = false,
   }) async {
+    if (publish && printOnly) throw ArgumentError('Print-only bytes cannot be published.');
     if (previewOnly && {'studentId', 'teacherId', 'otherStaffId'}.contains(kind)) {
       final origin = FirebaseFirestore.instance.activeProfileId;
       if (data['schoolId'] != null && data['schoolId'] !=
@@ -344,8 +350,10 @@ class WindowsDocumentTemplates {
       }
     }
     qr = IdCardEngine.compactQr(qr);
-    final rendered = await _selected(kind, data, qr: qr);
-    final bytes = rendered == null ? null : SchoolMediaBudgets.verifyGeneratedPdf(kind, rendered);
+    final rendered = await _selected(kind, data, qr: qr,printOnly:printOnly);
+    final bytes = rendered == null ? null : printOnly
+        ? SchoolMediaBudgets.verifyPrintPdf(rendered)
+        : SchoolMediaBudgets.verifyGeneratedPdf(kind, rendered);
     if (bytes != null &&
         {'studentId', 'teacherId', 'otherStaffId'}.contains(kind) &&
         qr.isNotEmpty)
@@ -799,6 +807,7 @@ class WindowsDocumentTemplates {
     Map<String, dynamic> data, {
     String qr = '',
     Object? selectionOverride,
+    bool printOnly=false,
   }) async {
     final origin = FirebaseFirestore.instance.activeProfileId;
     if (data['schoolId'] != null &&
@@ -860,7 +869,7 @@ class WindowsDocumentTemplates {
         if(kind=='reportCard' && (data['dateText']?.toString().trim().isEmpty??true))
           'dateText':_documentDate(data['timestamp']),
       };
-      return renderImportedTemplate(kind,manifest,record);
+      return renderImportedTemplate(kind,manifest,record,printOnly:printOnly);
     }
     if(kind=='payslip'){
       return renderWindowsPayslip({
@@ -949,7 +958,7 @@ class WindowsDocumentTemplates {
     return renderWindowsReferenceDocument(
       kind: kind,
       template: windowsReferenceDocumentIndex(kind, v),
-      plain: plain,
+      plain: plain, printOnly:printOnly,
       data: {
         ...profile,
         'schoolName': profile['schoolName'] ?? profile['name'] ?? '',
@@ -1005,7 +1014,7 @@ class WindowsDocumentTemplates {
       }
       if (FirebaseFirestore.instance.activeProfileId != origin)
         throw StateError('School changed during template preview.');
-      return _selected(kind, sample, selectionOverride: choice);
+      return _selected(kind, sample, selectionOverride: choice,printOnly:true);
     }
     final profile =
         (await FirebaseFirestore.instance
@@ -1149,7 +1158,7 @@ class WindowsDocumentTemplates {
         context,
         data,
         // Explicit print preview: transient bytes only, never published.
-        createPdf: (record) => selected('reportCard', record, publish: false),
+        createPdf: (record) => selected('reportCard', record, publish: false,printOnly:true),
       );
 }
 
@@ -1487,7 +1496,7 @@ class _SchoolDocumentTemplatesScreenState
     // The approved manifest cannot silently become a different version.
     if (WindowsDocumentTemplates.supportsPlain(kind)) {
       final preview = WindowsDocumentTemplates.financialKind(kind)
-        ? await WindowsDocumentTemplates._selected(kind,sample,selectionOverride:value)
+        ? await WindowsDocumentTemplates._selected(kind,sample,selectionOverride:value,printOnly:true)
         : await WindowsDocumentTemplates.renderTemplate(kind,index,sample);
       if (preview == null || preview.isEmpty) throw StateError('Template is not printable.');
     }

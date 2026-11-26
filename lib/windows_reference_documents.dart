@@ -151,10 +151,11 @@ Future<Uint8List> renderWindowsReferenceDocument({
   Uint8List? seal,
   int printPass = 0,
   bool plain = false,
+  bool printOnly = false,
 }) => _renderWindowsReferenceDocument(
   kind: kind, template: template, data: data, qr: qr,
   photo: photo, logo: logo, signature: signature, seal: seal,
-  printPass: printPass, plain: plain,
+  printPass: printPass, plain: plain, printOnly:printOnly,
 );
 
 Future<Uint8List> _renderWindowsReferenceDocument({
@@ -168,6 +169,7 @@ Future<Uint8List> _renderWindowsReferenceDocument({
   Uint8List? seal,
   int printPass = 0,
   bool plain = false,
+  bool printOnly = false,
   ({Uint8List? photo, Uint8List? logo, Uint8List? seal, Uint8List? signature})? preparedMedia,
 }) async {
   if (printPass < 0 || printPass > 4) {
@@ -942,7 +944,7 @@ Future<Uint8List> _renderWindowsReferenceDocument({
     validateIdSide(back, w, h);
     addIdCardPair(pdf, front, back, w, h, landscape: landscape);
   } else if (kind == 'reportCard') {
-    return renderMaroonMarksheet(data, photo:embeddedPhoto,logo:embeddedLogo,signature:printSignature,seal:embeddedSeal,plain:plain);
+    return renderMaroonMarksheet(data, photo:embeddedPhoto,logo:embeddedLogo,signature:printSignature,seal:embeddedSeal,plain:plain,printOnly:printOnly);
   } else {
     final items = data['feeItems'] is Map
         ? Map<String, dynamic>.from(data['feeItems'])
@@ -1137,7 +1139,7 @@ Future<Uint8List> _renderWindowsReferenceDocument({
     }
   }
   final output = await pdf.save();
-  if (kind == 'teacherId' &&
+  if (!printOnly && kind == 'teacherId' &&
       output.length > SchoolMediaBudgets.idCard &&
       printPass < 4) {
     // Only the print-bitmap DPI changes; vector QR, text, dimensions and
@@ -1151,5 +1153,5 @@ Future<Uint8List> _renderWindowsReferenceDocument({
           seal: embeddedSeal, signature: printSignature),
     );
   }
-  return SchoolMediaBudgets.verifyGeneratedPdf(kind, output);
+  return printOnly?SchoolMediaBudgets.verifyPrintPdf(output):SchoolMediaBudgets.verifyGeneratedPdf(kind, output);
 }
