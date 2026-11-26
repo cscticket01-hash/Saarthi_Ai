@@ -6,6 +6,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 import 'package:xml/xml.dart';
 import 'windows_template_import_engine.dart';
 import 'windows_template_office_converter.dart';
@@ -248,6 +249,37 @@ class SchoolTemplateOfficeLayout {
       pw.Font.ttf(await rootBundle.load('assets/fonts/NotoSansBengali[wdth,wght].ttf')),
     ];
     final token=RegExp(r'^\{\{([A-Za-z][A-Za-z0-9]*)\}\}$');
+    final nameHeaders=kind==SchoolTemplateKind.receipt
+      ?const ['particulars','description','fee details','fee head','fee name','বিবরণ','विवरण']
+      :const ['subject','subjects','subject name','বিষয়','विषय'];
+    final amountHeaders=kind==SchoolTemplateKind.receipt
+      ?const ['amount','fee amount','price','राशि','টাকা']
+      :const ['marks','marks obtained','obtained','score','নম্বর','अंक'];
+    if(kind!=SchoolTemplateKind.payslip){
+      var tableCount=0;
+      for(var index=0;index<page.rows.length;index++){
+        final row=page.rows[index];
+        final names=<int>[],amounts=<int>[];
+        for(var col=0;col<row.length;col++){
+          final label=TemplateForgeAutoMapper.normalized(row[col].text);
+          if(nameHeaders.contains(label))names.add(col);
+          if(amountHeaders.contains(label))amounts.add(col);
+        }
+        if(names.isEmpty||amounts.isEmpty)continue;
+        if(names.length!=1||amounts.length!=1||names.single>=amounts.single||++tableCount>1)
+          _reject('Ambiguous fee or marks table.');
+        final a=names.single,b=amounts.single;
+        var count=0;
+        for(var next=index+1;next<page.rows.length;next++){
+          final cells=page.rows[next];
+          if(cells.length!=row.length||cells.any((c)=>c.text.trim().isNotEmpty))break;
+          if(count>=SchoolTemplateImportEngine.maxTableRows)_reject('Too many source table rows.');
+          cells[a].text='{{'+(kind==SchoolTemplateKind.receipt?'feeName':'subjectName')+'$count}}';
+          cells[b].text='{{'+(kind==SchoolTemplateKind.receipt?'feeAmount':'subjectMarks')+'$count}}';
+          count++;
+        }
+      }
+    }
     final foreign=SchoolTemplateKind.values.where((k)=>k!=kind).expand((k)=>SchoolTemplateImportEngine.requiredFields[k]!).where((k)=>!kind.fields.contains(k)).toSet();
     final aliases=TemplateForgeAutoMapper.aliases;
     var y=page.margin;
@@ -259,6 +291,15 @@ class SchoolTemplateOfficeLayout {
         final cell=row[index],text=cell.text.trim();
         if(text.isEmpty||token.hasMatch(text))continue;
         final label=TemplateForgeAutoMapper.normalized(text);
+        final headings=<SchoolTemplateKind,List<String>>{
+          SchoolTemplateKind.receipt:['fee receipt','school receipt','payment receipt'],
+          SchoolTemplateKind.reportCard:['report card','marksheet','mark sheet','progress report'],
+          SchoolTemplateKind.payslip:['salary slip','staff payslip','pay slip','payslip'],
+        };
+        for(final other in headings.entries){
+          if(other.key!=kind && other.value.any((v)=>label==v||label.startsWith(v+' ')))
+            _reject('Selected category does not match the document heading.');
+        }
         for(final key in foreign){
           if((aliases[key]??const <String>[]).any((a)=>label==a||label.startsWith(a+' ')))_reject('Document contains fields belonging to another template category.');
         }
@@ -309,7 +350,8 @@ class SchoolTemplateOfficeLayout {
       pw.SizedBox(width:format.width,height:format.height),...widgets,
     ])));
     final raster=await SchoolTemplateImportEngine.importBytes(kind:kind,schoolId:schoolId,filename:'native.pdf',
-      bytes:await pdf.save(),pdfPagesRasterizer:pdfPagesRasterizer);
+      bytes:await pdf.save(),pdfPagesRasterizer:pdfPagesRasterizer??(bytes) =>
+        Printing.raster(bytes,dpi:180).take(2).asyncMap((page)=>page.toPng()).toList().timeout(const Duration(seconds:30)));
     final draft=SchoolTemplateDraft(kind:kind,schoolId:schoolId,filename:filename,sourceHash:sha256.convert(bytes).toString(),png:raster.png,width:raster.width,height:raster.height,fields:fields,visualSlots:slots);
     SchoolTemplateImportEngine.validateDraft(draft);
     return draft;

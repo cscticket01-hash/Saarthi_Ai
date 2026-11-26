@@ -413,6 +413,10 @@ class WindowsTemplateCloudStore {
     if(savedSettings[draft.kind.name]!=latestSettings[draft.kind.name]){
       throw StateError('Selected school template changed during upload.');
     }
+    // Reuse existing tenant-scoped verified image cache.
+    try { await WindowsSchoolImageCache.store(school,fileId,
+      WindowsSchoolImageCache.dataUrl(uploadPng),profileId:origin); } catch (_) { /* Durable local draft still exists. */ }
+    ensureSchool();
     return verified;
   }
 

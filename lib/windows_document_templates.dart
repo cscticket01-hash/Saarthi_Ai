@@ -1536,11 +1536,11 @@ class _SchoolDocumentTemplatesScreenState
       db.activeProfileIdentity['schoolSyncId']!=boundSchool){
       throw StateError('School changed before template selection was saved.');
     }
-    if (isImported && asset['version']==2) {
+    if (isImported && (asset['version']==2 || ((asset['fields'] as List?)??const []).any((f)=>f is Map&&(f.containsKey('ink')||f.containsKey('bold')||f.containsKey('alignment'))))) {
       if(!mounted)return;
       final confirmed=await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(
-        title:const Text('Select multi-page template?'),
-        content:const Text('All school PCs must use a Windows app version that supports multi-page templates. Older apps cannot render this design. Update every PC before applying.'),
+        title:const Text('Select updated template format?'),
+        content:const Text('All school PCs must use the current Windows app with support for this template format. Older apps cannot render this design. Update every PC before applying.'),
         actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),
           FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('All PCs updated'))]));
       if(confirmed!=true || !mounted)return;
@@ -1636,6 +1636,11 @@ class _SchoolDocumentTemplatesScreenState
             Align(
               alignment:Alignment.centerLeft,
               child:Wrap(spacing:12,runSpacing:8,children:[
+                OutlinedButton.icon(onPressed:_loading||_deletingTemplate||_selectingTemplate?null:() async {
+                  await SchoolTemplateImportEditor.previewSavedAutomatic(context,
+                    switch(_kind){'receipt'=>SchoolTemplateKind.receipt,'reportCard'=>SchoolTemplateKind.reportCard,_=>SchoolTemplateKind.payslip},_sample);
+                  if(mounted)await _initializeCatalog();
+                },icon:const Icon(Icons.replay),label:const Text('Local drafts / Retry')),
                 OutlinedButton.icon(onPressed:_loading||_deletingTemplate||_selectingTemplate?null:_showArchive,
                   icon:const Icon(Icons.archive_outlined),label:const Text('Archived templates')),
                 OutlinedButton.icon(

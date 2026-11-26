@@ -10,10 +10,10 @@ import 'windows_template_office_converter.dart';
 import 'fitted_document_preview.dart';
 import 'windows_template_cloud_store.dart';
 
-/// Zero-edit TemplateForge upload and preview for the three supported tabs.
+/// Structured, Office-independent TemplateForge upload for the three supported tabs.
 /// Approved pages are hash-verified in the school's Drive and listed as selectable versions.
 class SchoolTemplateImportEditor {
-  /// One-click conversion: offline OCR, strict record preflight, verified Drive
+  /// Structured import, strict record preflight, explicit approval, verified Drive
   /// publication and a real print preview. The school explicitly selects the version.
   static Future<void> pickAutomatic(
     BuildContext context,SchoolTemplateKind kind,Map<String,dynamic> example,
@@ -105,6 +105,11 @@ class SchoolTemplateImportEditor {
       // Reuse the already validated PDF instead of downloading all assets
       // and rendering the identical preview a second time.
       stage('Saving to school Drive and verifying upload…');
+      progressRoute=DialogRoute<void>(context:context,barrierDismissible:false,
+        builder:(_)=>const PopScope(canPop:false,child:AlertDialog(
+          title:Text('Saving verified template'),content:Column(mainAxisSize:MainAxisSize.min,
+            children:[LinearProgressIndicator(),SizedBox(height:12),Text('Local draft saved. Verifying school Drive publication…')]))));
+      unawaited(progressNavigator!.push(progressRoute!));
       await WindowsDocumentTemplates.publishImportedTemplate(approved);
       if(!sameSchool()||!context.mounted)return;
       closeProgress();
@@ -179,11 +184,24 @@ class SchoolTemplateImportEditor {
         db.activeProfileIdentity['schoolSyncId']!=school){
         throw StateError('School changed before draft preview.');
       }
-      if(context.mounted)await WindowsDocumentTemplates.preview(context,pdf,
+      if(!context.mounted)return;
+      await WindowsDocumentTemplates.preview(context,pdf,
         title:kind.title+' • '+SchoolTemplateImportEngine.pageSizeLabel(
           draft.width,draft.height)+' • Saved auto draft',
         notice:'A local draft, not an approved/published school template. '
           'Original school document selections remain in effect.');
+      if(!context.mounted||db.activeProfileId!=profile||db.activeProfileIdentity['schoolSyncId']!=school)return;
+      if(!SchoolTemplateOfficeConverter.supportsNative(draft.filename))return;
+      final retry=await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(
+        title:const Text('Publish approved local draft?'),
+        content:const Text('Confirm this is the correct blank school template. Existing selected layouts are retained.'),
+        actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),
+          FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Retry publication'))]));
+      if(retry!=true||!context.mounted)return;
+      if(db.activeProfileId!=profile||db.activeProfileIdentity['schoolSyncId']!=school)throw StateError('School changed.');
+      await WindowsDocumentTemplates.publishImportedTemplate(draft);
+      if(context.mounted&&db.activeProfileId==profile&&db.activeProfileIdentity['schoolSyncId']==school)
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Template publication verified. Choose Use for school to select it.')));
     }catch(e){
       if(context.mounted)ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content:Text('Draft preview unavailable: '+e.toString())));

@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 import 'package:saarthi_ai/windows_template_import_engine.dart';
 import 'package:saarthi_ai/windows_template_office_converter.dart';
+import 'package:saarthi_ai/windows_template_office_layout.dart';
 
 void main(){
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -104,6 +105,77 @@ void main(){
       expect(SchoolTemplateOfficeConverter.validateSource(file,ole),
         file.endsWith('.doc')?SchoolOfficeKind.word:
           SchoolOfficeKind.spreadsheet);
+    }
+  });
+
+  Uint8List nativeDocx({String student='{{studentName}}',String title='Fee Receipt'}){
+    final rows=[
+      ['Receipt No','{{receiptNo}}'],
+      ['Student Name',student],
+      ['Particulars','Amount'],
+      ['{{feeName0}}','{{feeAmount0}}'],
+      ['Total Amount','{{totalAmount}}'],
+    ];
+    String para(String value)=>'<w:p><w:r><w:t>$value</w:t></w:r></w:p>';
+    final body='<w:p><w:r><w:t>$title</w:t></w:r></w:p><w:tbl><w:tblGrid>'
+      '<w:gridCol w:w="4500"/><w:gridCol w:w="4500"/></w:tblGrid>'
+      +rows.map((row)=>'<w:tr>'+row.map((v)=>'<w:tc>'+para(v)+'</w:tc>').join()+'</w:tr>').join()
+      +'</w:tbl><w:sectPr><w:pgSz w:w="11906" w:h="16838"/>'
+      '<w:pgMar w:top="720" w:bottom="720" w:left="720" w:right="720"/></w:sectPr>';
+    final archive=Archive()
+      ..addFile(ArchiveFile.string('[Content_Types].xml','<Types/>'))
+      ..addFile(ArchiveFile.string('word/document.xml','<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>$body</w:body></w:document>'));
+    return Uint8List.fromList(ZipEncoder().encode(archive));
+  }
+  Uint8List nativeXlsx({String student='',bool formula=false}){
+    final rows=[
+      ['Receipt No','{{receiptNo}}'],
+      ['Student Name',student],
+      ['Particulars','Amount'],
+      ['',''],
+      ['Total Amount','{{totalAmount}}'],
+    ];
+    final sheet='<worksheet><cols><col min="1" max="2" width="35"/></cols><sheetData>'
+      +List.generate(rows.length,(i)=>'<row r="${i+1}" ht="30">'+
+        List.generate(2,(j)=>'<c r="${j==0?'A':'B'}${i+1}" t="inlineStr"><is><t>${rows[i][j]}</t></is>'
+          +(formula&&i==1&&j==1?'<f>1+1</f>':'')+'</c>').join()+'</row>').join()
+      +'</sheetData><pageMargins left="0.5" right="0.5" top="0.5" bottom="0.5"/><pageSetup paperSize="9"/></worksheet>';
+    final archive=Archive()
+      ..addFile(ArchiveFile.string('[Content_Types].xml','<Types/>'))
+      ..addFile(ArchiveFile.string('xl/workbook.xml','<workbook><sheets><sheet name="Receipt" sheetId="1"/></sheets></workbook>'))
+      ..addFile(ArchiveFile.string('xl/worksheets/sheet1.xml',sheet));
+    return Uint8List.fromList(ZipEncoder().encode(archive));
+  }
+  test('native Word and Excel layouts reuse existing renderer without Office executables',()async{
+    for(final entry in {'blank.docx':nativeDocx(),'blank.xlsx':nativeXlsx()}.entries){
+      var rasterCalls=0;
+      final draft=await SchoolTemplateOfficeLayout.importSource(
+        kind:SchoolTemplateKind.receipt,schoolId:school,filename:entry.key,bytes:entry.value,
+        pdfPagesRasterizer:(pdf)async{
+          rasterCalls++;
+          expect(SchoolTemplateOfficeConverter.isPdf(pdf),isTrue);
+          return [a4Png()];
+        });
+      expect(rasterCalls,1);
+      expect(draft.sourceHash,sha256.convert(entry.value).toString());
+      expect(draft.fields.map((f)=>f.key),containsAll(['receiptNo','studentName','totalAmount','feeName0','feeAmount0']));
+      final output=await SchoolTemplateImportEngine.previewPdf(draft,{
+        'receiptNo':'VS-TEST','studentName':'Synthetic Student',
+        'feeItems':{'Fee':100},'totalAmount':100,
+      });
+      expect(SchoolTemplateOfficeConverter.isPdf(output),isTrue);
+    }
+  });
+  test('native import rejects wrong category, old populated data and formulas',() async {
+    Future<SchoolTemplateDraft> run(String filename,Uint8List bytes,SchoolTemplateKind kind)=>
+      SchoolTemplateOfficeLayout.importSource(kind:kind,schoolId:school,filename:filename,bytes:bytes,
+        pdfPagesRasterizer:(_) async=>[a4Png()]);
+    await expectLater(run('wrong.docx',nativeDocx(title:'Report Card'),SchoolTemplateKind.receipt),throwsFormatException);
+    await expectLater(run('wrong.docx',nativeDocx(),SchoolTemplateKind.reportCard),throwsFormatException);
+    await expectLater(run('filled.docx',nativeDocx(student:'Old Student'),SchoolTemplateKind.receipt),throwsFormatException);
+    await expectLater(run('formula.xlsx',nativeXlsx(formula:true),SchoolTemplateKind.receipt),throwsFormatException);
+    for(final file in ['old.doc','old.xls','source.pdf','photo.png','source.docm','source.xlsm']){
+      await expectLater(run(file,nativeDocx(),SchoolTemplateKind.receipt),throwsFormatException);
     }
   });
 
