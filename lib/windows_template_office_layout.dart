@@ -91,7 +91,7 @@ class SchoolTemplateOfficeLayout {
   }
   static _Page _word(Map<String,XmlDocument> docs){
     final root=docs['word/document.xml']?.rootElement??_reject('Missing Word document.');
-    if(['drawing','pict','object','altChunk','fldSimple','instrText','hyperlink','sdt','del','ins','vMerge','gridSpan','footnoteReference','endnoteReference','br','tab'].any((n)=>_all(root,n).isNotEmpty))
+    if(['drawing','pict','object','altChunk','fldSimple','instrText','hyperlink','sdt','del','ins','vMerge','footnoteReference','endnoteReference','br','tab'].any((n)=>_all(root,n).isNotEmpty))
       _reject('Unsupported Word drawing, field, merge, page break or tracked change. Use a simple blank form.');
     if(docs.keys.any((p)=>RegExp(r'^word/(header|footer|footnotes|endnotes)').hasMatch(p)))_reject('Move headers and footers into the document body.');
     final body=_child(root,'body')??_reject('Missing Word body.');
@@ -115,15 +115,20 @@ class SchoolTemplateOfficeLayout {
           widths.fold<double>(0,(a,b)=>a+b)>width+1)_reject('Word table exceeds printable width.');
         for(final tr in _children(element,'tr')){
           final cells=_children(tr,'tc').toList();
-          if(cells.length!=widths.length)_reject('Merged or irregular Word table cells are unsupported.');
           final row=<_Cell>[];
+          var gridIndex=0;
           final height=_num(_attr(_child(_child(tr,'trPr'),'trHeight'),'val'),480)/20;
           for(var col=0;col<cells.length;col++){
             final ps=_children(cells[col],'p').toList();
             if(ps.length!=1||_children(cells[col],'tbl').isNotEmpty)_reject('Only one paragraph per table cell is supported.');
             final fill=_color(_attr(_child(_child(cells[col],'tcPr'),'shd'),'fill'));
-            row.add(_wordCell(ps.single,widths[col],height,border:true,fill:fill));
+            final span=int.tryParse(_attr(_child(_child(cells[col],'tcPr'),'gridSpan'),'val')??'1')??0;
+            if(span<1||gridIndex+span>widths.length)_reject('Invalid horizontal Word cell merge.');
+            final mergedWidth=widths.skip(gridIndex).take(span).fold<double>(0,(a,b)=>a+b);
+            row.add(_wordCell(ps.single,mergedWidth,height,border:true,fill:fill));
+            gridIndex+=span;
           }
+          if(gridIndex!=widths.length)_reject('Word table grid does not match its cells.');
           rows.add(row);
         }
       }else{_reject('Unsupported Word body element.');}
@@ -145,7 +150,7 @@ class SchoolTemplateOfficeLayout {
     final source=docs.entries.where((e)=>RegExp(r'^xl/worksheets/sheet[0-9]+\.xml$').hasMatch(e.key)).toList();
     if(source.length!=1)_reject('Ambiguous worksheet identity.');
     final sheet=source.single.value.rootElement;
-    if(['mergeCell','f','conditionalFormatting','drawing','legacyDrawing','hyperlink','tablePart','autoFilter','rowBreaks','colBreaks'].any((n)=>_all(sheet,n).isNotEmpty))_reject('Remove merged cells, formulas, drawings, conditional rules and page breaks.');
+    if(['f','conditionalFormatting','drawing','legacyDrawing','hyperlink','tablePart','autoFilter','rowBreaks','colBreaks'].any((n)=>_all(sheet,n).isNotEmpty))_reject('Remove merged cells, formulas, drawings, conditional rules and page breaks.');
     final setup=_child(sheet,'pageSetup');
     final stock=_attr(setup,'paperSize')??'9';
     final base=stock=='9'?PdfPageFormat.a4:stock=='5'?PdfPageFormat.legal:_reject('Choose A4 or Legal Excel paper.');
@@ -194,6 +199,27 @@ class SchoolTemplateOfficeLayout {
       final w=_num(_attr(col,'width'),8.43)*5.25+3.75;
       for(var i=min;i<=math.min(max,lastCol);i++){cols[i]=w;}
     }
+    final mergeWidths=<int,Map<int,int>>{};
+    final covered=<int,Set<int>>{};
+    for(final merge in _all(sheet,'mergeCell')){
+      final range=(_attr(merge,'ref')??'').split(':');
+      if(range.length!=2)_reject('Invalid Excel merge range.');
+      final a=_column(range.first),b=_column(range.last);
+      final first=int.parse(RegExp(r'[0-9]+$').firstMatch(range.first)!.group(0)!);
+      final last=int.parse(RegExp(r'[0-9]+$').firstMatch(range.last)!.group(0)!);
+      if(first!=last||first<1||first>lastRow||a>=b||b>lastCol)_reject('Only horizontal Excel merges within the existing grid are supported.');
+      final used=covered.putIfAbsent(first,()=> <int>{});
+      for(var c=a;c<=b;c++){
+        if(!used.add(c))_reject('Overlapping Excel merges.');
+        if(c>a){
+          final hidden=grid[first]?[c];
+          if(hidden!=null && (_all(hidden,'t').any((n)=>n.innerText.trim().isNotEmpty)||
+            (_child(hidden,'v')?.innerText.trim()??'').isNotEmpty))
+            _reject('Merged Excel cell contains hidden data.');
+        }
+      }
+      mergeWidths.putIfAbsent(first,()=> <int,int>{})[a]=b-a+1;
+    }
     final widths=[for(var i=1;i<=lastCol;i++)cols[i]??48.0];
     if(widths.fold<double>(0,(a,b)=>a+b)>format.width-2*margin)_reject('Set column widths to fit the printed page.');
     final rows=<List<_Cell>>[];
@@ -201,6 +227,7 @@ class SchoolTemplateOfficeLayout {
       final height=rowHeights[n]??26.0;
       final out=<_Cell>[];
       for(var c=1;c<=lastCol;c++){
+        final span=mergeWidths[n]?[c]??1;
         final cell=grid[n]?[c];
         final type=_attr(cell,'t')??'n';
         String value='';
@@ -222,10 +249,12 @@ class SchoolTemplateOfficeLayout {
         final align=_attr(alignment,'horizontal')??'left';
         if(_attr(alignment,'wrapText')=='1'||(_attr(alignment,'textRotation')!=null&&_attr(alignment,'textRotation')!='0'))_reject('Wrapped or rotated Excel text is unsupported.');
         if(_attr(xf,'numFmtId')!=null&&_attr(xf,'numFmtId')!='0')_reject('Use plain Excel text / general cells; live amounts come from Saarthi.');
-        out.add(_Cell(value,widths[c-1],height,bold:_child(font,'b')!=null,
+        final width=widths.skip(c-1).take(span).fold<double>(0,(a,b)=>a+b);
+        out.add(_Cell(value,width,height,bold:_child(font,'b')!=null,
           ink:_color(_attr(_child(font,'color'),'rgb'))??'000000',fill:_color(_attr(_child(pattern,'fgColor'),'rgb')),
           size:_num(_attr(_child(font,'sz'),'val'),11),align:align=='general'?'left':align,
           border:border!=null&&border.childElements.any((b)=>_attr(b,'style')!=null)));
+        c+=span-1;
       }
       rows.add(out);
     }
@@ -282,6 +311,18 @@ class SchoolTemplateOfficeLayout {
     }
     final foreign=SchoolTemplateKind.values.where((k)=>k!=kind).expand((k)=>SchoolTemplateImportEngine.requiredFields[k]!).where((k)=>!kind.fields.contains(k)).toSet();
     final aliases=TemplateForgeAutoMapper.aliases;
+    // Avoid persisting unclassified literal names, identifiers or amounts.
+    // School-specific text belongs in verified dynamic fields.
+    final safeLiterals=<String>{
+      ...kind.fields.expand((k)=>aliases[k]??const <String>[]),
+      ...nameHeaders,...amountHeaders,
+      'fee receipt','school receipt','payment receipt','report card','marksheet',
+      'mark sheet','progress report','salary slip','staff payslip','pay slip','payslip',
+      'fee particulars','serial no','sl no','sr no','description','amount',
+      'subject','subjects','marks','maximum marks','obtained marks',
+      'authorized signature','principal signature','school seal','school logo',
+      'student photo','signature','seal','date','total','grand total',
+    }.map(TemplateForgeAutoMapper.normalized).toSet();
     var y=page.margin;
     for(final row in page.rows){
       if(row.isEmpty)continue;
@@ -318,6 +359,8 @@ class SchoolTemplateOfficeLayout {
           _reject('Unsupported cell size or alignment.');
         final value=cell.text.trim(),match=token.firstMatch(cell.text.trim());
         if(value.contains('{{')&&match==null)_reject('Use one complete field placeholder per cell.');
+        if(match==null&&value.isNotEmpty&&!safeLiterals.contains(TemplateForgeAutoMapper.normalized(value)))
+          _reject('Unverified static text: use a recognized label or a dynamic school field. Remove old personal data.');
         if(match==null&&RegExp(r'[\r\n\t]').hasMatch(value))_reject('Multiline cell text is unsupported.');
         if(match==null&&kind.fields.any((k)=>(aliases[k]??const <String>[]).any((a)=>TemplateForgeAutoMapper.normalized(value).startsWith(a+' '))))
           _reject('Use a blank cell or an explicit field placeholder instead of prefilled personal data.');

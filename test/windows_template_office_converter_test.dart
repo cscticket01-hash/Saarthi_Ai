@@ -108,7 +108,7 @@ void main(){
     }
   });
 
-  Uint8List nativeDocx({String student='{{studentName}}',String title='Fee Receipt'}){
+  Uint8List nativeDocx({String student='{{studentName}}',String title='Fee Receipt',bool merged=false}){
     final rows=[
       ['Receipt No','{{receiptNo}}'],
       ['Student Name',student],
@@ -119,6 +119,7 @@ void main(){
     String para(String value)=>'<w:p><w:r><w:t>$value</w:t></w:r></w:p>';
     final body='<w:p><w:r><w:t>$title</w:t></w:r></w:p><w:tbl><w:tblGrid>'
       '<w:gridCol w:w="4500"/><w:gridCol w:w="4500"/></w:tblGrid>'
+      +(merged?'<w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/></w:tcPr>'+para('Fee Receipt')+'</w:tc></w:tr>':'')
       +rows.map((row)=>'<w:tr>'+row.map((v)=>'<w:tc>'+para(v)+'</w:tc>').join()+'</w:tr>').join()
       +'</w:tbl><w:sectPr><w:pgSz w:w="11906" w:h="16838"/>'
       '<w:pgMar w:top="720" w:bottom="720" w:left="720" w:right="720"/></w:sectPr>';
@@ -147,7 +148,7 @@ void main(){
     return Uint8List.fromList(ZipEncoder().encode(archive));
   }
   test('native Word and Excel layouts reuse existing renderer without Office executables',()async{
-    for(final entry in {'blank.docx':nativeDocx(),'blank.xlsx':nativeXlsx()}.entries){
+    for(final entry in {'blank.docx':nativeDocx(),'merged.docx':nativeDocx(merged:true),'blank.xlsx':nativeXlsx()}.entries){
       var rasterCalls=0;
       final draft=await SchoolTemplateOfficeLayout.importSource(
         kind:SchoolTemplateKind.receipt,schoolId:school,filename:entry.key,bytes:entry.value,
@@ -170,12 +171,19 @@ void main(){
     Future<SchoolTemplateDraft> run(String filename,Uint8List bytes,SchoolTemplateKind kind)=>
       SchoolTemplateOfficeLayout.importSource(kind:kind,schoolId:school,filename:filename,bytes:bytes,
         pdfPagesRasterizer:(_) async=>[a4Png()]);
-    await expectLater(run('wrong.docx',nativeDocx(title:'Report Card'),SchoolTemplateKind.receipt),throwsFormatException);
-    await expectLater(run('wrong.docx',nativeDocx(),SchoolTemplateKind.reportCard),throwsFormatException);
-    await expectLater(run('filled.docx',nativeDocx(student:'Old Student'),SchoolTemplateKind.receipt),throwsFormatException);
-    await expectLater(run('formula.xlsx',nativeXlsx(formula:true),SchoolTemplateKind.receipt),throwsFormatException);
+    Future<void> rejected(String file,Uint8List bytes,SchoolTemplateKind kind) async {
+      FormatException? failure;
+      try { await run(file,bytes,kind); }
+      on FormatException catch(error) { failure=error; }
+      expect(failure,isNotNull,reason:'Invalid source must be rejected: $file');
+    }
+    await rejected('wrong.docx',nativeDocx(title:'Report Card'),SchoolTemplateKind.receipt);
+    await rejected('wrong.docx',nativeDocx(),SchoolTemplateKind.reportCard);
+    await rejected('filled.docx',nativeDocx(student:'Old Student'),SchoolTemplateKind.receipt);
+    await rejected('formula.xlsx',nativeXlsx(formula:true),SchoolTemplateKind.receipt);
+    await rejected('literal.docx',nativeDocx(title:'Unverified personal data'),SchoolTemplateKind.receipt);
     for(final file in ['old.doc','old.xls','source.pdf','photo.png','source.docm','source.xlsm']){
-      await expectLater(run(file,nativeDocx(),SchoolTemplateKind.receipt),throwsFormatException);
+      await rejected(file,nativeDocx(),SchoolTemplateKind.receipt);
     }
   });
 
