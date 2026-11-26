@@ -98,7 +98,7 @@ class _WindowsReportCardPreviewState extends State<WindowsReportCardPreview> {
         }
         if (!mounted || !_sameSchool) throw StateError('Report preview closed or school changed.');
         final boundary = _paperKey.currentContext?.findRenderObject();
-        if (boundary is! RenderRepaintBoundary || boundary.debugNeedsPaint) {
+        if (boundary is! RenderRepaintBoundary) {
           throw StateError('Report artwork is not ready.');
         }
         final image = await boundary.toImage(pixelRatio: 2.5);
