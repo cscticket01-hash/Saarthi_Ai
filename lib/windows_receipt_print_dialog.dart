@@ -18,7 +18,7 @@ class WindowsReceiptPrintDialog extends StatefulWidget {
     required this.title, required this.subtitle, required this.isCurrent,
     this.printers, this.printJob, this.previewBuilder,
     this.openPrinterSettings, this.systemPrintJob, this.media, this.composeLayout,
-    this.capabilities,this.sidesJob,this.preserveActualSize=false});
+    this.capabilities,this.sidesJob,this.preserveActualSize=false,this.onRetryDocument});
   final Future<Uint8List> receipt;
   final String title, subtitle;
   final bool Function() isCurrent;
@@ -31,6 +31,7 @@ class WindowsReceiptPrintDialog extends StatefulWidget {
   final Future<WindowsPrinterCapabilities> Function(Printer)? capabilities;
   final Future<bool> Function(Printer,Uint8List,PdfPageFormat,WindowsDuplexMode)? sidesJob;
   final bool preserveActualSize;
+  final VoidCallback? onRetryDocument;
   final Future<Uint8List> Function(Uint8List,PdfPageFormat)? composeLayout;
   @override
   State<WindowsReceiptPrintDialog> createState() => _WindowsReceiptPrintDialogState();
@@ -340,7 +341,7 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
       if (mounted) setState(() => savingPdf = false);
     }
   }
-  Widget settings(Uint8List? source, Uint8List? bytes) => Column(
+  Widget settings(Uint8List? source, Uint8List? bytes, {required bool sourceFailed}) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       Expanded(child: SingleChildScrollView(padding: const EdgeInsets.fromLTRB(20,20,20,8), child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -368,8 +369,8 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
         keyboardType: TextInputType.number,
         decoration: const InputDecoration(labelText: 'Copies', helperText: '1–20')),
       const SizedBox(height: 16),
-      if (!pageFormatReady && message.isEmpty)
-        const Text('Detecting original paper size…'),
+      if (!pageFormatReady && message.isEmpty && !sourceFailed)
+        Text(source == null ? 'Preparing document…' : 'Detecting original paper size…'),
       DropdownButtonFormField<String>(isExpanded:true,value: paper,
         decoration: const InputDecoration(labelText: 'Paper size'),
         items: stock.map((p)=>DropdownMenuItem(value:p.name,child:Text(p.label,overflow:TextOverflow.ellipsis))).toList(),
@@ -433,19 +434,29 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
         Expanded(child: FutureBuilder<Uint8List>(future: widget.receipt, builder: (context, snapshot) {
           if (!widget.isCurrent()) return const Center(child: Text('School changed. Reopen receipt history.'));
           return FutureBuilder<Uint8List>(future:layout,builder:(context,output){
+            final sourceFailed = snapshot.connectionState == ConnectionState.done && snapshot.hasError;
+            final source = snapshot.connectionState == ConnectionState.done && !sourceFailed ? snapshot.data : null;
             final changing=layout!=null;
             final ready=!changing || output.connectionState==ConnectionState.done;
-            final printable=changing?(ready&&!output.hasError?output.data:null):snapshot.data;
-            final preview=snapshot.hasError?const Center(child:Text('Document unavailable.')):
+            final printable=source==null?null:changing?(ready&&!output.hasError?output.data:null):source;
+            final preview=sourceFailed?Center(child:Column(mainAxisSize:MainAxisSize.min,children:[
+              const Text('Document unavailable.'),
+              if(widget.onRetryDocument!=null) ...[
+                const SizedBox(height:8),
+                const Text('Could not prepare the report card. Retry or reopen it.'),
+                TextButton.icon(onPressed:locked?null:widget.onRetryDocument,
+                  icon:const Icon(Icons.refresh),label:const Text('Retry document')),
+              ],
+            ])):
               output.hasError&&changing?Center(child:Text('Layout unavailable: ${output.error}')):
               printable==null?const Center(child:CircularProgressIndicator()):
               widget.previewBuilder?.call(printable)??FittedDocumentPreview(bytes:printable,
-                showPaperOutline:true,onPageFormat:changing?null:(format)=>acceptPageFormat(format,snapshot.data!));
+                showPaperOutline:true,onPageFormat:changing?null:(format)=>acceptPageFormat(format,source!));
             return LayoutBuilder(builder:(context,limits)=>limits.maxWidth>=760
               ? Row(crossAxisAlignment: CrossAxisAlignment.stretch,children:[
-                Expanded(child:preview),const VerticalDivider(width:1),SizedBox(width:310,child:settings(snapshot.data,printable))])
+                Expanded(child:preview),const VerticalDivider(width:1),SizedBox(width:310,child:settings(source,printable,sourceFailed:sourceFailed))])
               : Column(children:[Expanded(child:preview),const Divider(height:1),
-                SizedBox(height:(limits.maxHeight*.5).clamp(100.0,320.0).toDouble(),child:settings(snapshot.data,printable))]));
+                SizedBox(height:(limits.maxHeight*.5).clamp(100.0,320.0).toDouble(),child:settings(source,printable,sourceFailed:sourceFailed))]));
           });
         })),
       ])));
