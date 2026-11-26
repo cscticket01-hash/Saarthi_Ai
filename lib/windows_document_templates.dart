@@ -1069,6 +1069,8 @@ class WindowsDocumentTemplates {
       WindowsReportCardPreview.open(
         context,
         data,
+        // Explicit print preview: transient bytes only, never published.
+        createPdf: (record) => selected('reportCard', record, publish: false),
       );
 }
 
