@@ -52,7 +52,11 @@ void main() {
       expect(WindowsDocumentTemplates.financialSelection(kind,0), 0);
       expect(WindowsDocumentTemplates.financialSelection(kind,'imported:version'), 'imported:version');
     }
-    expect(WindowsDocumentTemplates.supportsPlain('studentId'), isFalse);
+    for(final kind in ['studentId','teacherId','otherStaffId']) {
+      expect(WindowsDocumentTemplates.plainPrintSelection(kind,null),isTrue);
+      expect(WindowsDocumentTemplates.plainPrintSelection(kind,'plain'),isTrue);
+      expect(WindowsDocumentTemplates.plainPrintSelection(kind,'manifest:chosen'),isFalse);
+    }
   });
   TestWidgetsFlutterBinding.ensureInitialized();
   final db = FirebaseFirestore.instance;

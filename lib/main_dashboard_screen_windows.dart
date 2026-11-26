@@ -5343,8 +5343,10 @@ Future<void> _showIdCardPreview() async {
 
 Future<Uint8List> _buildIdCardPdf() async {
   final data = await _getIdCardStudentData();
-  return (await WindowsDocumentTemplates.selected('studentId', data,
-      qr: data['qrData'].toString()))!;
+  final bytes=await WindowsDocumentTemplates.selected('studentId', data,
+      qr: data['qrData'].toString(),previewOnly:true);
+  if(bytes==null)throw StateError('ID card preview unavailable. Verify the student photo.');
+  return bytes;
 }
 
 Future<void> _downloadIdCard() async {
