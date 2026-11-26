@@ -1252,9 +1252,14 @@ class _SchoolDocumentTemplatesScreenState
     try{
       final next=await WindowsTemplateFeatureAccess.read(force:true);
       if(mounted&&FirebaseFirestore.instance.activeProfileId==origin){
+        final resumed=next.canUpload&&!_feature.canUpload;
         if(next.canUse!=_feature.canUse)_thumbnails.clear();
         setState(()=>_feature=next);
+        if(resumed)unawaited(_resumeApprovedTemplates());
       }
+    }catch(_){
+      if(mounted&&FirebaseFirestore.instance.activeProfileId==origin)
+        setState(()=>_feature=const TemplateFeatureAccess.unverified());
     }finally{_refreshingFeature=false;}
   }
 
@@ -1277,7 +1282,6 @@ class _SchoolDocumentTemplatesScreenState
   void initState() {
     super.initState();
     _initializeCatalog();
-    unawaited(_resumeApprovedTemplates());
     unawaited(_refreshFeature());
     _featureTimer=Timer.periodic(const Duration(seconds:60),(_)=>unawaited(_refreshFeature()));
     final db=FirebaseFirestore.instance,origin=db.activeProfileId;
@@ -1685,7 +1689,7 @@ class _SchoolDocumentTemplatesScreenState
                       },
                       _sample,
                     );
-                    if(mounted)await _initializeCatalog();
+                    if(mounted){await _initializeCatalog();await _refreshFeature();}
                   },
                 ),
                 Tooltip(message:_feature.uploadExplanation,waitDuration:const Duration(milliseconds:250),

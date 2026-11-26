@@ -46,7 +46,7 @@ class _ManagedDeveloperPanelState extends State<ManagedDeveloperPanel>{
     builder:(ctx,update)=>AlertDialog(
      title:Text(global?'Global Feature Control':'School Features'),
      content:SizedBox(width:460,child:Column(mainAxisSize:MainAxisSize.min,crossAxisAlignment:CrossAxisAlignment.start,children:[
-      if(!global)Text('School: ${school!['name']??school['id']}'),
+      if(school!=null)Text('School: ${school['name']??school['id']}'),
       SwitchListTile(contentPadding:EdgeInsets.zero,value:desired,
        title:Text(global?'Custom TemplateForge Upload':'Custom TemplateForge'),
        subtitle:Text(global?'New uploads for all schools':'Paid Word / Excel custom templates'),

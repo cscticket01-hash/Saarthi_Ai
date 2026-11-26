@@ -50,7 +50,7 @@ class WindowsTemplateFeatureAccess {
     e is http.ClientException||(e is CentralCloudException&&
       !e.authoritativeAccessDenial&&(e.status==429||e.status>=500));
 
-  static Future<TemplateFeatureAccess> read({bool force=false,bool uploadCheck=false}) async {
+  static Future<TemplateFeatureAccess> read({bool force=false}) async {
     final db=FirebaseFirestore.instance,profile=db.activeProfileId;
     final school=db.activeProfileIdentity['schoolSyncId']?.toString()??'';
     bool current()=>db.activeProfileId==profile&&db.activeProfileIdentity['schoolSyncId']==school;
@@ -65,7 +65,7 @@ class WindowsTemplateFeatureAccess {
     final key='template_feature_access_v1_'+scope;
     final now=DateTime.now().millisecondsSinceEpoch;
     final previous=_recent[scope];
-    if(!force&&!uploadCheck&&previous!=null&&now>=previous.at&&now-previous.at<refreshMs){
+    if(!force&&previous!=null&&now>=previous.at&&now-previous.at<refreshMs){
       // An enabled short cache must not extend its offline authorization.
       if(previous.access.canUse){
         try{
@@ -78,14 +78,14 @@ class WindowsTemplateFeatureAccess {
         }catch(_){}
       }else if(current()){return previous.access;}
     }
-    final lane=scope+(uploadCheck?':upload':':read');
+    final lane=scope;
     final active=_inFlight[lane];
     if(active!=null){final result=await active;return current()?result:const TemplateFeatureAccess.unverified();}
     final future=()async{
       final cloud=CentralSchoolCloud(endpoint:endpoint,expectedSchoolId:school);
       try{
         final data=await cloud.api({
-          'action':uploadCheck?'managed/features/template-upload':'managed/features',
+          'action':'managed/features',
           'schoolId':school,
         },token:await CentralSchoolCloud.firebaseToken()).timeout(const Duration(seconds:15));
         if(!current())return const TemplateFeatureAccess.unverified();
@@ -100,15 +100,6 @@ class WindowsTemplateFeatureAccess {
         return current()?access:const TemplateFeatureAccess.unverified();
       }catch(e){
         if(!current())return const TemplateFeatureAccess.unverified();
-        // Maintenance is upload-only. Do not overwrite a paid render lease
-        // on the special upload endpoint's authoritative maintenance response.
-        if(uploadCheck){
-          if(e is CentralCloudException&&e.diagnosticCode=='TEMPLATE_FEATURE_LOCKED'){
-            _recent.remove(scope);
-            try{await _storage.delete(key:key);}catch(_){}
-          }
-          return const TemplateFeatureAccess.unverified();
-        }
         if(!_temporary(e)){
           _recent.remove(scope);
           try{await _storage.delete(key:key);}catch(_){}
@@ -137,7 +128,7 @@ class WindowsTemplateFeatureAccess {
   }
 
   static Future<void> requireUpload() async {
-    final access=await read(force:true,uploadCheck:true);
-    if(!access.canUpload)throw StateError('Custom TemplateForge upload is unavailable. Verify activation or check maintenance status. Saved templates are retained.');
+    final access=await read(force:true);
+    if(!access.canUpload)throw StateError(access.uploadExplanation);
   }
 }
