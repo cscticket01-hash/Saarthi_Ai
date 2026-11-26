@@ -352,7 +352,7 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
       const Text('Print', style: TextStyle(fontSize: 23, fontWeight: FontWeight.bold)),
       const SizedBox(height: 20),
       if (loadingPrinters) const LinearProgressIndicator(),
-      DropdownButtonFormField<String>(isExpanded:true,value: selected, isExpanded: true,
+      DropdownButtonFormField<String>(isExpanded:true,value: selected,
         decoration: const InputDecoration(labelText: 'Printer'),
         items: [for(final p in printers) DropdownMenuItem(value:p.url,child:Text(p.name,overflow:TextOverflow.ellipsis)),
           const DropdownMenuItem(value:pdfDestination,child:Text('Save as PDF'))],
@@ -375,7 +375,7 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
       const SizedBox(height: 16),
       if (!pageFormatReady && message.isEmpty)
         const Text('Detecting original paper size…'),
-      DropdownButtonFormField<String>(isExpanded:true,value: paper, isExpanded: true,
+      DropdownButtonFormField<String>(isExpanded:true,value: paper,
         decoration: const InputDecoration(labelText: 'Paper size'),
         items: stock.map((p)=>DropdownMenuItem(value:p.name,child:Text(p.label,overflow:TextOverflow.ellipsis))).toList(),
         onChanged: locked || loadingMedia || source==null ? null : (v) {if(v!=null){final next=stock.firstWhere((p)=>p.name==v);changeLayout(source,(){paper=v;chosenStock=next;});}}),
@@ -384,7 +384,7 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
       if(selected!=null && selected!=pdfDestination && !loadingMedia && !driverSupportsPaper)
         const Text('Current paper is not verified for this printer. Choose a supported size or use system dialog.',style:TextStyle(fontSize:11)),
       const SizedBox(height:12),
-      DropdownButtonFormField<bool>(isExpanded:true,value:landscape,isExpanded:true,
+      DropdownButtonFormField<bool>(isExpanded:true,value:landscape,
         decoration:const InputDecoration(labelText:'Orientation'),
         items:const [DropdownMenuItem(value:false,child:Text('Portrait')),DropdownMenuItem(value:true,child:Text('Landscape'))],
         onChanged:locked||!pageFormatReady||source==null?null:(v){if(v!=null)changeLayout(source,()=>landscape=v);}),
