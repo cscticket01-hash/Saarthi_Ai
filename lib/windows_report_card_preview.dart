@@ -91,7 +91,8 @@ class _WindowsReportCardPreviewState extends State<WindowsReportCardPreview> {
 
   void _retry() {
     if (!mounted || !_sameSchool) return;
-    setState(() => _receipt = _prepare(++_generation));
+    final next = _prepare(++_generation);
+    setState(() { _receipt = next; });
   }
 
   @override
