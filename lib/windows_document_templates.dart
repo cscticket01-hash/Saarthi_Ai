@@ -1657,7 +1657,12 @@ class _SchoolDocumentTemplatesScreenState
               child:Wrap(spacing:12,runSpacing:8,children:[
                 OutlinedButton.icon(
                   key:ValueKey('upload-template-'+_kind),
-                  icon:Icon(_feature.canUpload?Icons.upload_file_outlined:Icons.lock_outline),
+                  style:OutlinedButton.styleFrom(
+                    foregroundColor:const Color(0xFFFBAE17),
+                    disabledForegroundColor:const Color(0xFFFBAE17),
+                    side:const BorderSide(color:Color(0xFFFBAE17)),
+                  ),
+                  icon:Icon(_feature.canUpload?Icons.upload_file_outlined:Icons.lock_outline,color:const Color(0xFFFBAE17)),
                   label:const Text('Upload Word / Excel template'),
                   onPressed:_loading||!_feature.canUpload?null:() async {
                     await SchoolTemplateImportEditor.pickAutomatic(
@@ -1673,7 +1678,7 @@ class _SchoolDocumentTemplatesScreenState
                   },
                 ),
                 Tooltip(message:[if(_featureSchoolLabel.isNotEmpty)'School: $_featureSchoolLabel',_feature.uploadExplanation,'Click to refresh access.'].join('\n'),waitDuration:const Duration(milliseconds:250),
-                  child:IconButton(tooltip:null,onPressed:()=>_refreshFeature(),icon:const Icon(Icons.info_outline,size:19))),
+                  child:IconButton(tooltip:null,onPressed:()=>_refreshFeature(),icon:const Icon(Icons.info_outline,size:19,color:Color(0xFFFBAE17)))),
               ]),
             ),
             const Padding(

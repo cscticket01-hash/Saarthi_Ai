@@ -1388,6 +1388,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
       'Admin Profile',
       'Support',
       'Cloud Services',
+      'Global Features',
     ];
     return Theme(
       data: ThemeData(useMaterial3:true,brightness:Brightness.light,
@@ -1452,6 +1453,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                              Icons.manage_accounts_outlined,
                              Icons.support_agent_rounded,
                              Icons.cloud_outlined,
+                             Icons.tune_outlined,
                           ][i],
                         ),
                         title: Text(titles[i]),
@@ -1534,8 +1536,8 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                                 letterSpacing: -.5,
                               ),
                             ),
-                            const SizedBox(height: 7),
-                            const Text(
+                            if(_page!=8)const SizedBox(height: 7),
+                            if(_page!=8)const Text(
                               'Your schools. Their activity. One control centre.',
                               style: TextStyle(
                                 color: const Color(0xFF647899),
@@ -1577,7 +1579,9 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                         ? const DeveloperAccountProfile()
                         : _page == 6
                         ? _support()
-                        : const FirebaseMonitorPanel(),
+                        : _page == 7
+                        ? const FirebaseMonitorPanel()
+                        : const DeveloperGlobalFeatures(),
                   ],
                   if (narrow)
                     TextButton(

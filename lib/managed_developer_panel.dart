@@ -29,39 +29,37 @@ class _ManagedDeveloperPanelState extends State<ManagedDeveloperPanel>{
    WidgetsBinding.instance.addPostFrameCallback((_){if(mounted) refreshVisible();});
   }
  }
- Future<void> featureControl({Map<String,dynamic>? school}) async {
+ Future<void> featureControl({required Map<String,dynamic> school}) async {
   if(busy)return;
   setState(()=>busy=true);
-  final global=school==null;
-  final route=global?'features/global':'features';
-  final scope=<String,dynamic>{if(school!=null)'schoolId':school['id']};
-  final key=global?'uploadEnabled':'enabled';
+  const route='features',key='enabled';
+  final scope=<String,dynamic>{'schoolId':school['id']};
   try{
    final current=await ManagedDeveloperService.call('$route/get',scope);
    if(!mounted)return;
    if(current[key] is! bool||current['revision'] is! int||
-      (!global&&current['schoolId']!=school!['id']))throw StateError('Unverified feature status.');
+      current['schoolId']!=school['id'])throw StateError('Unverified feature status.');
    var desired=current[key]==true;
    final saved=await showDialog<bool>(context:context,builder:(ctx)=>StatefulBuilder(
     builder:(ctx,update)=>AlertDialog(
-     title:Text(global?'Global Feature Control':'School Features'),
+     title:const Text('School Features'),
      content:SizedBox(width:460,child:Column(mainAxisSize:MainAxisSize.min,crossAxisAlignment:CrossAxisAlignment.start,children:[
-      if(school!=null)Text('School: ${school['name']??school['id']}'),
+      Text('School: ${school['name']??school['id']}'),
       SwitchListTile(contentPadding:EdgeInsets.zero,value:desired,
-       title:Text(global?'Custom TemplateForge Upload':'Custom TemplateForge'),
-       subtitle:Text(global?'New uploads for all schools':'Paid Word / Excel custom templates'),
+       title:const Text('Custom TemplateForge'),
+       subtitle:const Text('Paid Word / Excel custom templates'),
        onChanged:(value)=>update(()=>desired=value)),
-      Text(global?'Existing templates, selection, printing and sync continue during maintenance.':'Fee Receipt, Report Card and Staff Payslip. Disabling retains saved templates and historical receipts.'),
+      const Text('Fee Receipt, Report Card and Staff Payslip. Disabling retains saved templates and historical receipts.'),
       const SizedBox(height:8),
-      Text(desired?'Status: Enabled':global?'Status: Maintenance':'Status: Disabled'),
+      Text(desired?'Status: Enabled':'Status: Disabled'),
      ])),
      actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),
       FilledButton(onPressed:desired==(current[key]==true)?null:()=>Navigator.pop(ctx,true),child:const Text('Save'))],
     )));
    if(saved!=true||!mounted)return;
    final result=await ManagedDeveloperService.call('$route/set',{...scope,key:desired,'expectedRevision':current['revision']});
-   if(result[key]!=desired||(!global&&result['schoolId']!=school!['id']))throw StateError('Feature change not verified.');
-   if(mounted)setState(()=>message=global?(desired?'Template uploads enabled for entitled schools.':'Global template upload maintenance enabled.'):(desired?'Custom TemplateForge enabled for this school.':'Custom TemplateForge disabled for this school.'));
+   if(result[key]!=desired||result['schoolId']!=school['id'])throw StateError('Feature change not verified.');
+   if(mounted)setState(()=>message=desired?'Custom TemplateForge enabled for this school.':'Custom TemplateForge disabled for this school.');
   }catch(error){if(mounted)setState(()=>message='Feature control failed. Refresh and retry: $error');}
   finally{if(mounted)setState(()=>busy=false);}
  }
@@ -225,9 +223,96 @@ class _ManagedDeveloperPanelState extends State<ManagedDeveloperPanel>{
   );
  }
 
- @override Widget build(BuildContext context){final now=DateTime.now().millisecondsSinceEpoch;final schools=widget.schools.map((s)=><String,dynamic>{...s,...?_overviews[s['id']?.toString()]}).where((s)=>s['deletedAt']==null&&('${s['name']} ${s['id']} ${s['loginEmail']}'.toLowerCase().contains(search.toLowerCase()))&&(filter=='all'||schoolOnline(s,now)==(filter=='online'))).toList();return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Wrap(spacing:12,runSpacing:12,children:[FilledButton.icon(onPressed:busy?null:()=>form('create',null),icon:const Icon(Icons.add),label:const Text('Create School')),SizedBox(width:300,child:TextField(onChanged:(v)=>setState(()=>search=v),decoration:const InputDecoration(labelText:'Search schools',prefixIcon:Icon(Icons.search)))),DropdownButton<String>(value:filter,items:const ['all','online','offline'].map((v)=>DropdownMenuItem(value:v,child:Text(v.toUpperCase()))).toList(),onChanged:(v)=>setState(()=>filter=v!))]),if(busy)const LinearProgressIndicator(),if(message!=null)Text(message!),const SizedBox(height:10),OutlinedButton.icon(onPressed:busy?null:()=>featureControl(),icon:const Icon(Icons.settings_outlined),label:const Text('Global Feature Control')),TextButton.icon(
+ @override Widget build(BuildContext context){final now=DateTime.now().millisecondsSinceEpoch;final schools=widget.schools.map((s)=><String,dynamic>{...s,...?_overviews[s['id']?.toString()]}).where((s)=>s['deletedAt']==null&&('${s['name']} ${s['id']} ${s['loginEmail']}'.toLowerCase().contains(search.toLowerCase()))&&(filter=='all'||schoolOnline(s,now)==(filter=='online'))).toList();return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Wrap(spacing:12,runSpacing:12,children:[FilledButton.icon(onPressed:busy?null:()=>form('create',null),icon:const Icon(Icons.add),label:const Text('Create School')),SizedBox(width:300,child:TextField(onChanged:(v)=>setState(()=>search=v),decoration:const InputDecoration(labelText:'Search schools',prefixIcon:Icon(Icons.search)))),DropdownButton<String>(value:filter,items:const ['all','online','offline'].map((v)=>DropdownMenuItem(value:v,child:Text(v.toUpperCase()))).toList(),onChanged:(v)=>setState(()=>filter=v!))]),if(busy)const LinearProgressIndicator(),if(message!=null)Text(message!),const SizedBox(height:10),TextButton.icon(
  onPressed:_measuringAll?null:()=>refreshVisible(force:true),
  icon:const Icon(Icons.cloud_sync_outlined,size:16),
  label:const Text('Refresh verified school totals (up to 10)')),
  const SizedBox(height:8),SingleChildScrollView(scrollDirection:Axis.horizontal,child:DataTable(dataRowMinHeight:72,dataRowMaxHeight:110,columns:const [DataColumn(label:Text('School Name')),DataColumn(label:Text('Activity')),DataColumn(label:Text('Total Students')),DataColumn(label:Text('Licence / Trial')),DataColumn(label:Text('Sync Pending')),DataColumn(label:Text('Action')),DataColumn(label:Text('Total Data Used')),DataColumn(label:Text('Devices'))],rows:schools.map((s)=>DataRow(cells:[DataCell(Column(mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.start,children:[Text('${s['name']??s['id']}'),Text('${s['loginEmail']??s['id']}',style:const TextStyle(fontSize:11,color:Color(0xFF526681)))])),DataCell(Column(mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.start,children:[Text(s['blocked']==true?'Blocked':schoolOnline(s,now)?'Online':'Offline',style:TextStyle(color:schoolOnline(s,now)?Colors.greenAccent:Colors.orangeAccent)),Text('Last seen: ${date(s['lastSeenAt'])}',style:const TextStyle(fontSize:10)),if(s['managed']==true)Text(s['reportedAt'] is num?'Student report: ${date(s['reportedAt'])}':'Student report: Unknown',style:const TextStyle(fontSize:10))])),DataCell(Text('${s['studentCount']??'Not reported'}')),DataCell(licenceExpiry(s, now)),DataCell(syncPending(s, now)),DataCell(PopupMenuButton<String>(enabled:!busy,onSelected:(v){if(v=='refresh-totals'){measure(s);return;}if(v=='change-password'){changeSchoolPassword(s);return;}if(v=='sync-status'){syncStatus(s);return;}if(v=='exams'){exams(s);return;}if(v=='features'){featureControl(school:s);return;}if(v=='delete'){remove(s);return;}if(v=='licence'||v=='storage'){form(v,s);return;}run(v,{'schoolId':s['id'],'blocked':v=='block'?s['blocked']!=true:s['loginDisabled']!=true});},itemBuilder:(_)=>[if(s['managed']==true)...[const PopupMenuItem(value:'refresh-totals',child:Text('Refresh verified school totals')),const PopupMenuItem(value:'change-password',child:Text('Change School Password')),const PopupMenuItem(value:'sync-status',child:Text('Sync / Pending Monitor')),const PopupMenuItem(value:'exams',child:Text('Live Exams / Fees / Notices')),const PopupMenuItem(value:'features',child:Text('School Features')),PopupMenuItem(value:'licence',child:Text(RegExp(r'^[a-f0-9]{64}$').hasMatch('${s['activeLicenseHash']??s['licenseId']??''}')?'Renew Existing Licence':'Issue First Licence')),const PopupMenuItem(value:'storage',child:Text('School ID')),PopupMenuItem(value:'block',child:Text(s['blocked']==true?'Unblock':'Block')),PopupMenuItem(value:'disable',child:Text(s['loginDisabled']==true?'Enable Login':'Disable Login'))],const PopupMenuItem(value:'delete',child:Text('Delete School'))])),DataCell(Column(mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.start,children:[Text(bytes(s)),Text('School Drive • ${date(s['summaryAt'])}',style:const TextStyle(fontSize:10)),if(s['summaryError']!=null)Text('${s['summaryError']}',style:const TextStyle(fontSize:10,color:Colors.orangeAccent))])),DataCell(Text(s['deviceCount'] is num?'${s['deviceCount']}/5':'Not reported'))])).toList())),if(schools.isEmpty)const Padding(padding:EdgeInsets.all(24),child:Text('No schools found')),const Text('Online means a recent verified Windows heartbeat (90 seconds); Offline means no recent heartbeat, not proof that a PC is disconnected. Student/data totals use verified school Drive summaries; device count uses authorized registry.')]);}
+}
+
+
+// Permanent platform-wide feature page. Reuse the authenticated broker.
+class DeveloperGlobalFeatures extends StatelessWidget {
+ const DeveloperGlobalFeatures({super.key});
+ @override Widget build(BuildContext context)=>const Column(
+  crossAxisAlignment:CrossAxisAlignment.stretch,
+  children:[
+   _GlobalFeatureCard(title:'Custom TemplateForge',route:'features/global',
+    field:'uploadEnabled',switchLabel:'New template uploads',inactiveLabel:'Maintenance'),
+  ],
+ );
+}
+class _GlobalFeatureCard extends StatefulWidget{
+ const _GlobalFeatureCard({required this.title,required this.route,required this.field,
+  required this.switchLabel,required this.inactiveLabel});
+ final String title,route,field,switchLabel,inactiveLabel;
+ @override State<_GlobalFeatureCard> createState()=>_GlobalFeatureCardState();
+}
+class _GlobalFeatureCardState extends State<_GlobalFeatureCard>{
+ bool _busy=true;
+ bool? _verified,_desired;
+ int? _revision;
+ String? _error;
+ @override void initState(){super.initState();_load();}
+ Future<void> _load() async{
+  if(mounted)setState(()=>_busy=true);
+  try{
+   final response=await ManagedDeveloperService.call('${widget.route}/get',{});
+   if(response[widget.field] is! bool||response['revision'] is! int)
+    throw StateError('Unverified feature status.');
+   if(mounted)setState((){
+    _verified=response[widget.field] as bool;_desired=_verified;
+    _revision=response['revision'] as int;_error=null;
+   });
+  }catch(error){
+   if(mounted)setState((){_verified=null;_desired=null;_revision=null;_error='Feature status unavailable. Refresh to retry: $error';});
+  }finally{if(mounted)setState(()=>_busy=false);}
+ }
+ Future<void> _save() async{
+  if(_busy||_desired==null||_revision==null||_desired==_verified)return;
+  final desired=_desired!,revision=_revision!;
+  setState(()=>_busy=true);
+  try{
+   final response=await ManagedDeveloperService.call('${widget.route}/set',{
+    widget.field:desired,'expectedRevision':revision,
+   });
+   if(response[widget.field]!=desired||response['revision'] is! int)
+    throw StateError('Feature change not verified.');
+   if(mounted)setState((){
+    _verified=desired;_desired=desired;_revision=response['revision'] as int;_error=null;
+   });
+  }catch(error){
+   if(mounted)setState((){
+    _verified=null;_desired=null;_revision=null;
+    _error='Feature change could not be verified. Refresh before retrying: $error';
+   });
+  }finally{if(mounted)setState(()=>_busy=false);}
+ }
+ @override Widget build(BuildContext context)=>Align(
+  alignment:Alignment.topLeft,
+  child:ConstrainedBox(constraints:const BoxConstraints(maxWidth:620),
+   child:Card(child:Padding(padding:const EdgeInsets.all(20),child:Column(
+    crossAxisAlignment:CrossAxisAlignment.start,mainAxisSize:MainAxisSize.min,children:[
+     Row(children:[
+      const Icon(Icons.settings_outlined),const SizedBox(width:12),
+      Expanded(child:Text(widget.title,style:Theme.of(context).textTheme.titleLarge)),
+      IconButton(onPressed:_busy?null:_load,tooltip:'Refresh',icon:const Icon(Icons.refresh)),
+     ]),
+     const Divider(),
+     if(_busy)const LinearProgressIndicator(),
+     if(_error!=null)Text(_error!,style:TextStyle(color:Theme.of(context).colorScheme.error)),
+     if(_verified!=null)...[
+      SwitchListTile(contentPadding:EdgeInsets.zero,title:Text(widget.switchLabel),
+       value:_desired!,onChanged:_busy?null:(value)=>setState(()=>_desired=value)),
+      Text('Status: ${_verified!?'Active':widget.inactiveLabel}'),
+      const SizedBox(height:8),
+      const Text('Existing templates, printing and sync continue during maintenance.'),
+      const SizedBox(height:16),
+      Align(alignment:Alignment.centerRight,child:FilledButton(
+       onPressed:_busy||_desired==_verified?null:_save,child:const Text('Save'))),
+     ],
+    ],
+   ))),
+  ),
+ );
 }
