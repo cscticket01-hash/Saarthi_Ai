@@ -118,6 +118,32 @@ void main() {
       },
     );
   }
+  test('signature margin trim preserves original pixels and expands visible ink', () {
+    for(final transparent in [false,true]) {
+      final source=img.Image(width:600,height:300,numChannels:4);
+      img.fill(source,color:img.ColorRgba8(255,255,255,transparent?0:255));
+      for(var y=120;y<160;y++) {
+        for(var x=250;x<350;x++) {
+          source.setPixelRgba(x,y,20,50,140,255);
+        }
+      }
+      final bytes=Uint8List.fromList(img.encodePng(source));
+      final original=List<int>.from(bytes);
+      final result=img.decodePng(IdCardLayout.trimSignatureMargins(bytes))!;
+      expect(result.width,106);
+      expect(result.height,46);
+      expect(result.getPixel(3,3).b,140);
+      expect(result.getPixel(3,3).a,255);
+      expect(result.getPixel(0,0).a,transparent?0:255);
+      expect(bytes,original);
+    }
+  });
+  test('blank signature never acquires invented ink', () {
+    final source=img.Image(width:100,height:50,numChannels:4);
+    img.fill(source,color:img.ColorRgba8(255,255,255,255));
+    final bytes=Uint8List.fromList(img.encodePng(source));
+    expect(IdCardLayout.trimSignatureMargins(bytes),bytes);
+  });
   test('portrait crop is top weighted and invalid fit/image fails safely', () {
     final source = img.Image(width: 100, height: 500);
     for (final p in source) p.r = p.y / 2;

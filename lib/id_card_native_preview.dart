@@ -8,6 +8,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 import 'id_card_engine.dart';
 import 'id_card_manifest.dart';
+import 'id_card_layout.dart';
 import 'windows_appearance.dart';
 
 /// Native preview reads the same manifest and data as export. No PDF is built
@@ -43,9 +44,21 @@ class _NativeIdCardPreviewState extends State<NativeIdCardPreview> {
   String? error;
   final printBoundaries = {'front': GlobalKey(), 'back': GlobalKey()};
 
+  Uint8List? _signatureSource, _signatureDisplay;
+  Uint8List? imageFor(IdCardRegion r) {
+    final bytes=widget.images[r.key];
+    if(bytes==null || r.key!='signature' ||
+      widget.template.id!='student-green-blue-modern-v1')return bytes;
+    if(!identical(_signatureSource,bytes)) {
+      _signatureDisplay=IdCardLayout.trimSignatureMargins(bytes);
+      _signatureSource=bytes;
+    }
+    return _signatureDisplay;
+  }
+
   Widget content(IdCardRegion r, Map<String, dynamic> data, String qr) {
     if (r.kind == 'image') {
-      final bytes = widget.images[r.key];
+      final bytes = imageFor(r);
       if (bytes == null) return const SizedBox.shrink();
       final photo = Image.memory(
         bytes, fit: r.fit == 'cover' ? BoxFit.cover : BoxFit.contain,

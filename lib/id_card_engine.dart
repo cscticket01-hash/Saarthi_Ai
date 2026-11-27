@@ -195,6 +195,9 @@ class IdCardEngine {
       throw const FormatException('Original approved Green Blue Modern artwork is unavailable or changed.');
     }
     data = normalizedInput(template,data);
+    if(template.id==IdCardCatalogEntry.greenBlueId && images['signature']!=null) {
+      images={...images,'signature':IdCardLayout.trimSignatureMargins(images['signature']!)};
+    }
     qr = compactQr(qr);
     for (final r in template.regions) {
       if (r.isRequired &&

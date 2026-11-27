@@ -166,6 +166,36 @@ class IdCardLayout {
         },
       );
 
+  /// Display-only crop of the saved signature. Retain the original ink,
+  /// colour, alpha and aspect ratio; never change the school profile image.
+  static Uint8List trimSignatureMargins(Uint8List bytes) {
+    SchoolImageInput.validate(bytes);
+    final decoder=img.findDecoderForData(bytes);
+    final info=decoder?.startDecode(bytes);
+    if(info==null || info.width<=0 || info.height<=0 ||
+        info.width*info.height>20000000) {
+      throw const FormatException('Invalid signature image dimensions.');
+    }
+    final frame=decoder!.decodeFrame(0);
+    if(frame==null)throw const FormatException('Signature image cannot be decoded.');
+    final image=img.bakeOrientation(frame).convert(format:img.Format.uint8,numChannels:4);
+    var left=image.width, top=image.height, right=-1, bottom=-1;
+    for(final pixel in image) {
+      if(pixel.a>8 && math.min(pixel.r,math.min(pixel.g,pixel.b))<240) {
+        left=math.min(left,pixel.x);top=math.min(top,pixel.y);
+        right=math.max(right,pixel.x);bottom=math.max(bottom,pixel.y);
+      }
+    }
+    // Do not invent ink for blank source images.
+    if(right<left || bottom<top)return bytes;
+    final margin=math.max(2,((right-left+1)*.025).ceil());
+    left=math.max(0,left-margin);top=math.max(0,top-margin);
+    right=math.min(image.width-1,right+margin);
+    bottom=math.min(image.height-1,bottom+margin);
+    return Uint8List.fromList(img.encodePng(img.copyCrop(image,
+      x:left,y:top,width:right-left+1,height:bottom-top+1)));
+  }
+
   static Uint8List prepareImage(
     Uint8List bytes, {
     required double aspect,
