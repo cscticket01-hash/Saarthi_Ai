@@ -67,4 +67,20 @@ function validatePackage(input,id){
  if(bytes.length>MAX)bad('Clean package exceeds 8 MiB');
  return {bytes,sha256:hash(bytes),clean};
 }
-module.exports={validatePackage,hash};
+// The original source determines physical size and side count. A reviewed
+// package may use a different design-unit scale, but may not resize the card.
+function verifySourceGeometry(clean,pages){
+ if(!Array.isArray(pages)||pages.length<1||pages.length>2)bad('Source analysis required');
+ const m=clean.manifest,hasBack=Boolean(clean.backgrounds.back);
+ if(hasBack!==(pages.length===2))bad('Package side count differs from original PDF');
+ const seen=new Set();
+ for(const page of pages){
+  if(!['front','back'].includes(page.side)||seen.has(page.side)||
+     !Number.isFinite(page.printWidthMm)||!Number.isFinite(page.printHeightMm)||
+     Math.abs(page.printWidthMm-m.printWidthMm)>.1||
+     Math.abs(page.printHeightMm-m.printHeightMm)>.1)bad('Package physical dimensions differ from original PDF');
+  seen.add(page.side);
+ }
+ if(!seen.has('front')||(hasBack&&!seen.has('back')))bad('Original PDF side identity mismatch');
+}
+module.exports={validatePackage,verifySourceGeometry,hash};

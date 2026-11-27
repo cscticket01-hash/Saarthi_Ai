@@ -6,6 +6,15 @@ const {tmpdir}=require('node:os');
 const {join}=require('node:path');
 const run=promisify(execFile);
 const aliases={name:'name','student name':'name','teacher name':'name','father name':'parentName','father/guardian':'parentName','father/guardain':'parentName','father/guardian name':'parentName','father':'parentName','parent name':'parentName','guardian name':'parentName','dob':'dob','d.o.b':'dob','date of birth':'dob',class:'class','roll no':'rollNo','roll number':'rollNo','ph no':'contact',phone:'contact','phone no':'contact','contact no':'contact',contact:'contact',address:'address',pin:'pinCode','pin code':'pinCode',district:'district',dist:'district',state:'state',country:'country','school name':'schoolName',designation:'designation',subject:'subject'};
+// Optional fictional placeholder phrases are useful for label-free fields in
+// a filled reference. Only exact reserved phrases are recognized.
+const sampleMarkers=new Map([
+ ['sample school name','schoolName'],['sample school address','schoolAddress'],
+ ['sample student name','name'],['sample teacher name','name'],['sample staff name','name'],
+ ['sample guardian name','parentName'],['sample designation','designation'],['sample subject','subject'],
+ ['sample town/village','address'],['sample district','district'],['sample state','state'],
+ ['sample country','country'],['sample employee id','employeeId']
+]);
 const decode=s=>s.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&apos;/g,"'");
 function parseCandidates(xml){
  const pages=[...xml.matchAll(/<page\s+width="([\d.]+)"\s+height="([\d.]+)"[^>]*>([\s\S]*?)<\/page>/g)];
@@ -30,11 +39,17 @@ function parseCandidates(xml){
   }
   for(const row of rows){
    const line=row.words.sort((a,b)=>a.x-b.x),anchors=[];
+   const reserved=sampleMarkers.get(line.map(w=>w.text).join(' ').trim().toLowerCase());
+   if(reserved){
+    const x=Math.min(...line.map(v=>v.x)),y=Math.min(...line.map(v=>v.y)),right=Math.max(...line.map(v=>v.right)),bottom=Math.max(...line.map(v=>v.bottom));
+    candidates.push({key:reserved,side:n?'back':'front',x,y,width:right-x,height:bottom-y,reviewRequired:true,evidence:'reserved_sample_phrase'});
+    continue;
+   }
    for(let i=0;i<line.length;i++){
-    if(!line[i].text.endsWith(':'))continue;
+    if(!/[:：]$/.test(line[i].text))continue;
     // A combined label/value in the same word has no separable bbox.
     for(let j=Math.max(0,i-4);j<=i;j++){
-     const label=line.slice(j,i+1).map(w=>w.text).join(' ').replace(/:\s*$/,'').trim().toLowerCase();
+     const label=line.slice(j,i+1).map(w=>w.text).join(' ').replace(/[:：]\s*$/,'').trim().toLowerCase();
      if(!Object.hasOwn(aliases,label))continue;
      anchors.push({start:j,end:i,key:aliases[label]});break;
     }

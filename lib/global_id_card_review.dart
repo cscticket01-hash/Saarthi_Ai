@@ -47,7 +47,7 @@ class GlobalIdCardReview {
     }
     if(detected.length==1)detected.single['key']='qr';
   }
-  static Uint8List cleanFlatRegions(Uint8List bytes,IdCardManifest manifest,String side,{bool allowSmoothGradient=false}){
+  static Uint8List cleanFlatRegions(Uint8List bytes,IdCardManifest manifest,String side,{bool allowSmoothGradient=false,List<Map<String,dynamic>>? sampleMasks}){
     if(bytes.length>8*1024*1024)throw const FormatException('Source raster is too large.');
     final decoded=img.decodePng(bytes);
     if(decoded==null||decoded.width*decoded.height>20000000||
@@ -56,13 +56,17 @@ class GlobalIdCardReview {
     final source=decoded.convert(format:img.Format.uint8,numChannels:4);
     final output=img.Image.from(source);
     final sx=source.width/manifest.width,sy=source.height/manifest.height;
-    for(final r in manifest.regions.where((r)=>r.side==side)){
+    final masks=sampleMasks??[for(final r in manifest.regions) {'side':r.side,'key':r.key,'x':r.x,'y':r.y,'width':r.width,'height':r.height}];
+    for(final r in masks.where((r)=>r['side']==side)){
+      final x=(r['x'] as num).toDouble(),y=(r['y'] as num).toDouble(),w=(r['width'] as num).toDouble(),h=(r['height'] as num).toDouble();
+      if(![x,y,w,h].every((v)=>v.isFinite)||x<0||y<0||w<=0||h<=0||x+w>manifest.width||y+h>manifest.height)throw const FormatException('Invalid sample removal mask.');
+      final key=r['key'];
       // Expand by one pixel to clear edge anti-aliasing, then inspect the
       // untouched exterior ring. Refuse to guess a non-flat background.
-      final x0=(r.x*sx).floor()-1,y0=(r.y*sy).floor()-1;
-      final x1=((r.x+r.width)*sx).ceil()+1,y1=((r.y+r.height)*sy).ceil()+1;
+      final x0=(x*sx).floor()-1,y0=(y*sy).floor()-1;
+      final x1=((x+w)*sx).ceil()+1,y1=((y+h)*sy).ceil()+1;
       if(x0<1||y0<1||x1>=source.width-1||y1>=source.height-1)
-        throw FormatException('${r.key}: sample touches the artwork edge; use clean source artwork.');
+        throw FormatException('$key: sample touches the artwork edge; use clean source artwork.');
       final left=x0-1,right=x1+1,top=y0-1,bottom=y1+1;
       List<int> rgb(int x,int y){final p=source.getPixel(x,y);return [p.r.toInt(),p.g.toInt(),p.b.toInt()];}
       final tl=rgb(left,top),tr=rgb(right,top),bl=rgb(left,bottom),br=rgb(right,bottom);
@@ -79,10 +83,10 @@ class GlobalIdCardReview {
       // patterns. Interior artwork remains unknowable; final visual approval
       // is mandatory, even for an apparently smooth gradient.
       for(var x=left;x<=right;x++){
-        if(!matches(x,top)||!matches(x,bottom))throw FormatException('${r.key}: complex background; provide clean original artwork.');
+        if(!matches(x,top)||!matches(x,bottom))throw FormatException('$key: complex background; provide clean original artwork.');
       }
       for(var y=top+1;y<bottom;y++){
-        if(!matches(left,y)||!matches(right,y))throw FormatException('${r.key}: complex background; provide clean original artwork.');
+        if(!matches(left,y)||!matches(right,y))throw FormatException('$key: complex background; provide clean original artwork.');
       }
       if(!allowSmoothGradient){
         img.fillRect(output,x1:x0,y1:y0,x2:x1,y2:y1,color:img.ColorRgba8(tl[0],tl[1],tl[2],255));
@@ -101,12 +105,13 @@ class GlobalIdCardReview {
     if(pages.any((p)=>((p['canvasWidth'] as num)-w).abs()>.01||((p['canvasHeight'] as num)-h).abs()>.01))
       throw const FormatException('Front/back page sizes differ.');
     if(slots.any((r)=>r['key']==''))throw const FormatException('Classify each detected image, or explicitly mark it static artwork.');
-    final regions=<Map<String,dynamic>>[];
+    final regions=<Map<String,dynamic>>[],masks=<Map<String,dynamic>>[];
     for(final slot in slots){
       final key=slot['key']?.toString()??'';
       if(key=='__static')continue;
       if(!textFields.contains(key)&&!imageFields.contains(key)&&key!='qr')throw const FormatException('Unknown field.');
       final type=kind(key);
+      masks.add({'side':slot['side'],'key':key,for(final k in ['x','y','width','height'])k:slot['sample_$k']??slot[k]});
       final font=((slot['fontSize'] as num?)??math.max(6,math.min(72,((slot['height'] as num?)??12)*.8))).toDouble();
       regions.add({'key':key,'side':slot['side'],'kind':type,'x':slot['x'],'y':slot['y'],
         'width':slot['width'],'height':slot['height'],'fontSize':font,'minFontSize':6,
@@ -133,7 +138,7 @@ class GlobalIdCardReview {
           throw const FormatException('Clean artwork must be PNG with the original aspect ratio.');
         backgrounds[side]=base64Encode(Uint8List.fromList(img.encodePng(decoded)));
       }else{
-        backgrounds[side]=base64Encode(cleanFlatRegions(source,manifest,side,allowSmoothGradient:allowSmoothGradient));
+        backgrounds[side]=base64Encode(cleanFlatRegions(source,manifest,side,allowSmoothGradient:allowSmoothGradient,sampleMasks:masks));
       }
     }
     final result=<String,dynamic>{'manifest':json,'backgrounds':backgrounds};

@@ -18,6 +18,7 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
   String? error;
   bool busy=false,allowSmoothGradient=false;
   final cleanArtwork=<String,Uint8List>{};
+  Map<String,dynamic> withMask(Map<String,dynamic> row)=>{...row,for(final k in ['x','y','width','height'])'sample_$k':row[k]};
   @override void initState(){
     super.initState();
     pages=(widget.analysis['pages'] as List).map((v)=>Map<String,dynamic>.from(v as Map)).toList();
@@ -25,12 +26,12 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
     for(final page in pages){
       for(final item in (page['candidates'] as List? ?? const [])){
         final r=Map<String,dynamic>.from(item as Map);
-        if(GlobalIdCardReview.textFields.contains(r['key']))slots.add(r);
+        if(GlobalIdCardReview.textFields.contains(r['key']))slots.add(withMask(r));
       }
       for(final item in (page['imageCandidates'] as List? ?? const [])){
         final r=Map<String,dynamic>.from(item as Map);
         final role=r['suggestedRole'];
-        slots.add({...r,'key':GlobalIdCardReview.imageFields.contains(role)||role=='qr'?role:''});
+        slots.add(withMask({...r,'key':GlobalIdCardReview.imageFields.contains(role)||role=='qr'?role:''}));
       }
     }
     GlobalIdCardReview.suggestQr(pages,slots,images);
@@ -97,6 +98,10 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
           ]),
           if(row['key']!='__static')Wrap(spacing:8,runSpacing:8,children:[
             for(final key in ['x','y','width','height'])number(row,key),
+            if(row.containsKey('sample_x'))...[
+              const Text('Original sample removal rectangle (independent of output field)'),
+              for(final key in ['sample_x','sample_y','sample_width','sample_height'])number(row,key),
+            ],
             if(GlobalIdCardReview.textFields.contains(row['key']))...[
               number(row,'fontSize'),
               FilterChip(label:const Text('Bold'),selected:row['bold']==true,onSelected:busy?null:(v)=>setState(()=>row['bold']=v)),

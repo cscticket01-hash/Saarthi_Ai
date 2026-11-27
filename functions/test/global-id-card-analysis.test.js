@@ -38,3 +38,8 @@ test('source style and unique explicit image label are suggestions without sampl
  assert.equal(page.imageCandidates[0].suggestedRole,'photo');
  assert.equal(JSON.stringify(page).includes('Synthetic person'),false);
 });
+
+test('reserved sample phrase maps label-free name without exposing the sample string',()=>{
+ const xml='<page width="242" height="153"><line><word xMin="10" yMin="20" xMax="30" yMax="30">Sample</word><word xMin="31" yMin="20" xMax="55" yMax="30">Student</word><word xMin="56" yMin="20" xMax="75" yMax="30">Name</word></line></page>';
+ const page=parseCandidates(xml)[0];assert.equal(page.candidates[0].key,'name');assert.equal(page.candidates[0].evidence,'reserved_sample_phrase');assert.equal(JSON.stringify(page).includes('Student'),false);
+});

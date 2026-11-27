@@ -1,6 +1,6 @@
 'use strict';
 const {createHash,randomUUID}=require('node:crypto');
-const {validatePackage}=require('./global-id-card-package');
+const {validatePackage,verifySourceGeometry}=require('./global-id-card-package');
 const {analyzePdf,renderReviewSource}=require('./global-id-card-analysis');
 const MAX_PDF_BYTES=8*1024*1024;
 const KINDS=new Set(['studentId','teacherId','otherStaffId']);
@@ -126,7 +126,7 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
           if(row.version>10000)invalid(409,'Template version limit reached');
         }else if(fs.exists)invalid(409,'Template family already exists');
         tx.create(ref,row);
-        tx.set(family,{familyId,lastVersion:row.version,currentId:old?.currentId||parent?.id||null,updatedAt:now()},{merge:true});
+        tx.set(family,{familyId,lastVersion:row.version,currentId:fs.exists?(old.currentId??null):(parent?.id||null),updatedAt:now()},{merge:true});
       });
       // Upload is durable before analysis begins. Failure keeps the source
       // retryable and private rather than reporting a false publication.
@@ -170,7 +170,8 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
       if(b.reviewConfirmed!==true)invalid(400,'Confirm sample removal, geometry, fonts and real QR replacement');
       const ref=refs(b.id),snap=await ref.get(),row=snap.data();
       if(!snap.exists||row.state!=='draft'||row.mappingState!=='review_required'||b.sourceSha256!==row.sourceSha256)invalid(409,'Analyze the current draft and review its clean package first');
-      const {bytes,sha256:packageSha256}=validatePackage(b.package,row.id);
+      const {bytes,sha256:packageSha256,clean}=validatePackage(b.package,row.id);
+      verifySourceGeometry(clean,row.analysis?.pages);
       if(row.packageSha256&&row.packageSha256!==packageSha256)invalid(409,'Published package is immutable; upload a new version as a new design');
       const packagePath='global-id-card-library/verified/'+row.id+'/v'+row.version+'/'+packageSha256+'.json';
       const object=(await storage()).file(packagePath);
@@ -183,6 +184,7 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
         const latest=await tx.get(ref),current=latest.data();
         const family=familyRef(row.familyId||row.id),fs=await tx.get(family),familyState=fs.data();
         if(current?.state!=='draft'||current.sourceSha256!==row.sourceSha256||
+           current.mappingState!=='review_required'||JSON.stringify(current.analysis?.pages)!==JSON.stringify(row.analysis?.pages)||
            (current.packageSha256&&current.packageSha256!==packageSha256))invalid(409,'Draft changed');
         const next={state:'published',mappingState:'verified',packageVerified:true,packageSha256,packagePath,
           reviewedBy:actor.uid,reviewedAt:now(),updatedAt:now()};
@@ -248,6 +250,7 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
   }
   async function schoolAction(action,b,member){
     if(action==='package'||action==='access'){
+      await storage();
       const snap=await refs(b.id).get(),row=snap.data();
       if(!snap.exists||row.version!==b.version)invalid(404,'Template version unavailable');
       const grant=row.accessType==='premium'?(await db.doc('global_id_card_entitlements/'+member.schoolId+'/templates/'+row.id).get()).data():null;
@@ -258,6 +261,7 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
       return {success:true,schoolId:member.schoolId,template:publicEntry(row),packageSha256:row.packageSha256,packageBase64:bytes.toString('base64')};
     }
     if(action!=='list')invalid(400,'Unknown global ID card operation');
+    if(!(await storageStatus()).ready)invalid(503,'Private Firebase template storage policy is not verified');
     // Never expose raw sample PDFs, draft paths, metadata with sample values,
     // or unverified template artwork to school clients.
     const rows=(await list()).filter(r=>r.state==='published'&&r.mappingState==='verified'&&
