@@ -59,6 +59,51 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
     finally{if(mounted)setState(()=>busy=false);}
     await refresh();
   }
+  Future<void> review(Map<String,dynamic> row) async {
+    if(busy||!storageReady||row['state']!='draft')return;
+    setState(()=>busy=true);
+    try{
+      final result=await ManagedDeveloperService.call('id-library/analyze',{'id':row['id']});
+      if(!mounted)return;
+      final analysis=Map<String,dynamic>.from(result['analysis'] as Map);
+      final proceed=await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(
+        title:const Text('Mapping review required'),
+        content:SizedBox(width:560,child:SingleChildScrollView(child:Column(
+          crossAxisAlignment:CrossAxisAlignment.start,children:[
+            Text('Template ID: ${row['id']}'),
+            const Text('These are text candidates, not an automatically cleaned card. Review every field and remove all fictional text, QR and images.'),
+            SelectableText(const JsonEncoder.withIndent('  ').convert(analysis)),
+            const Text('Select a reviewed JSON package containing the matching manifest and clean front/back PNG artwork (base64).'),
+          ]))),
+        actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Close')),
+          FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Choose reviewed package'))]));
+      if(proceed!=true||!mounted)return;
+      final file=await openFile(acceptedTypeGroups:[const XTypeGroup(label:'Reviewed package',extensions:['json'])]);
+      if(file==null||!mounted)return;
+      if(await file.length()>8*1024*1024)throw StateError('Package exceeds 8 MiB.');
+      final package=Map<String,dynamic>.from(jsonDecode(await file.readAsString()) as Map);
+      final backgrounds=Map<String,dynamic>.from(package['backgrounds'] as Map);
+      if(!mounted)return;
+      bool checked=false;
+      final approve=await showDialog<bool>(context:context,builder:(ctx)=>StatefulBuilder(builder:(ctx,update)=>AlertDialog(
+        title:const Text('Review clean artwork before publishing'),
+        content:SizedBox(width:560,child:SingleChildScrollView(child:Column(children:[
+          for(final side in ['front','back'])if(backgrounds[side] is String)...[
+            Text(side),Image.memory(base64Decode(backgrounds[side] as String),height:180,fit:BoxFit.contain),
+          ],
+          SelectableText(const JsonEncoder.withIndent('  ').convert(package['manifest'])),
+          CheckboxListTile(value:checked,onChanged:(v)=>update(()=>checked=v==true),
+            title:const Text('I verified all sample values, photo, logo, signature, seal and QR are removed; mapping, fonts and physical size are correct.')),
+        ]))),
+        actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),
+          FilledButton(onPressed:checked?()=>Navigator.pop(ctx,true):null,child:const Text('Publish free template'))])));
+      if(approve!=true||!mounted)return;
+      await ManagedDeveloperService.call('id-library/publish',{'id':row['id'],'sourceSha256':result['sourceSha256'],
+        'reviewConfirmed':true,'package':package});
+    }catch(e){if(mounted)setState(()=>message='Mapping / publication failed: $e');return;}
+    finally{if(mounted)setState(()=>busy=false);}
+    await refresh();
+  }
   Future<void> change(Map<String,dynamic> row) async {
     if(busy)return;
     final restore=row['state']=='archived';
@@ -90,11 +135,12 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
       if(message!=null)Text(message!,style:TextStyle(color:Theme.of(context).colorScheme.error)),
       for(final row in rows.where((r)=>r['kind']==kind))
         ListTile(title:Text('${row['name']}'),subtitle:Text('v${row['version']} • ${row['state']} • ${row['mappingState']}'),
-          trailing:PopupMenuButton<String>(enabled:!busy,onSelected:(_)=>change(row),itemBuilder:(_)=>[
+          trailing:PopupMenuButton<String>(enabled:!busy,onSelected:(v)=>v=='review'?review(row):change(row),itemBuilder:(_)=>[
+            if(row['state']=='draft')const PopupMenuItem(value:'review',child:Text('Analyze / review / publish')),
             PopupMenuItem(value:'change',child:Text(row['state']=='archived'?'Restore draft':'Archive')),
           ])),
       if(!busy&&!rows.any((r)=>r['kind']==kind))const Padding(padding:EdgeInsets.all(12),child:Text('No templates in this category.')),
-      const Text('Drafts are private. Automatic mapping, review and Windows publication are separate release gates.'),
+      const Text('Drafts are private. Text mapping candidates require reviewed clean artwork before publication.'),
     ],
   )));
 }

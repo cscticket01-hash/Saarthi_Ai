@@ -1,5 +1,7 @@
 'use strict';
 const {createHash,randomUUID}=require('node:crypto');
+const {validatePackage}=require('./global-id-card-package');
+const {analyzePdf}=require('./global-id-card-analysis');
 const MAX_PDF_BYTES=8*1024*1024;
 const KINDS=new Set(['studentId','teacherId','otherStaffId']);
 const ID=/^gid-[a-f0-9]{32}$/;
@@ -38,7 +40,7 @@ function accessDecision(row,grant,school){
     grant.schoolId===school&&grant.templateId===row.id&&grant.version===row.version&&
     grant.source==='developer_grant';
 }
-function createGlobalIdCardLibrary({db,bucket,now=Date.now}){
+function createGlobalIdCardLibrary({db,bucket,now=Date.now,analyzer=process.env.SAARTHI_GLOBAL_ID_PDFTOTEXT}){
   const collection='global_id_card_library';
   const refs=id=>{if(!ID.test(id||''))invalid(400,'Invalid template identity');return db.doc(collection+'/'+id);};
   function storage(){
@@ -68,6 +70,42 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now}){
         createdAt:now(),updatedAt:now()};
       await ref.create(row);
       return {success:true,template:publicEntry(row)};
+    }
+    if(action==='analyze'){
+      const ref=refs(b.id),snap=await ref.get(),row=snap.data();
+      if(!snap.exists||row.state!=='draft')invalid(409,'Open a draft first');
+      const [source]=await storage().file(row.sourcePath).download();
+      if(source.length>MAX_PDF_BYTES||sha256(source)!==row.sourceSha256)invalid(503,'Source checksum failed');
+      const analysis=await analyzePdf(source,analyzer);
+      await db.runTransaction(async tx=>{
+        const latest=await tx.get(ref);
+        if(latest.data()?.state!=='draft'||latest.data()?.sourceSha256!==row.sourceSha256)invalid(409,'Draft changed');
+        tx.set(ref,{mappingState:'review_required',analysis,updatedAt:now()},{merge:true});
+      });
+      return {success:true,analysis,sourceSha256:row.sourceSha256};
+    }
+    if(action==='publish'){
+      if(b.reviewConfirmed!==true)invalid(400,'Confirm sample removal, geometry, fonts and real QR replacement');
+      const ref=refs(b.id),snap=await ref.get(),row=snap.data();
+      if(!snap.exists||row.state!=='draft'||row.mappingState!=='review_required'||b.sourceSha256!==row.sourceSha256)invalid(409,'Analyze the current draft and review its clean package first');
+      const {bytes,sha256:packageSha256}=validatePackage(b.package,row.id);
+      if(row.packageSha256&&row.packageSha256!==packageSha256)invalid(409,'Published package is immutable; upload a new version as a new design');
+      const packagePath='global-id-card-library/verified/'+row.id+'/v'+row.version+'/'+packageSha256+'.json';
+      const object=storage().file(packagePath);
+      try{await object.save(bytes,{resumable:false,validation:'crc32c',preconditionOpts:{ifGenerationMatch:0},
+        metadata:{contentType:'application/json',cacheControl:'private,no-store'}});}
+      catch(e){if(Number(e.code)!==412)throw e;}
+      const [readback]=await object.download();
+      if(sha256(readback)!==packageSha256)invalid(503,'Clean package checksum failed');
+      const published=await db.runTransaction(async tx=>{
+        const latest=await tx.get(ref),current=latest.data();
+        if(current?.state!=='draft'||current.sourceSha256!==row.sourceSha256||
+           (current.packageSha256&&current.packageSha256!==packageSha256))invalid(409,'Draft changed');
+        const next={state:'published',mappingState:'verified',packageVerified:true,packageSha256,packagePath,
+          reviewedBy:actor.uid,reviewedAt:now(),updatedAt:now()};
+        tx.set(ref,next,{merge:true});return {...current,...next};
+      });
+      return {success:true,template:publicEntry(published)};
     }
     if(action==='archive'||action==='restore'){
       const ref=refs(b.id);
@@ -99,6 +137,15 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now}){
     invalid(400,'Unknown global ID card operation');
   }
   async function schoolAction(action,b,member){
+    if(action==='package'){
+      const snap=await refs(b.id).get(),row=snap.data();
+      if(!snap.exists||row.version!==b.version)invalid(404,'Template version unavailable');
+      const grant=row.accessType==='premium'?(await db.doc('global_id_card_entitlements/'+member.schoolId+'/templates/'+row.id).get()).data():null;
+      if(!accessDecision(row,grant,member.schoolId))invalid(403,'Template access not verified');
+      const [bytes]=await storage().file(row.packagePath).download();
+      if(bytes.length>MAX_PDF_BYTES||sha256(bytes)!==row.packageSha256)invalid(503,'Template checksum failed');
+      return {success:true,schoolId:member.schoolId,template:publicEntry(row),packageSha256:row.packageSha256,packageBase64:bytes.toString('base64')};
+    }
     if(action!=='list')invalid(400,'Unknown global ID card operation');
     // Never expose raw sample PDFs, draft paths, metadata with sample values,
     // or unverified template artwork to school clients.
@@ -106,7 +153,7 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now}){
       r.packageVerified===true&&HASH.test(r.packageSha256||''));
     const templates=await Promise.all(rows.map(async row=>{
       const grant=row.accessType==='premium'?(await db.doc('global_id_card_entitlements/'+member.schoolId+'/templates/'+row.id).get()).data():null;
-      return {...publicEntry(row),unlocked:accessDecision(row,grant,member.schoolId)};
+      return {...publicEntry(row),packageSha256:row.packageSha256,unlocked:accessDecision(row,grant,member.schoolId)};
     }));
     return {success:true,schoolId:member.schoolId,templates,paymentEnabled:false};
   }
