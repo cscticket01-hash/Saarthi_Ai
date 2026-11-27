@@ -27,14 +27,14 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
     }catch(e){if(mounted)setState(()=>message='Library unavailable: $e');}
     finally{if(mounted)setState(()=>busy=false);}
   }
-  Future<void> upload() async {
+  Future<void> upload([Map<String,dynamic>? previous]) async {
     if(busy||!storageReady)return;
-    final category=kind;
+    final category=previous?['kind']?.toString()??kind;
     final picked=await openFile(acceptedTypeGroups:[const XTypeGroup(label:'PDF',extensions:['pdf'],mimeTypes:['application/pdf'])]);
     if(picked==null||!mounted)return;
     if(await picked.length()>8*1024*1024){if(mounted)setState(()=>message='PDF must be at most 8 MiB.');return;}
     if(!mounted)return;
-    final name=TextEditingController(text:picked.name.replaceFirst(RegExp(r'\.pdf$',caseSensitive:false),''));
+    final name=TextEditingController(text:previous?['name']?.toString()??picked.name.replaceFirst(RegExp(r'\.pdf$',caseSensitive:false),''));
     bool synthetic=false;
     final confirmed=await showDialog<bool>(context:context,builder:(ctx)=>StatefulBuilder(builder:(ctx,update)=>AlertDialog(
       title:Text('Upload ${categories[category]} ID Card'),
@@ -55,6 +55,7 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
       if(bytes.length>8*1024*1024)throw StateError('PDF exceeds size limit');
       await ManagedDeveloperService.call('id-library/upload',{
         'name':title,'kind':category,'syntheticSampleConfirmed':true,'pdfBase64':base64Encode(bytes),
+        if(previous!=null)'previousId':previous['id'],
       });
     }catch(e){if(mounted)setState(()=>message='Upload failed: $e');return;}
     finally{if(mounted)setState(()=>busy=false);}
@@ -105,6 +106,20 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
     finally{if(mounted)setState(()=>busy=false);}
     await refresh();
   }
+  Future<void> makeCurrent(Map<String,dynamic> row) async {
+    if(busy)return;
+    final ok=await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(
+      title:const Text('Make this verified revision current?'),
+      content:const Text('The previous design becomes the current library revision. Existing school selections are not silently changed.'),
+      actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),
+        FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Confirm'))]));
+    if(ok!=true||!mounted)return;
+    setState(()=>busy=true);
+    try{await ManagedDeveloperService.call('id-library/make-current',{'id':row['id']});}
+    catch(e){if(mounted)setState(()=>message='Version change failed: $e');return;}
+    finally{if(mounted)setState(()=>busy=false);}
+    await refresh();
+  }
   Future<void> change(Map<String,dynamic> row) async {
     if(busy)return;
     final restore=row['state']=='archived';
@@ -137,8 +152,10 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
       if(storageReady&&analysisReady&&!imageAnalysisReady)const Text('Image geometry analysis is not configured; manual image-slot review required.'),
       if(message!=null)Text(message!,style:TextStyle(color:Theme.of(context).colorScheme.error)),
       for(final row in rows.where((r)=>r['kind']==kind))
-        ListTile(title:Text('${row['name']}'),subtitle:Text('v${row['version']} • ${row['state']} • ${row['mappingState']}'),
-          trailing:PopupMenuButton<String>(enabled:!busy,onSelected:(v)=>v=='review'?review(row):change(row),itemBuilder:(_)=>[
+        ListTile(title:Text('${row['name']}'),subtitle:Text('v${row['version']} • ${row['state']} • ${row['mappingState']}${row['isCurrent']==true?' • Current':''}'),
+          trailing:PopupMenuButton<String>(enabled:!busy,onSelected:(v){if(v=='review'){review(row);}else if(v=='revision'){upload(row);}else if(v=='current'){makeCurrent(row);}else{change(row);}},itemBuilder:(_)=>[
+            if(row['state']=='published')const PopupMenuItem(value:'revision',child:Text('Upload new revision')),
+            if(['published','archived'].contains(row['state'])&&row['mappingState']=='verified'&&row['isCurrent']!=true)const PopupMenuItem(value:'current',child:Text('Restore / make current')),
             if(row['state']=='draft')const PopupMenuItem(value:'review',child:Text('Analyze / review / publish')),
             PopupMenuItem(value:'change',child:Text(row['state']=='archived'?'Restore draft':'Archive')),
           ])),

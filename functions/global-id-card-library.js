@@ -28,6 +28,7 @@ function parseSource(body){
 }
 function publicEntry(row){
   return {id:row.id,name:row.name,kind:row.kind,version:row.version,
+    familyId:row.familyId||row.id,previousId:row.previousId||null,isCurrent:row.isCurrent!==false,
     state:row.state,mappingState:row.mappingState,accessType:row.accessType,
     pricePaise:row.pricePaise,currency:'INR',updatedAt:row.updatedAt};
 }
@@ -43,20 +44,36 @@ function accessDecision(row,grant,school){
 function createGlobalIdCardLibrary({db,bucket,now=Date.now,analyzer=process.env.SAARTHI_GLOBAL_ID_PDFTOTEXT,imageAnalyzer=process.env.SAARTHI_GLOBAL_ID_PDFTOHTML}){
   const collection='global_id_card_library';
   const refs=id=>{if(!ID.test(id||''))invalid(400,'Invalid template identity');return db.doc(collection+'/'+id);};
+  const familyRef=id=>{if(!ID.test(id||''))invalid(400,'Invalid template family');return db.doc('global_id_card_families/'+id);};
   function storage(){
     if(!bucket)invalid(503,'Private Firebase template storage is not configured');
     return bucket;
   }
   async function list(){
     const snapshot=await db.collection(collection).orderBy('updatedAt','desc').limit(200).get();
-    return snapshot.docs.map(doc=>doc.data());
+    const rows=snapshot.docs.map(doc=>doc.data());
+    const families=[...new Set(rows.map(r=>r.familyId||r.id))];
+    const current=new Map(await Promise.all(families.map(async id=>{
+      const s=await familyRef(id).get();return [id,s.data()?.currentId||null];
+    })));
+    return rows.map(row=>({...row,isCurrent:current.get(row.familyId||row.id)===row.id||
+      (!current.get(row.familyId||row.id)&&!row.previousId&&row.state==='published')}));
+
   }
   async function developerAction(action,b,actor){
     if(action==='list')return {success:true,templates:(await list()).map(publicEntry),paymentEnabled:false,storageConfigured:!!bucket,analysisConfigured:!!analyzer,imageAnalysisConfigured:!!imageAnalyzer};
     if(action==='upload'){
       const {name,kind,bytes,sourceSha256}=parseSource(b);
       const id='gid-'+randomUUID().replaceAll('-','');
-      const ref=refs(id),sourcePath='global-id-card-library/private/'+id+'/v1/source.pdf';
+      const ref=refs(id),sourcePath='global-id-card-library/private/'+id+'/source.pdf';
+      let parent=null;
+      if(b.previousId!=null){
+        const snap=await refs(b.previousId).get();parent=snap.data();
+        if(!snap.exists||parent.state!=='published'||parent.kind!==kind||parent.accessType!=='free')
+          invalid(409,'New revision requires an existing published free template of the same category');
+      }
+      const familyId=parent?.familyId||parent?.id||id;
+      const family=familyRef(familyId);
       // Never create a download token, public ACL or signed school URL for sample PDFs.
       const object=storage().file(sourcePath);
       await object.save(bytes,{resumable:false,validation:'crc32c',
@@ -64,11 +81,23 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,analyzer=process.env.
           cacheControl:'private,no-store',metadata:{sha256:sourceSha256}}});
       const [readback]=await object.download();
       if(sha256(readback)!==sourceSha256)invalid(503,'Firebase source readback failed; not registered');
-      const row={id,name,kind,version:1,state:'draft',mappingState:'awaiting_analysis',
+      const row={id,name,kind,familyId,previousId:parent?.id||null,version:1,state:'draft',mappingState:'awaiting_analysis',
         packageVerified:false,sourcePath,sourceSha256,sourceBytes:bytes.length,
         accessType:'free',pricePaise:0,currency:'INR',createdBy:actor.uid,
         createdAt:now(),updatedAt:now()};
-      await ref.create(row);
+      await db.runTransaction(async tx=>{
+        const fs=await tx.get(family);
+        const old=fs.data();
+        if(parent){
+          const latest=await tx.get(refs(parent.id));
+          if(latest.data()?.state!=='published'||latest.data()?.kind!==kind||
+             latest.data()?.packageSha256!==parent.packageSha256)invalid(409,'Previous version changed');
+          row.version=Math.max(Number(old?.lastVersion)||0,parent.version)+1;
+          if(row.version>10000)invalid(409,'Template version limit reached');
+        }else if(fs.exists)invalid(409,'Template family already exists');
+        tx.create(ref,row);
+        tx.set(family,{familyId,lastVersion:row.version,currentId:old?.currentId||parent?.id||null,updatedAt:now()},{merge:true});
+      });
       // Upload is durable before analysis begins. Failure keeps the source
       // retryable and private rather than reporting a false publication.
       if(analyzer){
@@ -113,22 +142,50 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,analyzer=process.env.
       if(sha256(readback)!==packageSha256)invalid(503,'Clean package checksum failed');
       const published=await db.runTransaction(async tx=>{
         const latest=await tx.get(ref),current=latest.data();
+        const family=familyRef(row.familyId||row.id),fs=await tx.get(family),familyState=fs.data();
         if(current?.state!=='draft'||current.sourceSha256!==row.sourceSha256||
            (current.packageSha256&&current.packageSha256!==packageSha256))invalid(409,'Draft changed');
         const next={state:'published',mappingState:'verified',packageVerified:true,packageSha256,packagePath,
           reviewedBy:actor.uid,reviewedAt:now(),updatedAt:now()};
-        tx.set(ref,next,{merge:true});return {...current,...next};
+        tx.set(ref,next,{merge:true});
+        // An older draft published after a later revision must not silently
+        // replace it. Rollback is an explicit developer action.
+        if(!familyState?.currentId||row.version>=Number(familyState.currentVersion||0))
+          tx.set(family,{familyId:row.familyId||row.id,lastVersion:Math.max(row.version,Number(familyState?.lastVersion||0)),
+            currentId:row.id,currentVersion:row.version,updatedAt:now()},{merge:true});
+        return {...current,...next};
       });
       return {success:true,template:publicEntry(published)};
+    }
+    if(action==='make-current'){
+      const ref=refs(b.id),snap=await ref.get(),row=snap.data();
+      if(!snap.exists||!['published','archived'].includes(row.state)||row.mappingState!=='verified'||
+         row.packageVerified!==true||row.accessType!=='free'||!HASH.test(row.packageSha256||''))
+        invalid(409,'Only a verified free revision can be restored or made current');
+      const [bytes]=await storage().file(row.packagePath).download();
+      if(bytes.length>MAX_PDF_BYTES||sha256(bytes)!==row.packageSha256)invalid(503,'Revision checksum failed');
+      const family=familyRef(row.familyId||row.id);
+      await db.runTransaction(async tx=>{
+        const latest=await tx.get(ref),fs=await tx.get(family),current=latest.data();
+        if(!['published','archived'].includes(current?.state)||current.packageSha256!==row.packageSha256||
+          current.packageVerified!==true||current.accessType!=='free')invalid(409,'Revision changed');
+        tx.set(ref,{state:'published',updatedAt:now(),updatedBy:actor.uid},{merge:true});
+        tx.set(family,{familyId:row.familyId||row.id,lastVersion:Math.max(row.version,Number(fs.data()?.lastVersion||0)),
+          currentId:row.id,currentVersion:row.version,updatedAt:now(),updatedBy:actor.uid},{merge:true});
+      });
+      return {success:true};
     }
     if(action==='archive'||action==='restore'){
       const ref=refs(b.id);
       const row=await db.runTransaction(async tx=>{
         const snap=await tx.get(ref),old=snap.data();
         if(!snap.exists)invalid(404,'Template not found');
+        const family=familyRef(old.familyId||old.id),fs=await tx.get(family);
         // Restore to draft, never accidentally publish an unreviewed source.
         const next={state:action==='archive'?'archived':'draft',updatedAt:now(),updatedBy:actor.uid};
-        tx.set(ref,next,{merge:true});return {...old,...next};
+        tx.set(ref,next,{merge:true});
+        if(action==='archive'&&fs.data()?.currentId===old.id)tx.set(family,{currentId:null,currentVersion:0,updatedAt:now()},{merge:true});
+        return {...old,...next};
       });
       return {success:true,template:publicEntry(row)};
     }
@@ -170,7 +227,8 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,analyzer=process.env.
       const grant=row.accessType==='premium'?(await db.doc('global_id_card_entitlements/'+member.schoolId+'/templates/'+row.id).get()).data():null;
       return {...publicEntry(row),packageSha256:row.packageSha256,unlocked:accessDecision(row,grant,member.schoolId)};
     }));
-    return {success:true,schoolId:member.schoolId,templates,paymentEnabled:false};
+    const serverTime=now(),expiresAt=Math.min(serverTime+24*3600000,Number(member.entitlement?.expiresAt||0));
+    return {success:true,schoolId:member.schoolId,uid:member.uid,templates,paymentEnabled:false,serverTime,expiresAt};
   }
   return {developerAction,schoolAction};
 }

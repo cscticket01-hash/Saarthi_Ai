@@ -154,7 +154,7 @@ class _GlobalIdCatalog {
           if(row['unlocked']!=true||row['accessType']!='free'||row['pricePaise']!=0)continue;
           final entry=_GlobalIdCatalogEntry(row,origin,school);
           // Keep the same immutable package in memory across unchanged refreshes.
-          final old=_entries.where((e)=>e.id==id&&e.packageHash==entry.packageHash);
+          final old=_entries.where((e)=>e.id==id&&e.packageHash==entry.packageHash&&e.name==entry.name);
           entries.add(old.isEmpty?entry:old.first);
         }
         entries.sort((a,b)=>a.id.compareTo(b.id));
@@ -175,9 +175,9 @@ class _GlobalIdCatalog {
 class _GlobalIdCatalogEntry extends IdCardCatalogEntry {
   _GlobalIdCatalogEntry(Map<String,dynamic> row,this.origin,this.school):
     packageHash=row['packageSha256'] as String,version=row['version'] as int,
-    super({'id':row['id'],'name':row['name'],'kinds':[row['kind']],
+    super({'id':row['id'],'name':row['isCurrent']==true&&row['version']==1?row['name']:'${row['name']} • v${row['version']}${row['isCurrent']==true?'':' (previous)'}','kinds':[row['kind']],
       'manifest':'assets/global_id_card_placeholder.json'}) {
-    if(version!=1||!RegExp(r'^[a-f0-9]{64}$').hasMatch(packageHash)||
+    if(version<1||version>10000||!RegExp(r'^[a-f0-9]{64}$').hasMatch(packageHash)||
       row['state']!='published'||row['mappingState']!='verified')throw const FormatException('Invalid global template metadata');
   }
   final String origin,school,packageHash;
