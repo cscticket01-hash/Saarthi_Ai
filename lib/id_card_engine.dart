@@ -16,6 +16,8 @@ import 'package:pdf/widgets.dart' as pw;
 import 'school_media_budgets.dart';
 import 'school_pdf_media.dart';
 import 'id_card_manifest.dart';
+import 'id_card_catalog.dart';
+import 'package:crypto/crypto.dart';
 import 'id_card_layout.dart';
 import 'id_card_indic_text.dart';
 
@@ -187,6 +189,11 @@ class IdCardEngine {
     pw.Font? font,
     int printMediaStage = 0,
   }) async {
+    if (template.id == IdCardCatalogEntry.greenBlueId && printMediaStage == 2 &&
+        (backgrounds['front'] == null ||
+         !IdCardCatalogEntry.isApprovedGreenBlueArtwork(backgrounds['front']!))) {
+      throw const FormatException('Original approved Green Blue Modern artwork is unavailable or changed.');
+    }
     data = normalizedInput(template,data);
     qr = compactQr(qr);
     for (final r in template.regions) {
@@ -364,7 +371,7 @@ class PreparedIdCard {
     }
     return child;
   }
-  pw.Widget buildSide(String name) => pw.SizedBox(
+  pw.Widget buildSide(String name, {Map<String, pw.MemoryImage>? backgroundImageCache}) => pw.SizedBox(
     width: template.width,
     height: template.height,
     child: pw.Stack(
@@ -373,7 +380,9 @@ class PreparedIdCard {
         if (backgrounds[name] != null)
           pw.Positioned.fill(
             child: pw.Image(
-              pw.MemoryImage(backgrounds[name]!),
+              backgroundImageCache == null ? pw.MemoryImage(backgrounds[name]!) :
+                backgroundImageCache.putIfAbsent(sha256.convert(backgrounds[name]!).toString(),
+                  () => pw.MemoryImage(backgrounds[name]!)),
               fit: pw.BoxFit.contain,
             ),
           ),

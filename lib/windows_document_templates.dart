@@ -233,7 +233,7 @@ class WindowsDocumentTemplates {
           await WindowsBrowserPrint.open(previewContext,bytes,title:'ID card',
             preserveActualSize:true,isCurrent:(){try{checkSchool();return true;}catch(_){return false;}});
         } : null,
-        onDownload:hasPhoto ? () async {
+        onDownload:hasPhoto || card.template.id == greenBlueStudentTemplateId ? () async {
           checkSchool();
           final bytes = await IdCardEngine.renderLocalDownload(card.template, card.data,
             images: card.images, backgrounds: card.backgrounds, qr: compact);
@@ -256,7 +256,7 @@ class WindowsDocumentTemplates {
     }
     final card = await nativePersonCard('studentId', data);
     guard();
-    if (card == null || card.images['photo']?.isNotEmpty != true) {
+    if (card == null || (card.template.id != greenBlueStudentTemplateId && card.images['photo']?.isNotEmpty != true)) {
       throw StateError('ID card unavailable. Verify the student photo.');
     }
     final compact = IdCardEngine.compactQr(qr);
@@ -1111,6 +1111,10 @@ class WindowsDocumentTemplates {
           .where((e) => e.kinds.contains(kind))
           .toList();
       final entry = choices[index - legacyCount];
+      if (entry.id == greenBlueStudentTemplateId) {
+        // Gallery and selection must use native preview, not the PDF renderer.
+        return null;
+      }
       return manifestId(
         branding,
         templateId: entry.id,
@@ -1617,7 +1621,23 @@ class _SchoolDocumentTemplatesScreenState
     final ref = db.collection('school_settings').doc('document_templates');
     // Validate the exact selected financial renderer before changing selection.
     // The approved manifest cannot silently become a different version.
-    if (WindowsDocumentTemplates.supportsPlain(kind)) {
+    if (kind == 'studentId' && value == 'manifest:$greenBlueStudentTemplateId') {
+      // Selecting the bundled approved layout must not generate a PDF.
+      final entry = await IdCardCatalog.find(greenBlueStudentTemplateId);
+      if (!await entry.hasApprovedGreenBlueArtwork()) {
+        throw StateError('Approved original artwork is missing.');
+      }
+      await entry.manifest();
+      if (!mounted) return;
+      final confirmed = await showDialog<bool>(context: context, builder: (ctx) =>
+        AlertDialog(title: const Text('Use Green Blue Modern for this school?'),
+          content: const Text('Update all school PCs to a version that includes this template before selecting it.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('All PCs updated')),
+          ]));
+      if (confirmed != true || !mounted) return;
+    } else if (WindowsDocumentTemplates.supportsPlain(kind)) {
       final preview = WindowsDocumentTemplates.financialKind(kind)
         ? await WindowsDocumentTemplates._selected(kind,sample,selectionOverride:value,printOnly:true)
         : await WindowsDocumentTemplates.renderTemplate(kind,index,sample);
@@ -1699,7 +1719,7 @@ class _SchoolDocumentTemplatesScreenState
                 child: OutlinedButton.icon(
                   onPressed: _loading || _openingDesigner ? null : _openBulk,
                   icon: const Icon(Icons.print),
-                  label: const Text('Class bulk front/back PDF'),
+                  label: const Text('Class bulk ID Cards'),
                 ),
               ),
             const SizedBox(height: 10),
@@ -1848,6 +1868,8 @@ class _SchoolDocumentTemplatesScreenState
                         Text(
                           i < 0
                               ? 'No decorative template'
+                              : entry?.id == greenBlueStudentTemplateId
+                              ? 'Front only • 85.6 × 54.1 mm'
                               : portrait
                               ? 'Front | Back • each 54 × 85.6 mm'
                               : _kind.endsWith('Id')

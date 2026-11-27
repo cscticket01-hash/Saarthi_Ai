@@ -50,9 +50,10 @@
       "width": 15,
       "height": 123,
       "fontSize": 10,
-      "minFontSize": 7,
+      "minFontSize": 6,
       "label": "",
-      "rotation": -90
+      "rotation": -90,
+      "overflow": "error"
     },
     {
       "key": "qr",

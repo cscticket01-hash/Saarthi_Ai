@@ -17,6 +17,7 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'id_card_catalog.dart';
+import 'green_blue_student_uid.dart';
 import 'id_card_designer.dart';
 import 'id_card_designer_screen.dart';
 import 'id_card_draft_storage_io.dart';
@@ -120,7 +121,9 @@ class WindowsIdCardDesignerEntry {
       people.docs.map((doc)=><String,dynamic>{...doc.data(),'_recordId':doc.id}),
       school,
     )??<String,dynamic>{};
-    final data=<String,dynamic>{...profile,...first,'schoolName':profile['schoolName']??profile['name']??'','schoolAddress':profile['address']??'','class':first['studentClass']??first['class']??'','parentName':first['parentName']??first['fatherName']??''};
+    final studentData = entry.id == greenBlueStudentTemplateId ? await greenBlueStudentData(first) : first;
+    checkSchool();
+    final data=<String,dynamic>{...profile,...studentData,'schoolName':profile['schoolName']??profile['name']??'','schoolAddress':profile['address']??'','class':first['studentClass']??first['class']??'','parentName':first['parentName']??first['fatherName']??''};
     final backgrounds=await entry.backgrounds();checkSchool();
     final images=<String,Uint8List>{};
     final sources={'photo':first['photoUrl']??(first['photoBase64']==null?null:first['photoBase64'].toString().startsWith('data:image/')?first['photoBase64']:'data:image/png;base64,${first['photoBase64']}'),'logo':profile['logoUrl'],'signature':profile['principalSignatureUrl'],'seal':profile['sealUrl']};
@@ -154,7 +157,7 @@ class WindowsIdCardDesignerEntry {
           },
           onDownload:() async {
             checkSchool();
-            final bytes=await IdCardEngine.render(manifest,data,backgrounds:backgrounds,images:images,qr:qr);
+            final bytes=await IdCardEngine.renderLocalDownload(manifest,data,backgrounds:backgrounds,images:images,qr:qr);
             checkSchool();
             if(qr.isNotEmpty)await IdCardEngine.verifyExport(bytes,qr);
             checkSchool();
@@ -181,7 +184,7 @@ class WindowsIdCardDesignerEntry {
             if(!await confirm(context,'Recover previous draft','Load the retained previous revision into the editor. Current saved revision remains unchanged until Save draft.'))return null;
             checkSchool();final previous=await store.readPreviousRevision();checkSchool();return previous;
           },
-          onApply: enabled ? (draft) async {
+          onApply: enabled && entry.id != greenBlueStudentTemplateId ? (draft) async {
             checkSchool();await store.saveDraft(draft);await reviewBeforeApply(draft);
             if(!context.mounted||!await confirm(context,'Apply reviewed student layout','Apply this exact saved manifest to student IDs for this school. Teacher layouts and QR credentials remain unchanged.'))return;
             checkSchool();final hash=IdCardDraftStorageIo.manifestHash(draft);

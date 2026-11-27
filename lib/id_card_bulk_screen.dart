@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:printing/printing.dart';
 import 'windows_browser_print.dart';
+import 'windows_save_pdf.dart';
+import 'id_card_catalog.dart';
 
 import 'id_card_bulk_engine.dart';
 import 'id_card_bulk_job_store.dart';
@@ -44,6 +46,15 @@ class _BulkState extends State<IdCardBulkScreen> {
   Future<void> preview(Uint8List bytes) async {
     if(!mounted||!active())return;await Navigator.of(context).push<void>(MaterialPageRoute(builder:(_)=>_OriginGuardedPdf(source:widget.source,bytes:bytes)));
   }
+  Future<void> showExport(IdCardBulkResult result) async {
+    widget.source.ensureActive();
+    if (!mounted || !active()) return;
+    if (result.manifest['templateId'] == IdCardCatalogEntry.greenBlueId) {
+      await WindowsSavePdf.save(result.pdf, 'student-id-cards.pdf');
+    } else {
+      await preview(result.pdf);
+    }
+  }
   Future<void> generate() async {
     if(busy||classId==null||selected.isEmpty||!active())return;
     if(!await confirm('Review bulk export','Prepare ${selected.length} selected students from $classId. Existing QR credentials are reused. Legacy references do not prove active/revocation status. No new card is issued.'))return;
@@ -60,7 +71,7 @@ class _BulkState extends State<IdCardBulkScreen> {
       widget.source.ensureActive();
       if(mounted)setState(()=>phase='Rendering exact saved selection');
       final result=await widget.store.resumeAndRender(job,isCancelled:()=>cancel,onProgress:progress);
-      widget.source.ensureActive();await reloadJobs();await preview(result.pdf);
+      widget.source.ensureActive();await reloadJobs();await showExport(result);
     }catch(e){if(mounted)setState(()=>error='$e');}
     finally{if(mounted)setState(()=>busy=false);}
   }
@@ -75,7 +86,7 @@ class _BulkState extends State<IdCardBulkScreen> {
     } catch(e) {if(mounted)setState(()=>error='$e');return;}
     if(!mounted||!active())return;
     setState((){busy=true;cancel=false;error=null;phase='Full rerender of exact saved selection, or verified completed output';});
-    try{widget.source.ensureActive();final result=await widget.store.resumeAndRender(job['jobId'].toString(),isCancelled:()=>cancel,onProgress:progress);widget.source.ensureActive();await reloadJobs();await preview(result.pdf);}
+    try{widget.source.ensureActive();final result=await widget.store.resumeAndRender(job['jobId'].toString(),isCancelled:()=>cancel,onProgress:progress);widget.source.ensureActive();await reloadJobs();await showExport(result);}
     catch(e){if(mounted)setState(()=>error='$e');}
     finally{if(mounted)setState(()=>busy=false);}
   }
@@ -88,15 +99,15 @@ class _BulkState extends State<IdCardBulkScreen> {
       DropdownButton<String>(hint:const Text('Choose class'),value:classId,items:widget.source.classes.map((c)=>DropdownMenuItem(value:c,child:Text(c))).toList(),onChanged:busy?null:(v)=>setState((){classId=v;selected={};findings=[];})),
       Text('${selected.length} selected • maximum 500 per saved job'),
       Wrap(spacing:8,children:[TextButton(onPressed:busy||rows.length>500?null:()=>setState(()=>selected=rows.map((r)=>r['_recordId'].toString()).toSet()),child:const Text('Select class')),TextButton(onPressed:busy?null:()=>setState(()=>selected={}),child:const Text('Clear'))]),
-      DropdownButton<IdCardBackPlacement>(value:backPlacement,items:IdCardBackPlacement.values.map((m)=>DropdownMenuItem(value:m,child:Text(m==IdCardBackPlacement.mirrorColumns?'Back: mirror columns':m==IdCardBackPlacement.mirrorRows?'Back: mirror rows':'Back: same positions'))).toList(),onChanged:busy?null:(v)=>setState(()=>backPlacement=v!)),
+      if (widget.template.hasBack) DropdownButton<IdCardBackPlacement>(value:backPlacement,items:IdCardBackPlacement.values.map((m)=>DropdownMenuItem(value:m,child:Text(m==IdCardBackPlacement.mirrorColumns?'Back: mirror columns':m==IdCardBackPlacement.mirrorRows?'Back: mirror rows':'Back: same positions'))).toList(),onChanged:busy?null:(v)=>setState(()=>backPlacement=v!)),
       CheckboxListTile(value:allowMissingPhotos,onChanged:busy?null:(v)=>setState(()=>allowMissingPhotos=v??false),title:const Text('Allow missing optional photos after review')),
       if(error!=null)Text(error!,style:TextStyle(color:Theme.of(context).colorScheme.error)),
       if(busy)...[Text('$phase • $completed / $total'),LinearProgressIndicator(value:total>0?completed/total:null),TextButton(onPressed:()=>setState(()=>cancel=true),child:Text(cancel?'Stopping at safe boundary…':'Cancel and retain saved job'))],
-      FilledButton.icon(onPressed:busy||selected.isEmpty?null:generate,icon:const Icon(Icons.picture_as_pdf),label:const Text('Review and generate front/back PDF')),
+      FilledButton.icon(onPressed:busy||selected.isEmpty?null:generate,icon:const Icon(Icons.picture_as_pdf),label:Text(widget.template.id == IdCardCatalogEntry.greenBlueId ? 'Download ID Cards PDF' : 'Review and generate front/back PDF')),
       for(final finding in findings)Text('${finding['studentId']}: ${finding['code']} (${finding['severity']})'),
       for(final row in rows)CheckboxListTile(value:selected.contains(row['_recordId']),title:Text((row['name']??row['_recordId']).toString()),subtitle:Text('Roll ${row['rollNo']??''}'),onChanged:busy?null:(v)=>setState((){final id=row['_recordId'].toString();if(v==true&&selected.length<500)selected.add(id);else if(v!=true)selected.remove(id);})),
       const Divider(),const Text('Saved jobs and verified outputs'),
-      for(final job in jobs)ListTile(title:Text('${job['count']} students • ${job['status']}'),subtitle:Text('${job['jobId']} • ${job['protection']}'),trailing:TextButton(onPressed:busy?null:()=>resume(job),child:const Text('Resume / preview'))),
+      for(final job in jobs)ListTile(title:Text('${job['count']} students • ${job['status']}'),subtitle:Text('${job['jobId']} • ${job['protection']}'),trailing:TextButton(onPressed:busy?null:()=>resume(job),child:const Text('Resume / download or preview'))),
     ])));
   }
 }
