@@ -33,7 +33,7 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
       for(final item in (page['imageCandidates'] as List? ?? const [])){
         final r=Map<String,dynamic>.from(item as Map);
         final role=r['suggestedRole'];
-        slots.add(withMask({...r,'key':GlobalIdCardReview.imageFields.contains(role)||role=='qr'?role:''}));
+        slots.add(withMask({...r,'key':r['roleConfidence']!='low'&&(GlobalIdCardReview.imageFields.contains(role)||role=='qr')?role:''}));
       }
     }
     GlobalIdCardReview.suggestQr(pages,slots,images);
@@ -116,6 +116,8 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
               onChanged:busy?null:(v)=>setState(()=>row['key']=v??''))),
             IconButton(tooltip:'Remove incorrect candidate',onPressed:busy?null:()=>setState(()=>slots.remove(row)),icon:const Icon(Icons.close)),
           ]),
+          if(row['key']==''&&row['roleConfidence']=='low')
+            Text('Possible role from layout: ${row['suggestedRole']=='__static'?'static decoration':row['suggestedRole']}. Confirm the role before continuing.'),
           if(row['key']!='__static')Wrap(spacing:8,runSpacing:8,children:[
             for(final key in ['x','y','width','height'])number(row,key),
             if(row.containsKey('sample_x'))...[
@@ -125,7 +127,20 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
             if(GlobalIdCardReview.textFields.contains(row['key']))...[
               number(row,'fontSize'),
               FilterChip(label:const Text('Bold'),selected:row['bold']==true,onSelected:busy?null:(v)=>setState(()=>row['bold']=v)),
-              if(row['sourceFont']!=null)Text('Source: ${row['sourceFont']} • output uses bundled DejaVu/Noto'),
+              Text(row['sourceFont']==null
+                ? 'Source font could not be verified. Review the bundled DejaVu/Noto output.'
+                : 'Detected source font: ${row['sourceFont']}. Output uses the bundled DejaVu/Noto fonts. Review the rendered text.'),
+              if(row['sourceItalic']==true)
+                const Text('The source uses italic text. Review the upright fallback before publishing.'),
+              DropdownButton<String>(
+                value: row['align'] as String? ?? 'left',
+                items: const [
+                  DropdownMenuItem(value:'left',child:Text('Align left')),
+                  DropdownMenuItem(value:'center',child:Text('Align center')),
+                  DropdownMenuItem(value:'right',child:Text('Align right')),
+                ],
+                onChanged:busy?null:(value)=>setState(()=>row['align']=value),
+              ),
               SizedBox(width:110,child:TextFormField(initialValue:row['textColor']?.toString()??'#000000',decoration:const InputDecoration(labelText:'Text colour'),
                 onChanged:(v)=>row['textColor']=v)),
               FilterChip(label:const Text('Wrap'),selected:row['wrap']==true,onSelected:busy?null:(v)=>setState(()=>row['wrap']=v)),

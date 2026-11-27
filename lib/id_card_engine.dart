@@ -329,7 +329,8 @@ class IdCardEngine {
     );
     final output = await pdf.save();
     if (printOnly) return SchoolMediaBudgets.verifyPrintPdf(output);
-    if (!useCompactVectorFont && output.length > SchoolMediaBudgets.idCard) {
+    if (!IdCardCatalog.isGlobalId(template.id) &&
+        !useCompactVectorFont && output.length > SchoolMediaBudgets.idCard) {
       // Original catalog font wins when it fits. Only ASCII-only oversized
       // cards retry with a non-embedded vector font; no QR/text rasterization,
       // geometry shift or loss of Indic glyphs.

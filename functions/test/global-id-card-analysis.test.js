@@ -43,3 +43,21 @@ test('reserved sample phrase maps label-free name without exposing the sample st
  const xml='<page width="242" height="153"><line><word xMin="10" yMin="20" xMax="30" yMax="30">Sample</word><word xMin="31" yMin="20" xMax="55" yMax="30">Student</word><word xMin="56" yMin="20" xMax="75" yMax="30">Name</word></line></page>';
  const page=parseCandidates(xml)[0];assert.equal(page.candidates[0].key,'name');assert.equal(page.candidates[0].evidence,'reserved_sample_phrase');assert.equal(JSON.stringify(page).includes('Student'),false);
 });
+
+test('unique unlabeled layout suggestions stay unclassified and ambiguous roles stay unset',()=>{
+ const {enrichCandidates}=require('../global-id-card-analysis');
+ const photo={x:20,y:40,width:60,height:70,role:'unclassified',reviewRequired:true};
+ const page={canvasWidth:240,canvasHeight:150,candidates:[{key:'name',x:85,y:70,width:50,height:10}],
+  imageCandidates:[photo,{x:8,y:8,width:30,height:30},{x:25,y:116,width:62,height:14},
+   {x:180,y:103,width:28,height:28},{x:0,y:0,width:240,height:150}]};
+ const xml='<page width="240" height="150"><text left="48" top="14" width="65" height="10">Sample School</text></page>';
+ enrichCandidates(xml,[page]);
+ assert.deepEqual(page.imageCandidates.map(r=>r.suggestedRole),['photo','logo','signature','seal','__static']);
+ assert.ok(page.imageCandidates.every(r=>r.roleConfidence==='low'));
+ assert.equal(photo.role,'unclassified');
+ assert.equal(photo.reviewRequired,true);
+ delete photo.suggestedRole;
+ page.imageCandidates.push({x:142,y:40,width:60,height:70});
+ enrichCandidates(xml,[page]);
+ assert.equal(photo.suggestedRole,undefined);
+});

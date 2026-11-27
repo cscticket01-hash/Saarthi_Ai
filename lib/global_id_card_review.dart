@@ -101,10 +101,10 @@ class GlobalIdCardReview {
   /// differ from the filled source only inside reviewed sample masks.
   /// This is a fidelity check, not proof all private data was removed.
   static Uint8List verifyCleanCompanion(Uint8List filled,Uint8List clean,IdCardManifest manifest,String side,List<Map<String,dynamic>> masks){
-    if(filled.length>8*1024*1024||clean.length>8*1024*1024)throw const FormatException('Companion exceeds 8 MiB.');
+    if(filled.length>8*1024*1024||clean.length>8*1024*1024)throw const FormatException('Clean artwork exceeds 8 MiB.');
     final a=img.decodePng(filled),b=img.decodePng(clean);
     if(a==null||b==null||a.width!=b.width||a.height!=b.height||a.width*a.height>20000000)
-      throw const FormatException('Clean PDF raster dimensions must exactly match the filled source.');
+      throw const FormatException('Clean artwork pixel dimensions must exactly match the filled source.');
     final sx=a.width/manifest.width,sy=a.height/manifest.height;
     if((a.width/a.height-manifest.width/manifest.height).abs()>.01)
       throw const FormatException('Companion aspect ratio differs.');
@@ -124,10 +124,10 @@ class GlobalIdCardReview {
       final p=source.getPixel(x,y),q=target.getPixel(x,y);
       final changed=(p.r-q.r).abs()>2||(p.g-q.g).abs()>2||(p.b-q.b).abs()>2||(p.a-q.a).abs()>2;
       if(!changed)continue;
-      if(allowed[y*source.width+x]==0)throw const FormatException('Clean PDF changes artwork outside the sample removal regions. Review masks or use the matching clean original.');
+      if(allowed[y*source.width+x]==0)throw const FormatException('Clean artwork changes pixels outside the sample removal regions. Review masks or use the matching clean original.');
       changedInside=true;
     }
-    if(!changedInside&&masks.any((r)=>r['side']==side))throw const FormatException('Clean PDF still matches the filled sample. Verify sample removal.');
+    if(!changedInside&&masks.any((r)=>r['side']==side))throw const FormatException('Clean artwork still matches the filled sample. Verify sample removal.');
     return Uint8List.fromList(img.encodePng(target));
   }
   static Map<String,dynamic> package(String id,List<Map<String,dynamic>> pages,
@@ -148,7 +148,7 @@ class GlobalIdCardReview {
       final font=((slot['fontSize'] as num?)??math.max(6,math.min(72,((slot['height'] as num?)??12)*.8))).toDouble();
       regions.add({'key':key,'side':slot['side'],'kind':type,'x':slot['x'],'y':slot['y'],
         'width':slot['width'],'height':slot['height'],'fontSize':font,'minFontSize':6,
-        'textColor':slot['textColor']??'#000000','bold':type=='text'&&slot['bold']==true,'required':key=='name'||key=='qr',
+        'textColor':slot['textColor']??'#000000','align':slot['align']??'left','bold':type=='text'&&slot['bold']==true,'required':key=='name'||key=='qr',
         'fit':key=='photo'?'cover':'contain','shape':key=='photo'&&slot['oval']==true?'oval':'rect',
         'wrap':type=='text'&&slot['wrap']==true,'maxLines':type=='text'&&slot['wrap']==true?2:1});
     }
@@ -163,15 +163,9 @@ class GlobalIdCardReview {
       final source=rasters[side];
       if(source==null)throw const FormatException('Source page missing.');
       final companion=cleanCompanion[side],clean=cleanArtwork[side];
-      if(companion!=null){
-        backgrounds[side]=base64Encode(verifyCleanCompanion(source,companion,manifest,side,masks));
-      }else if(clean!=null){
-        if(clean.length>8*1024*1024)throw const FormatException('Clean artwork too large.');
-        final decoded=img.decodePng(clean);
-        if(decoded==null||decoded.width*decoded.height>20000000||
-           (decoded.width/decoded.height-manifest.width/manifest.height).abs()>.01)
-          throw const FormatException('Clean artwork must be PNG with the original aspect ratio.');
-        backgrounds[side]=base64Encode(Uint8List.fromList(img.encodePng(decoded)));
+      final cleanOriginal=companion??clean;
+      if(cleanOriginal!=null){
+        backgrounds[side]=base64Encode(verifyCleanCompanion(source,cleanOriginal,manifest,side,masks));
       }else{
         backgrounds[side]=base64Encode(cleanFlatRegions(source,manifest,side,allowSmoothGradient:allowSmoothGradient,sampleMasks:masks));
       }

@@ -87,8 +87,39 @@ function parseImageCandidates(xml,pages){
   return images;
  });
 }
-// Source style and explicit image-label evidence. Never return raw text,
-// source filenames, embedded font data or sample values to the catalog.
+// Layout alone can suggest a role but cannot identify the image content.
+function suggestUnlabeledImageRoles(page,texts){
+ const images=page.imageCandidates||[];
+ const roles=new Map();
+ for(const image of images){
+  if(image.suggestedRole)continue;
+  const {y,width,height}=image;
+  const fraction=width*height/(page.canvasWidth*page.canvasHeight);
+  const centerY=(y+height/2)/page.canvasHeight;
+  const ratio=width/height;
+  const hasNearbyName=page.candidates.some(r=>r.key==='name'&&
+    Math.abs(r.y+r.height/2-y-height/2)<page.canvasHeight*.24);
+  const hasHeaderText=texts.some(t=>t.y+t.height/2<page.canvasHeight*.3&&
+    Math.abs(t.y+t.height/2-y-height/2)<page.canvasHeight*.12);
+  let role;
+  if(fraction>=.72)role='__static';
+  else if(ratio>=2.5&&centerY>.63&&fraction>=.003&&fraction<=.10)role='signature';
+  else if(ratio>=.64&&ratio<=1.25){
+   if(fraction>=.08&&fraction<=.34&&hasNearbyName)role='photo';
+   else if(fraction>=.008&&fraction<=.075&&centerY<.28&&hasHeaderText)role='logo';
+   else if(fraction>=.012&&fraction<=.09&&centerY>.65)role='seal';
+  }
+  if(!role)continue;
+  if(!roles.has(role))roles.set(role,[]);
+  roles.get(role).push(image);
+ }
+ for(const [role,candidates] of roles){
+  if(candidates.length===1&&!images.some(r=>r.suggestedRole===role)){
+   Object.assign(candidates[0],{suggestedRole:role,roleEvidence:'layout_only',roleConfidence:'low'});
+  }
+ }
+}
+// Return source style and role evidence without sample values or source filenames.
 function enrichCandidates(xml,pages){
  const attr=s=>Object.fromEntries([...s.matchAll(/([A-Za-z]+)="([^"]*)"/g)].map(x=>[x[1],x[2]]));
  const blocks=[...xml.matchAll(/<page\b([^>]*)>([\s\S]*?)<\/page>/g)];
@@ -103,14 +134,14 @@ function enrichCandidates(xml,pages){
    if(!/^[A-Za-z0-9 ._-]{1,80}$/.test(family))continue;
    const size=Number(a.size)*sy;
    if(!Number.isFinite(size)||size<6||size>72||!/^#[0-9a-f]{6}$/i.test(a.color||''))continue;
-   fonts.set(a.id,{sourceFont:family,fontSize:size,textColor:a.color,bold:/bold|black|heavy|semibold/i.test(family)});
+   fonts.set(a.id,{sourceFont:family,fontSize:size,textColor:a.color,bold:/bold|black|heavy|semibold/i.test(family),sourceItalic:/italic|oblique/i.test(family)});
   }
   for(const match of block[2].matchAll(/<text\b([^>]*)>([\s\S]*?)<\/text>/g)){
    const a=attr(match[1]),x=Number(a.left)*sx,y=Number(a.top)*sy,width=Number(a.width)*sx,height=Number(a.height)*sy;
    if(![x,y,width,height].every(Number.isFinite)||x<0||y<0||width<=0||height<=0||x+width>page.canvasWidth+.5||y+height>page.canvasHeight+.5)continue;
    const text=decode(match[2].replace(/<[^>]*>/g,'')).trim().replace(/[:.]+$/,'').toLowerCase();
    const style=fonts.get(a.font);
-   texts.push({x,y,width,height,role:imageLabels.get(text),style:style?{...style,bold:style.bold||/^\s*<b>[^<]*<\/b>\s*$/.test(match[2])}:null});
+   texts.push({x,y,width,height,role:imageLabels.get(text),style:style?{...style,bold:style.bold||/^\s*<b>[^<]*<\/b>\s*$/.test(match[2]),sourceItalic:style.sourceItalic||/<i>[^<]*<\/i>/.test(match[2])}:null});
   }
   for(const r of page.candidates){
    const matches=texts.filter(t=>Math.max(0,Math.min(t.x+t.width,r.x+r.width)-Math.max(t.x,r.x))*Math.max(0,Math.min(t.y+t.height,r.y+r.height)-Math.max(t.y,r.y))>=.8*r.width*r.height);
@@ -127,7 +158,8 @@ function enrichCandidates(xml,pages){
    if(near.length===1)suggestions.push({image:near[0],role:t.role});
   }
   for(const s of suggestions)if(suggestions.filter(x=>x.image===s.image).length===1&&suggestions.filter(x=>x.role===s.role).length===1)
-    Object.assign(s.image,{suggestedRole:s.role,roleEvidence:'unique_explicit_label'});
+    Object.assign(s.image,{suggestedRole:s.role,roleEvidence:'unique_explicit_label',roleConfidence:'medium'});
+  suggestUnlabeledImageRoles(page,texts);
  }
 }
 async function analyzePdf(bytes,executable,imageExecutable){
@@ -183,15 +215,16 @@ async function renderReviewSource(bytes,pages,executable){
   return rasters;
  }finally{await rm(dir,{recursive:true,force:true});}
 }
-// A tiny fictional vector PDF for a developer-triggered runtime smoke probe.
+// A tiny fictional PDF with text and one embedded image for a developer-triggered runtime smoke probe.
 // ASCII-only, with correct byte offsets. No school data or credentials.
 function syntheticProbePdf(){
- const stream='BT /F1 10 Tf 20 90 Td (Name: Synthetic) Tj ET\n';
+ const stream='BT /F1 10 Tf 20 90 Td (Name: Synthetic) Tj ET\nq 24 0 0 18 175 30 cm /ProbeImage Do Q\n';
  const objects=['<< /Type /Catalog /Pages 2 0 R >>',
   '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-  '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 242 153] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+  '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 242 153] /Resources << /Font << /F1 4 0 R >> /XObject << /ProbeImage 6 0 R >> >> /Contents 5 0 R >>',
   '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
-  '<< /Length '+Buffer.byteLength(stream)+' >>\nstream\n'+stream+'endstream'];
+  '<< /Length '+Buffer.byteLength(stream)+' >>\nstream\n'+stream+'endstream',
+  '<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Length 3 >>\nstream\nRGB\nendstream'];
  let pdf='%PDF-1.4\n';const offsets=[0];
  for(let i=0;i<objects.length;i++){offsets.push(Buffer.byteLength(pdf));pdf+=(i+1)+' 0 obj\n'+objects[i]+'\nendobj\n';}
  const xref=Buffer.byteLength(pdf);
@@ -206,10 +239,13 @@ async function probeRuntime(analyzer,imageAnalyzer,rasterizer){
  try{
   const pdf=syntheticProbePdf(),analysis=await analyzePdf(pdf,analyzer,imageAnalyzer);
   checks.text=analysis.pages.length===1&&analysis.pages[0].candidates.some(c=>c.key==='name');
-  checks.imageGeometry=imageAnalyzer!=null&&Array.isArray(analysis.pages[0]?.imageCandidates);
+  checks.imageGeometry=analysis.pages[0].imageCandidates?.some(r=>Math.abs(r.width-24)<1&&Math.abs(r.height-18)<1)===true;
   if(rasterizer){
    const images=await renderReviewSource(pdf,analysis.pages,rasterizer);
-   checks.raster=typeof images.front==='string'&&images.front.length>32&&!images.back;
+   const png=Buffer.from(images.front,'base64');
+   const page=analysis.pages[0];
+   checks.raster=!images.back&&Math.abs(png.readUInt32BE(16)-page.printWidthMm*600/25.4)<=1&&
+    Math.abs(png.readUInt32BE(20)-page.printHeightMm*600/25.4)<=1;
   }
  }catch(_){/* Return only safe boolean evidence, not local paths or stderr. */}
  return checks;
