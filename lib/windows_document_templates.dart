@@ -221,7 +221,7 @@ class WindowsDocumentTemplates {
     await Navigator.of(context).push<void>(MaterialPageRoute(builder: (previewContext) =>
       NativeIdCardPreview(template:card.template,data:card.data,images:card.images,
         backgrounds:card.backgrounds,qr:compact,
-        onPrintDocument:hasPhoto ? (frontOnly) async {
+        onPrintDocument:hasPhoto && card.template.id != greenBlueStudentTemplateId ? (frontOnly) async {
           checkSchool();
           final bytes = await IdCardEngine.render(card.template,card.data,
             images:card.images,backgrounds:card.backgrounds,qr:compact,frontOnly:frontOnly,printOnly:true);
@@ -235,17 +235,37 @@ class WindowsDocumentTemplates {
         } : null,
         onDownload:hasPhoto ? () async {
           checkSchool();
-          final bytes = SchoolMediaBudgets.verifyGeneratedPdf(
-            kind,
-            await IdCardEngine.render(card.template, card.data,
-              images: card.images, backgrounds: card.backgrounds, qr: compact),
-          );
+          final bytes = await IdCardEngine.renderLocalDownload(card.template, card.data,
+            images: card.images, backgrounds: card.backgrounds, qr: compact);
           checkSchool();
           if (compact.isNotEmpty) await IdCardEngine.verifyExport(bytes,compact);
           checkSchool();
           await WindowsSavePdf.save(bytes,filename);
         } : null)));
     return true;
+  }
+
+  /// Student dashboard download action. Native record preview never calls this.
+  static Future<Uint8List> downloadStudentIdPdf(Map<String,dynamic> data, {required String qr}) async {
+    final db = FirebaseFirestore.instance;
+    final origin = db.activeProfileId, school = db.activeProfileIdentity['schoolSyncId'];
+    void guard() {
+      if (db.activeProfileId != origin || db.activeProfileIdentity['schoolSyncId'] != school) {
+        throw StateError('School changed; reopen the ID card.');
+      }
+    }
+    final card = await nativePersonCard('studentId', data);
+    guard();
+    if (card == null || card.images['photo']?.isNotEmpty != true) {
+      throw StateError('ID card unavailable. Verify the student photo.');
+    }
+    final compact = IdCardEngine.compactQr(qr);
+    final bytes = await IdCardEngine.renderLocalDownload(card.template, card.data,
+      images: card.images, backgrounds: card.backgrounds, qr: compact);
+    guard();
+    if (compact.isNotEmpty) await IdCardEngine.verifyExport(bytes, compact);
+    guard();
+    return bytes;
   }
 
   static Future<Map<String, dynamic>> selections() async =>
@@ -358,6 +378,9 @@ class WindowsDocumentTemplates {
       if (photo == null || photo.isEmpty) return null;
       final card = await nativePersonCard(kind,data);
       if (card != null) {
+        if (card.template.id == greenBlueStudentTemplateId) {
+          throw StateError('Use Download ID Card for the full-resolution local PDF.');
+        }
         qr = IdCardEngine.compactQr(qr);
         final bytes=await IdCardEngine.render(card.template,card.data,
           images:card.images,backgrounds:card.backgrounds,qr:qr,printOnly:printOnly);

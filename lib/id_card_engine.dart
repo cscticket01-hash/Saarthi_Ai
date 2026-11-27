@@ -234,6 +234,12 @@ class IdCardEngine {
 
   static Future<Uint8List> render(IdCardManifest template, Map<String,dynamic> data, {Map<String,Uint8List> images=const {},String qr='',Map<String,Uint8List> backgrounds=const {},bool frontOnly=false,bool printOnly=false}) => _render(template,data,images:images,qr:qr,backgrounds:backgrounds,frontOnly:frontOnly,printOnly:printOnly);
 
+  /// Explicit user-local download only; never enters the 85 KiB cloud outbox.
+  static Future<Uint8List> renderLocalDownload(IdCardManifest template, Map<String,dynamic> data, {
+    Map<String,Uint8List> images=const {}, String qr='', Map<String,Uint8List> backgrounds=const {},
+  }) => render(template, data, images:images, qr:qr, backgrounds:backgrounds,
+    printOnly:template.id == 'student-green-blue-modern-v1');
+
   static Future<Uint8List> _render(
     IdCardManifest template,
     Map<String, dynamic> data, {
@@ -248,7 +254,11 @@ class IdCardEngine {
     // Embed school-owned source backgrounds at their actual CR80 print size.
     // This is bitmap-only optimization; the original image assets, vector
     // QR, Indic text shaping and layout geometry remain unchanged.
-    final optimizedBackgrounds = <String, Uint8List>{
+    final fullResolution = printOnly && template.id == 'student-green-blue-modern-v1';
+    if (fullResolution && backgrounds['front'] == null) {
+      throw const FormatException('Original Green Blue Modern artwork is unavailable.');
+    }
+    final optimizedBackgrounds = fullResolution ? backgrounds : <String, Uint8List>{
       for (final entry in backgrounds.entries)
         entry.key: SchoolPdfMedia.cardBackground(
           entry.value, widthMm: template.printWidth,
@@ -262,7 +272,7 @@ class IdCardEngine {
       qr: qr,
       backgrounds: optimizedBackgrounds,
       font: useCompactVectorFont ? pw.Font.helvetica() : null,
-      printMediaStage: compactBitmapAssets ? 1 : 0,
+      printMediaStage: fullResolution ? 2 : compactBitmapAssets ? 1 : 0,
     );
     final pdf = pw.Document(theme: pw.ThemeData.withFont(base: prepared.font));
     final width = template.printWidth * PdfPageFormat.mm;
@@ -386,8 +396,9 @@ class PreparedIdCard {
                                 focusX: r.focusX,
                                 focusY: r.focusY,
                                 imageCache: _printImageCache,
-                                printDpi: printMediaStage == 0 ? 300 : 280,
+                                printDpi: printMediaStage == 2 ? 600 : printMediaStage == 0 ? 300 : 280,
                                 jpegQuality: printMediaStage == 0 ? 88 : 84,
+                                lossless: printMediaStage == 2,
                               )
                       : r.kind == 'qr'
                       ? qr.isEmpty

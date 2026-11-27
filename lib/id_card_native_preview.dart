@@ -160,7 +160,8 @@ class _NativeIdCardPreviewState extends State<NativeIdCardPreview> {
         const SizedBox(height: 12),
         const Text('Native visual preview. PDF export uses the verified print renderer.'),
         if (error != null) Text(error!),
-        if (widget.onPrint != null || widget.onPrintDocument != null)
+        if (widget.template.id != 'student-green-blue-modern-v1' &&
+            (widget.onPrint != null || widget.onPrintDocument != null))
           OutlinedButton.icon(
             onPressed: busy || missing.isNotEmpty ? null :
               () => runAction(() => printCards(qr), 'Print failed'),
@@ -172,7 +173,8 @@ class _NativeIdCardPreviewState extends State<NativeIdCardPreview> {
             onPressed: busy || missing.isNotEmpty ? null :
               () => runAction(widget.onDownload!, 'PDF export failed'),
             icon: const Icon(Icons.download),
-            label: const Text('Download full PDF'),
+            label: Text(widget.template.id == 'student-green-blue-modern-v1'
+                ? 'Download ID Card' : 'Download full PDF'),
           ),
       ]));
   }

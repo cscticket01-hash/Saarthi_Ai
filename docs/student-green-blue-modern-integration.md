@@ -19,3 +19,7 @@ Then append this entry to assets/id_card_catalog.json, leaving other entries int
 The renderer changes stage optional oval clipping, vertical text and confirmed student UID lookup. Without an activation and matching server assignment the entire UID area is blank. Existing geometry defaults remain unchanged.
 
 Not verified: Flutter compile, actual Windows preview/PDF geometry, UID projection sync and production activation, QR decode, bulk printing, long text and artwork redistribution licence. Master PNG stays at 600 DPI; current PDF background optimization is 300 DPI. Do not merge/release until artwork and acceptance are complete.
+
+## Full-resolution download follow-up
+
+The existing WindowsPdfGenerationPolicy.generateOnRecordSave remains false. The student dashboard and native card preview now route the explicit Download action through renderLocalDownload. For the new template it preserves the original background bytes at full resolution and uses a lossless cropped image pipeline (existing 1600px safety bound remains). The local download uses the existing bounded 80 MiB local print envelope, not the 85 KiB sync/outbox limit; no cloud budget is changed. The new template's native preview hides the separate Print action so users can print the downloaded PDF. Actual student data now includes the stable generation for UID lookup. No tests, compile or real print acceptance were run. Artwork and catalog activation remain blocked until the original PNG is present. Front-only bulk and draft designer paths still require further integration.
