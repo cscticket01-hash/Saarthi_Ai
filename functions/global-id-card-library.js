@@ -1,7 +1,7 @@
 'use strict';
 const {createHash,randomUUID}=require('node:crypto');
 const {validatePackage}=require('./global-id-card-package');
-const {analyzePdf}=require('./global-id-card-analysis');
+const {analyzePdf,renderReviewSource}=require('./global-id-card-analysis');
 const MAX_PDF_BYTES=8*1024*1024;
 const KINDS=new Set(['studentId','teacherId','otherStaffId']);
 const ID=/^gid-[a-f0-9]{32}$/;
@@ -41,7 +41,7 @@ function accessDecision(row,grant,school){
     grant.schoolId===school&&grant.templateId===row.id&&grant.version===row.version&&
     grant.source==='developer_grant';
 }
-function createGlobalIdCardLibrary({db,bucket,now=Date.now,analyzer=process.env.SAARTHI_GLOBAL_ID_PDFTOTEXT,imageAnalyzer=process.env.SAARTHI_GLOBAL_ID_PDFTOHTML}){
+function createGlobalIdCardLibrary({db,bucket,now=Date.now,analyzer=process.env.SAARTHI_GLOBAL_ID_PDFTOTEXT,imageAnalyzer=process.env.SAARTHI_GLOBAL_ID_PDFTOHTML,rasterizer=process.env.SAARTHI_GLOBAL_ID_PDFTOPPM}){
   const collection='global_id_card_library';
   const refs=id=>{if(!ID.test(id||''))invalid(400,'Invalid template identity');return db.doc(collection+'/'+id);};
   const familyRef=id=>{if(!ID.test(id||''))invalid(400,'Invalid template family');return db.doc('global_id_card_families/'+id);};
@@ -61,7 +61,7 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,analyzer=process.env.
 
   }
   async function developerAction(action,b,actor){
-    if(action==='list')return {success:true,templates:(await list()).map(publicEntry),paymentEnabled:false,storageConfigured:!!bucket,analysisConfigured:!!analyzer,imageAnalysisConfigured:!!imageAnalyzer};
+    if(action==='list')return {success:true,templates:(await list()).map(publicEntry),paymentEnabled:false,storageConfigured:!!bucket,analysisConfigured:!!analyzer,imageAnalysisConfigured:!!imageAnalyzer,reviewRasterizerConfigured:!!rasterizer};
     if(action==='upload'){
       const {name,kind,bytes,sourceSha256}=parseSource(b);
       const id='gid-'+randomUUID().replaceAll('-','');
@@ -126,6 +126,15 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,analyzer=process.env.
         tx.set(ref,{mappingState:'review_required',analysis,updatedAt:now()},{merge:true});
       });
       return {success:true,analysis,sourceSha256:row.sourceSha256};
+    }
+    if(action==='review-source'){
+      const snap=await refs(b.id).get(),row=snap.data();
+      if(!snap.exists||row.state!=='draft'||row.mappingState!=='review_required'||
+        row.sourceSha256!==b.sourceSha256||!row.analysis?.pages)invalid(409,'Analyze the current draft first');
+      const [source]=await storage().file(row.sourcePath).download();
+      if(source.length>MAX_PDF_BYTES||sha256(source)!==row.sourceSha256)invalid(503,'Source checksum failed');
+      const rasters=await renderReviewSource(source,row.analysis.pages,rasterizer);
+      return {success:true,sourceSha256:row.sourceSha256,rasters};
     }
     if(action==='publish'){
       if(b.reviewConfirmed!==true)invalid(400,'Confirm sample removal, geometry, fonts and real QR replacement');

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'platform/managed_developer_service.dart';
+import 'developer_global_id_review_editor.dart';
 
 /// Source library only. Mapping review must finish before a school can use a PDF.
 class DeveloperGlobalIdLibrary extends StatefulWidget {
@@ -10,7 +11,7 @@ class DeveloperGlobalIdLibrary extends StatefulWidget {
 }
 class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
   List<Map<String,dynamic>> rows=[];
-  bool busy=false, storageReady=false, analysisReady=false, imageAnalysisReady=false;
+  bool busy=false, storageReady=false, analysisReady=false, imageAnalysisReady=false, rasterReady=false;
   String kind='studentId';
   String? message;
   static const categories={'studentId':'Student','teacherId':'Teacher','otherStaffId':'Other Staff'};
@@ -23,7 +24,7 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
       if(!mounted)return;
       setState((){rows=(result['templates'] as List).map((v)=>Map<String,dynamic>.from(v as Map)).toList();
         storageReady=result['storageConfigured']==true;analysisReady=result['analysisConfigured']==true;
-        imageAnalysisReady=result['imageAnalysisConfigured']==true;message=null;});
+        imageAnalysisReady=result['imageAnalysisConfigured']==true;rasterReady=result['reviewRasterizerConfigured']==true;message=null;});
     }catch(e){if(mounted)setState(()=>message='Library unavailable: $e');}
     finally{if(mounted)setState(()=>busy=false);}
   }
@@ -68,7 +69,7 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
       final result=await ManagedDeveloperService.call('id-library/analyze',{'id':row['id']});
       if(!mounted)return;
       final analysis=Map<String,dynamic>.from(result['analysis'] as Map);
-      final proceed=await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(
+      final proceed=await showDialog<String>(context:context,builder:(ctx)=>AlertDialog(
         title:const Text('Mapping review required'),
         content:SizedBox(width:560,child:SingleChildScrollView(child:Column(
           crossAxisAlignment:CrossAxisAlignment.start,children:[
@@ -77,14 +78,26 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
             SelectableText(const JsonEncoder.withIndent('  ').convert(analysis)),
             const Text('Select a reviewed JSON package containing the matching manifest and clean front/back PNG artwork (base64).'),
           ]))),
-        actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Close')),
-          FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Choose reviewed package'))]));
-      if(proceed!=true||!mounted)return;
-      final file=await openFile(acceptedTypeGroups:[const XTypeGroup(label:'Reviewed package',extensions:['json'])]);
-      if(file==null||!mounted)return;
-      if(await file.length()>8*1024*1024)throw StateError('Package exceeds 8 MiB.');
-      final package=Map<String,dynamic>.from(jsonDecode(await file.readAsString()) as Map);
-      final backgrounds=Map<String,dynamic>.from(package['backgrounds'] as Map);
+        actions:[TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Close')),
+          if(rasterReady)FilledButton(onPressed:()=>Navigator.pop(ctx,'editor'),child:const Text('Open visual mapper')),
+          TextButton(onPressed:()=>Navigator.pop(ctx,'file'),child:const Text('Choose reviewed package'))]));
+      if(proceed==null||!mounted)return;
+      Map<String,dynamic>? package;
+      if(proceed=='editor'){
+        final source=await ManagedDeveloperService.call('id-library/review-source',{'id':row['id'],'sourceSha256':result['sourceSha256']});
+        if(source['sourceSha256']!=result['sourceSha256'])throw StateError('Draft source changed.');
+        if(!mounted)return;
+        package=await showDialog<Map<String,dynamic>>(context:context,barrierDismissible:false,builder:(_)=>
+          DeveloperGlobalIdReviewEditor(id:row['id'].toString(),analysis:analysis,rasters:Map<String,dynamic>.from(source['rasters'] as Map)));
+      }else{
+        final file=await openFile(acceptedTypeGroups:[const XTypeGroup(label:'Reviewed package',extensions:['json'])]);
+        if(file==null||!mounted)return;
+        if(await file.length()>8*1024*1024)throw StateError('Package exceeds 8 MiB.');
+        package=Map<String,dynamic>.from(jsonDecode(await file.readAsString()) as Map);
+      }
+      if(package==null||!mounted)return;
+      final reviewedPackage=package;
+      final backgrounds=Map<String,dynamic>.from(reviewedPackage['backgrounds'] as Map);
       if(!mounted)return;
       bool checked=false;
       final approve=await showDialog<bool>(context:context,builder:(ctx)=>StatefulBuilder(builder:(ctx,update)=>AlertDialog(
@@ -93,7 +106,7 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
           for(final side in ['front','back'])if(backgrounds[side] is String)...[
             Text(side),Image.memory(base64Decode(backgrounds[side] as String),height:180,fit:BoxFit.contain),
           ],
-          SelectableText(const JsonEncoder.withIndent('  ').convert(package['manifest'])),
+          SelectableText(const JsonEncoder.withIndent('  ').convert(reviewedPackage['manifest'])),
           CheckboxListTile(value:checked,onChanged:(v)=>update(()=>checked=v==true),
             title:const Text('I verified all sample values, photo, logo, signature, seal and QR are removed; mapping, fonts and physical size are correct.')),
         ]))),
@@ -101,7 +114,7 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
           FilledButton(onPressed:checked?()=>Navigator.pop(ctx,true):null,child:const Text('Publish free template'))])));
       if(approve!=true||!mounted)return;
       await ManagedDeveloperService.call('id-library/publish',{'id':row['id'],'sourceSha256':result['sourceSha256'],
-        'reviewConfirmed':true,'package':package});
+        'reviewConfirmed':true,'package':reviewedPackage});
     }catch(e){if(mounted)setState(()=>message='Mapping / publication failed: $e');return;}
     finally{if(mounted)setState(()=>busy=false);}
     await refresh();
@@ -150,6 +163,7 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
       if(!storageReady&&!busy)const Text('Private Firebase template storage is not configured. Upload disabled.'),
       if(storageReady&&!analysisReady)const Text('Central PDF text analysis is not configured; uploads remain private drafts.'),
       if(storageReady&&analysisReady&&!imageAnalysisReady)const Text('Image geometry analysis is not configured; manual image-slot review required.'),
+      if(storageReady&&analysisReady&&!rasterReady)const Text('Visual PDF mapper runtime not configured. Reviewed clean packages can still be submitted.'),
       if(message!=null)Text(message!,style:TextStyle(color:Theme.of(context).colorScheme.error)),
       for(final row in rows.where((r)=>r['kind']==kind))
         ListTile(title:Text('${row['name']}'),subtitle:Text('v${row['version']} • ${row['state']} • ${row['mappingState']}${row['isCurrent']==true?' • Current':''}'),

@@ -1,7 +1,7 @@
 'use strict';
 const {execFile}=require('node:child_process');
 const {promisify}=require('node:util');
-const {mkdtemp,writeFile,readFile,stat,rm}=require('node:fs/promises');
+const {mkdtemp,writeFile,readFile,stat,readdir,rm}=require('node:fs/promises');
 const {tmpdir}=require('node:os');
 const {join}=require('node:path');
 const run=promisify(execFile);
@@ -77,4 +77,31 @@ async function analyzePdf(bytes,executable,imageExecutable){
   return {pages,reviewRequired:true,warnings};
  }finally{await rm(dir,{recursive:true,force:true});}
 }
-module.exports={parseCandidates,parseImageCandidates,analyzePdf};
+// Developer-only reference raster. Never distribute this filled artwork.
+async function renderReviewSource(bytes,pages,executable){
+ if(!executable)throw Object.assign(Error('Central review rasterizer is not configured'),{status:503,publicMessage:true});
+ if(!Array.isArray(pages)||pages.length<1||pages.length>2)throw Error('Analyze source before review');
+ const dir=await mkdtemp(join(tmpdir(),'saarthi-id-review-'));
+ try{
+  const input=join(dir,'source.pdf'),prefix=join(dir,'review');
+  await writeFile(input,bytes,{mode:0o600});
+  // Explicit configured, isolated runtime. Keep original physical size.
+  await run(executable,['-f','1','-l',String(pages.length),'-r','600','-png',input,prefix],
+    {cwd:dir,timeout:20000,maxBuffer:1024*1024,windowsHide:true});
+  const names=(await readdir(dir)).filter(n=>/^review-\d+\.png$/.test(n)).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+  if(names.length!==pages.length)throw Error('Review page count mismatch');
+  const rasters={};let total=0;
+  for(let i=0;i<names.length;i++){
+   const file=join(dir,names[i]);total+=(await stat(file)).size;
+   if(total>8*1024*1024)throw Object.assign(Error('600 DPI review exceeds the 8 MiB raster budget; use reviewed artwork package'),{status:413,publicMessage:true});
+   const b=await readFile(file);
+   if(b.length<24||b.subarray(0,8).toString('hex')!=='89504e470d0a1a0a'||
+      b.readUInt32BE(16)*b.readUInt32BE(20)>20000000||
+      Math.abs(b.readUInt32BE(16)/b.readUInt32BE(20)-pages[i].canvasWidth/pages[i].canvasHeight)>.01)
+       throw Error('Review raster geometry mismatch');
+   rasters[pages[i].side]=b.toString('base64');
+  }
+  return rasters;
+ }finally{await rm(dir,{recursive:true,force:true});}
+}
+module.exports={parseCandidates,parseImageCandidates,analyzePdf,renderReviewSource};
