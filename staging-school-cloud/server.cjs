@@ -63,7 +63,8 @@ function createHandler({handle,health,allowedOrigins=[],testSchoolId=null,runtim
       // Native parts carry up to 512 KiB binary as <=700000 base64 bytes.
       // Keep ordinary JSON at 256 KiB and the existing full-upload cap unchanged.
       const nativePart=['managed/file/upload/resumable','managed/document/stage/resumable','managed/record/media/stage/resumable'].includes(body?.action)&&body.operation==='part';
-      const bodyLimit=['managed/file/upload','managed/document/stage'].includes(body?.action)?28*1024*1024:nativePart?(body.action==='managed/record/media/stage/resumable'?900000:body.action==='managed/document/stage/resumable'?700000+32768:700000+4096):256*1024;
+      const globalIdUpload=body?.action==='developer/managed/id-library/upload';
+      const bodyLimit=globalIdUpload?12*1024*1024:['managed/file/upload','managed/document/stage'].includes(body?.action)?28*1024*1024:nativePart?(body.action==='managed/record/media/stage/resumable'?900000:body.action==='managed/document/stage/resumable'?700000+32768:700000+4096):256*1024;
       if(bytes>bodyLimit||nativePart&&(typeof body.base64!=='string'||body.base64.length>700000))
         return send(413,{success:false,code:'REQUEST_TOO_LARGE',message:'Request is too large'});
       // First Windows login has no saved school ID yet. Bind its authenticated
@@ -144,6 +145,7 @@ function fromEnvironment(env) {
   const {getAuth}=runtimeRequire('firebase-admin/auth');
   const {getFirestore}=runtimeRequire('firebase-admin/firestore');
   const {getMessaging}=runtimeRequire('firebase-admin/messaging');
+  const {getStorage}=runtimeRequire('firebase-admin/storage');
   const oldCredential=JSON.parse(env.SAARTHI_FIREBASE_ADMIN_JSON || '{}');
   const {validCredential,publicWrappingKey,unwrapCredential}=require('./test-firebase-credential-envelope.cjs');
   if(!validCredential(oldCredential))throw Error('Invalid central staging credential configuration');
@@ -168,7 +170,11 @@ function fromEnvironment(env) {
   const providerPressureJournal=env.SAARTHI_SHARED_QUOTA_ENABLED==='true'
     ?require('../functions/provider-pressure-journal').createProviderPressureJournal({db,projectId:PROJECT}):null;
   const cloudflareSync=require('../functions/cloudflare-sync').createCloudflareSync({providerPressureJournal,url:env.SAARTHI_CF_SYNC_URL,key:env.SAARTHI_CF_SYNC_KEY,schools:(env.SAARTHI_CF_SYNC_SCHOOLS||'').split(',').filter(Boolean)});
-  const managed=require('../functions/managed-schools').createManagedSchools({...managedFeatures,firebaseCredentialFingerprint:adminCredentialFingerprint,liveSyncSchools:require('../functions/live-sync-rollout').liveSyncSchools(env),atomicBundleTestSchools:testSchoolId&&env.SAARTHI_ATOMIC_BUNDLE_TEST_ENABLED==='true'?[testSchoolId]:[],edgeRecordParallelism:school=>edgeRecordParallelismForSchool(env,school),repairKnowledgeOptions:{enabled:env.SAARTHI_REPAIR_KNOWLEDGE_ENABLED==='true',privateKey:env.SAARTHI_REPAIR_KNOWLEDGE_PRIVATE_KEY,keyId:env.SAARTHI_REPAIR_KNOWLEDGE_KEY_ID||'repair-v1',reportSalt:env.SAARTHI_REPAIR_KNOWLEDGE_REPORT_SALT},cloudflareAllDataEnabled:env.SAARTHI_CF_ALL_DATA_ENABLED==='true',cloudflareAtomicSmallFiles:env.SAARTHI_CF_ATOMIC_SMALL_FILES==='true'&&env.SAARTHI_CF_ALL_DATA_ENABLED==='true',providerPressureJournal,googleQuotaScopes:JSON.parse(env.SAARTHI_GOOGLE_QUOTA_SCOPES||'{}'),cloudflareSync,changeFeedIdleGraceMillis:30000,auth,db,messaging:getMessaging(app),projectId:PROJECT,encryptionKey:env.SAARTHI_MANAGED_STORAGE_KEY,
+  // Explicit opt-in bucket in the existing Firebase project; never infer a public bucket.
+  const globalIdCardBucketName=env.SAARTHI_GLOBAL_ID_CARD_BUCKET;
+  if(globalIdCardBucketName && ![PROJECT+'.appspot.com',PROJECT+'.firebasestorage.app'].includes(globalIdCardBucketName))throw Error('Invalid global ID library Firebase bucket');
+  const globalIdCardBucket=globalIdCardBucketName&&!testSchoolId?getStorage(app).bucket(globalIdCardBucketName):null;
+  const managed=require('../functions/managed-schools').createManagedSchools({globalIdCardBucket,...managedFeatures,firebaseCredentialFingerprint:adminCredentialFingerprint,liveSyncSchools:require('../functions/live-sync-rollout').liveSyncSchools(env),atomicBundleTestSchools:testSchoolId&&env.SAARTHI_ATOMIC_BUNDLE_TEST_ENABLED==='true'?[testSchoolId]:[],edgeRecordParallelism:school=>edgeRecordParallelismForSchool(env,school),repairKnowledgeOptions:{enabled:env.SAARTHI_REPAIR_KNOWLEDGE_ENABLED==='true',privateKey:env.SAARTHI_REPAIR_KNOWLEDGE_PRIVATE_KEY,keyId:env.SAARTHI_REPAIR_KNOWLEDGE_KEY_ID||'repair-v1',reportSalt:env.SAARTHI_REPAIR_KNOWLEDGE_REPORT_SALT},cloudflareAllDataEnabled:env.SAARTHI_CF_ALL_DATA_ENABLED==='true',cloudflareAtomicSmallFiles:env.SAARTHI_CF_ATOMIC_SMALL_FILES==='true'&&env.SAARTHI_CF_ALL_DATA_ENABLED==='true',providerPressureJournal,googleQuotaScopes:JSON.parse(env.SAARTHI_GOOGLE_QUOTA_SCOPES||'{}'),cloudflareSync,changeFeedIdleGraceMillis:30000,auth,db,messaging:getMessaging(app),projectId:PROJECT,encryptionKey:env.SAARTHI_MANAGED_STORAGE_KEY,
     ...(testSchoolId?{attendanceCollection:'attendance_test_outbox',attendanceStore:require('../functions/attendance-queue').firestoreAttendanceStore(db,{schoolId:testSchoolId,collectionName:'attendance_test_outbox'})}:{}),
     monitor:require('../functions/managed-monitor').createMonitor({credential:app.options.credential,projectId:PROJECT}),
     cloudflareMonitor:require('../functions/cloudflare-monitor').createCloudflareMonitor({
