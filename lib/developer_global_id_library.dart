@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'platform/managed_developer_service.dart';
@@ -106,7 +107,14 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
         if(source['sourceSha256']!=result['sourceSha256'])throw StateError('Draft source changed.');
         if(!mounted)return;
         package=await showDialog<Map<String,dynamic>>(context:context,barrierDismissible:false,builder:(_)=>
-          DeveloperGlobalIdReviewEditor(id:row['id'].toString(),analysis:analysis,rasters:Map<String,dynamic>.from(source['rasters'] as Map)));
+          DeveloperGlobalIdReviewEditor(id:row['id'].toString(),analysis:analysis,rasters:Map<String,dynamic>.from(source['rasters'] as Map),
+            loadCleanPdf:(Uint8List bytes) async{
+              final reply=await ManagedDeveloperService.call('id-library/review-clean-pdf',{'id':row['id'],'sourceSha256':result['sourceSha256'],
+                'syntheticSampleConfirmed':true,'pdfBase64':base64Encode(bytes)});
+              if(reply['sourceSha256']!=result['sourceSha256'])throw StateError('Draft source changed.');
+              final raw=Map<String,dynamic>.from(reply['rasters'] as Map);
+              return {for(final e in raw.entries)e.key:base64Decode(e.value as String)};
+            }));
       }else{
         final file=await openFile(acceptedTypeGroups:[const XTypeGroup(label:'Reviewed package',extensions:['json'])]);
         if(file==null||!mounted)return;

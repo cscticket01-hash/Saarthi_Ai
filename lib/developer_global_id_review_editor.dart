@@ -5,9 +5,10 @@ import 'package:file_selector/file_selector.dart';
 import 'global_id_card_review.dart';
 
 class DeveloperGlobalIdReviewEditor extends StatefulWidget {
-  const DeveloperGlobalIdReviewEditor({super.key,required this.id,required this.analysis,required this.rasters});
+  const DeveloperGlobalIdReviewEditor({super.key,required this.id,required this.analysis,required this.rasters,this.loadCleanPdf});
   final String id;
   final Map<String,dynamic> analysis,rasters;
+  final Future<Map<String,Uint8List>> Function(Uint8List)? loadCleanPdf;
   @override State<DeveloperGlobalIdReviewEditor> createState()=>_ReviewState();
 }
 class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
@@ -18,6 +19,7 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
   String? error;
   bool busy=false,allowSmoothGradient=false;
   final cleanArtwork=<String,Uint8List>{};
+  final cleanCompanion=<String,Uint8List>{};
   Map<String,dynamic> withMask(Map<String,dynamic> row)=>{...row,for(final k in ['x','y','width','height'])'sample_$k':row[k]};
   @override void initState(){
     super.initState();
@@ -38,6 +40,22 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
   }
   Map<String,dynamic> get page=>pages.firstWhere((p)=>p['side']==side);
   double n(Map<String,dynamic> row,String key)=>(row[key] as num?)?.toDouble()??0;
+  Future<void> chooseCleanPdf() async{
+    if(busy||widget.loadCleanPdf==null)return;
+    final picked=await openFile(acceptedTypeGroups:[const XTypeGroup(label:'Clean companion PDF',extensions:['pdf'],mimeTypes:['application/pdf'])]);
+    if(picked==null||!mounted)return;
+    setState((){busy=true;error=null;});
+    try{
+      if(await picked.length()>8*1024*1024)throw const FormatException('PDF exceeds 8 MiB');
+      final bytes=await picked.readAsBytes();
+      if(bytes.length>8*1024*1024)throw const FormatException('PDF exceeds 8 MiB');
+      final result=await widget.loadCleanPdf!(bytes);
+      if(!mounted)return;
+      if(result.length!=images.length||!images.keys.every(result.containsKey))throw const FormatException('Companion sides differ.');
+      setState((){cleanCompanion.clear();cleanCompanion.addAll(result);cleanArtwork.clear();});
+    }catch(e){if(mounted)setState(()=>error=e.toString());}
+    finally{if(mounted)setState(()=>busy=false);}
+  }
   Future<void> chooseCleanArtwork() async{
     if(busy)return;
     final target=side;
@@ -47,7 +65,7 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
     final bytes=await picked.readAsBytes();
     if(!mounted)return;
     if(bytes.length>8*1024*1024){setState(()=>error='Clean PNG exceeds 8 MiB');return;}
-    setState(()=>cleanArtwork[target]=bytes);
+    setState((){cleanCompanion.remove(target);cleanArtwork[target]=bytes;});
   }
   Future<void> buildPackage() async{
     if(busy)return;
@@ -55,7 +73,7 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
     try{
       // Render a frame before the bounded synchronous PNG preparation.
       await Future<void>.delayed(Duration.zero);
-      final result=GlobalIdCardReview.package(widget.id,pages,slots,images,allowSmoothGradient:allowSmoothGradient,cleanArtwork:cleanArtwork);
+      final result=GlobalIdCardReview.package(widget.id,pages,slots,images,allowSmoothGradient:allowSmoothGradient,cleanArtwork:cleanArtwork,cleanCompanion:cleanCompanion);
       if(mounted)Navigator.pop(context,result);
     }catch(e){if(mounted)setState(()=>error=e.toString());}
     finally{if(mounted)setState(()=>busy=false);}
@@ -84,6 +102,8 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
         ]))),
         const SizedBox(height:8),
         CheckboxListTile(value:allowSmoothGradient,onChanged:busy?null:(v)=>setState(()=>allowSmoothGradient=v==true),title:const Text('Try smooth gradient cleanup (review required)')),
+        if(widget.loadCleanPdf!=null)TextButton.icon(onPressed:busy?null:chooseCleanPdf,icon:const Icon(Icons.picture_as_pdf),label:const Text('Use matching clean original PDF (preserve complex artwork)')),
+        if(cleanCompanion[side]!=null)...[Image.memory(cleanCompanion[side]!,height:120,fit:BoxFit.contain),const Text('Companion will be compared against the filled source outside all sample masks.'),TextButton(onPressed:busy?null:()=>setState(()=>cleanCompanion.clear()),child:const Text('Remove clean PDF companion'))],
         TextButton.icon(onPressed:busy?null:chooseCleanArtwork,icon:const Icon(Icons.image),label:Text(cleanArtwork.containsKey(side)?'Replace clean $side PNG':'Use clean original $side PNG')),
         if(cleanArtwork[side]!=null)...[Image.memory(cleanArtwork[side]!,height:120,fit:BoxFit.contain),TextButton(onPressed:busy?null:()=>setState(()=>cleanArtwork.remove(side)),child:const Text('Remove clean artwork override'))],
         Text('${page['printWidthMm']} × ${page['printHeightMm']} mm • original PDF geometry'),

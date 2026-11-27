@@ -214,4 +214,15 @@ async function probeRuntime(analyzer,imageAnalyzer,rasterizer){
  }catch(_){/* Return only safe boolean evidence, not local paths or stderr. */}
  return checks;
 }
-module.exports={parseCandidates,parseImageCandidates,enrichCandidates,analyzePdf,renderReviewSource,syntheticProbePdf,probeRuntime};
+// Clean companion PDF: preserve original vector artwork before rasterization.
+async function renderCleanCompanion(bytes,sourcePages,analyzer,rasterizer){
+ const analysis=await analyzePdf(bytes,analyzer,null);
+ if(analysis.pages.length!==sourcePages.length)throw Object.assign(Error('Clean PDF side count differs from source'),{status:400,publicMessage:true});
+ for(let i=0;i<sourcePages.length;i++){
+  const a=analysis.pages[i],b=sourcePages[i];
+  if(a.side!==b.side||Math.abs(a.printWidthMm-b.printWidthMm)>.05||Math.abs(a.printHeightMm-b.printHeightMm)>.05)
+   throw Object.assign(Error('Clean PDF dimensions differ from source'),{status:400,publicMessage:true});
+ }
+ return renderReviewSource(bytes,sourcePages,rasterizer);
+}
+module.exports={parseCandidates,parseImageCandidates,enrichCandidates,analyzePdf,renderReviewSource,syntheticProbePdf,probeRuntime,renderCleanCompanion};

@@ -97,8 +97,41 @@ class GlobalIdCardReview {
     }
     return Uint8List.fromList(img.encodePng(output));
   }
+  /// A clean companion must have the same exact rendered pixel grid, and
+  /// differ from the filled source only inside reviewed sample masks.
+  /// This is a fidelity check, not proof all private data was removed.
+  static Uint8List verifyCleanCompanion(Uint8List filled,Uint8List clean,IdCardManifest manifest,String side,List<Map<String,dynamic>> masks){
+    if(filled.length>8*1024*1024||clean.length>8*1024*1024)throw const FormatException('Companion exceeds 8 MiB.');
+    final a=img.decodePng(filled),b=img.decodePng(clean);
+    if(a==null||b==null||a.width!=b.width||a.height!=b.height||a.width*a.height>20000000)
+      throw const FormatException('Clean PDF raster dimensions must exactly match the filled source.');
+    final sx=a.width/manifest.width,sy=a.height/manifest.height;
+    if((a.width/a.height-manifest.width/manifest.height).abs()>.01)
+      throw const FormatException('Companion aspect ratio differs.');
+    // A one-byte per-pixel mask avoids O(pixels * regions). A 20MP limit
+    // bounds additional memory. Only reviewed sample rectangles may differ.
+    final allowed=Uint8List(a.width*a.height);
+    for(final r in masks.where((r)=>r['side']==side)){
+      final x=(r['x'] as num).toDouble(),y=(r['y'] as num).toDouble(),w=(r['width'] as num).toDouble(),h=(r['height'] as num).toDouble();
+      if(![x,y,w,h].every((v)=>v.isFinite)||x<0||y<0||w<=0||h<=0||x+w>manifest.width||y+h>manifest.height)throw const FormatException('Invalid companion mask.');
+      final l=((x*sx).floor()-2).clamp(0,a.width).toInt(),t=((y*sy).floor()-2).clamp(0,a.height).toInt();
+      final right=(((x+w)*sx).ceil()+2).clamp(0,a.width).toInt(),bottom=(((y+h)*sy).ceil()+2).clamp(0,a.height).toInt();
+      for(var yy=t;yy<bottom;yy++)allowed.fillRange(yy*a.width+l,yy*a.width+right,1);
+    }
+    final source=a.convert(format:img.Format.uint8,numChannels:4),target=b.convert(format:img.Format.uint8,numChannels:4);
+    var changedInside=false;
+    for(var y=0;y<source.height;y++)for(var x=0;x<source.width;x++){
+      final p=source.getPixel(x,y),q=target.getPixel(x,y);
+      final changed=(p.r-q.r).abs()>2||(p.g-q.g).abs()>2||(p.b-q.b).abs()>2||(p.a-q.a).abs()>2;
+      if(!changed)continue;
+      if(allowed[y*source.width+x]==0)throw const FormatException('Clean PDF changes artwork outside the sample removal regions. Review masks or use the matching clean original.');
+      changedInside=true;
+    }
+    if(!changedInside&&masks.any((r)=>r['side']==side))throw const FormatException('Clean PDF still matches the filled sample. Verify sample removal.');
+    return Uint8List.fromList(img.encodePng(target));
+  }
   static Map<String,dynamic> package(String id,List<Map<String,dynamic>> pages,
-      List<Map<String,dynamic>> slots,Map<String,Uint8List> rasters,{bool allowSmoothGradient=false,Map<String,Uint8List> cleanArtwork=const {}}){
+      List<Map<String,dynamic>> slots,Map<String,Uint8List> rasters,{bool allowSmoothGradient=false,Map<String,Uint8List> cleanArtwork=const {},Map<String,Uint8List> cleanCompanion=const {}}){
     if(pages.isEmpty||pages.length>2||slots.length>128)throw const FormatException('Invalid review pages or slot count.');
     final first=pages.first;
     final w=(first['canvasWidth'] as num).toDouble(),h=(first['canvasHeight'] as num).toDouble();
@@ -129,8 +162,10 @@ class GlobalIdCardReview {
     for(final side in ['front',if(manifest.hasBack)'back']){
       final source=rasters[side];
       if(source==null)throw const FormatException('Source page missing.');
-      final clean=cleanArtwork[side];
-      if(clean!=null){
+      final companion=cleanCompanion[side],clean=cleanArtwork[side];
+      if(companion!=null){
+        backgrounds[side]=base64Encode(verifyCleanCompanion(source,companion,manifest,side,masks));
+      }else if(clean!=null){
         if(clean.length>8*1024*1024)throw const FormatException('Clean artwork too large.');
         final decoded=img.decodePng(clean);
         if(decoded==null||decoded.width*decoded.height>20000000||

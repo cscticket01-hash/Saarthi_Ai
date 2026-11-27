@@ -1,7 +1,7 @@
 'use strict';
 const {createHash,randomUUID}=require('node:crypto');
 const {validatePackage,verifySourceGeometry}=require('./global-id-card-package');
-const {analyzePdf,renderReviewSource,probeRuntime}=require('./global-id-card-analysis');
+const {analyzePdf,renderReviewSource,probeRuntime,renderCleanCompanion}=require('./global-id-card-analysis');
 const MAX_PDF_BYTES=8*1024*1024;
 const KINDS=new Set(['studentId','teacherId','otherStaffId']);
 const ID=/^gid-[a-f0-9]{32}$/;
@@ -170,6 +170,19 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
       const [source]=await (await storage()).file(row.sourcePath).download();
       if(source.length>MAX_PDF_BYTES||sha256(source)!==row.sourceSha256)invalid(503,'Source checksum failed');
       const rasters=await renderReviewSource(source,row.analysis.pages,rasterizer);
+      return {success:true,sourceSha256:row.sourceSha256,rasters};
+    }
+    if(action==='review-clean-pdf'){
+      // Companion files are developer-only, processed transiently, and never
+      // distributed as PDFs. The immutable filled source is unchanged.
+      const snap=await refs(b.id).get(),row=snap.data();
+      if(!snap.exists||row.state!=='draft'||row.mappingState!=='review_required'||
+         row.sourceSha256!==b.sourceSha256||!row.analysis?.pages)invalid(409,'Analyze the current draft first');
+      await storage();
+      const {bytes}=parseSource({name:row.name,kind:row.kind,pdfBase64:b.pdfBase64,syntheticSampleConfirmed:b.syntheticSampleConfirmed});
+      const rasters=await renderCleanCompanion(bytes,row.analysis.pages,analyzer,rasterizer);
+      const latest=await refs(b.id).get();
+      if(latest.data()?.state!=='draft'||latest.data()?.sourceSha256!==row.sourceSha256)invalid(409,'Draft changed');
       return {success:true,sourceSha256:row.sourceSha256,rasters};
     }
     if(action==='publish'){
