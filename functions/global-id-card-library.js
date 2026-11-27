@@ -63,15 +63,15 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
   let storageProbe=null;
   async function storageStatus(){
     if(!bucket)return {ready:false,reason:'not_configured'};
-    if(!policyReviewed)return {ready:false,reason:'firebase_rules_review_required'};
+    if(!policyReviewed)return {ready:false,reason:'private_storage_review_required'};
     const t=now();
     if(storageProbe&&t>=storageProbe.at&&t-storageProbe.at<60000)return storageProbe.result;
-    const result=await verifyPrivateBucket(bucket);
+    const result=await (bucket.verifyPrivateStorage?.()??verifyPrivateBucket(bucket));
     storageProbe={at:now(),result};return result;
   }
   async function storage(){
     const status=await storageStatus();
-    if(!status.ready)invalid(503,'Private Firebase template storage policy is not verified');
+    if(!status.ready)invalid(503,'Private template storage policy is not verified');
     return bucket;
   }
   async function list(){
@@ -116,7 +116,7 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
         preconditionOpts:{ifGenerationMatch:0},metadata:{contentType:'application/pdf',
           cacheControl:'private,no-store',metadata:{sha256:sourceSha256}}});
       const [readback]=await object.download();
-      if(sha256(readback)!==sourceSha256)invalid(503,'Firebase source readback failed; not registered');
+      if(sha256(readback)!==sourceSha256)invalid(503,'Source storage readback failed; not registered');
       const row={id,name,kind,familyId,previousId:parent?.id||null,version:1,state:'draft',mappingState:'awaiting_analysis',
         packageVerified:false,sourcePath,sourceSha256,sourceBytes:bytes.length,
         accessType:'free',pricePaise:0,currency:'INR',createdBy:actor.uid,
@@ -280,7 +280,7 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
       return {success:true,schoolId:member.schoolId,template:publicEntry(row),packageSha256:row.packageSha256,packageBase64:bytes.toString('base64')};
     }
     if(action!=='list')invalid(400,'Unknown global ID card operation');
-    if(!(await storageStatus()).ready)invalid(503,'Private Firebase template storage policy is not verified');
+    if(!(await storageStatus()).ready)invalid(503,'Private template storage policy is not verified');
     // Never expose raw sample PDFs, draft paths, metadata with sample values,
     // or unverified template artwork to school clients.
     const rows=(await list()).filter(r=>r.state==='published'&&r.mappingState==='verified'&&

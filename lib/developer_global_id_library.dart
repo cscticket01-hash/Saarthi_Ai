@@ -187,7 +187,7 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
       Wrap(spacing:8,children:[for(final e in categories.entries)ChoiceChip(label:Text(e.value),
         selected:kind==e.key,onSelected:busy?null:(_)=>setState(()=>kind=e.key))]),
       if(busy)const LinearProgressIndicator(),
-      if(!storageReady&&!busy)Text('Private Firebase template storage is not verified ($storageReason). Upload disabled.'),
+      if(!storageReady&&!busy)Text('Private template storage is not verified ($storageReason). Upload disabled.'),
       if(storageReady&&!analysisReady)const Text('Central PDF text analysis is not configured; uploads remain private drafts.'),
       if(storageReady&&analysisReady&&!imageAnalysisReady)const Text('Image geometry analysis is not configured; manual image-slot review required.'),
       if(storageReady&&analysisReady&&!rasterReady)const Text('Visual PDF mapper runtime not configured. Reviewed clean packages can still be submitted.'),

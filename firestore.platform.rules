@@ -165,7 +165,7 @@ service cloud.firestore {
       allow read, write: if developer() &&
         !(root in ['repair_knowledge','repair_knowledge_evidence','repair_knowledge_sources','developer_password_otp','school_app_lock_otp','platform_licence_receipts',
           'school_admin_security','school_admin_action_approvals','school_admin_mutation_approvals',
-          'global_id_card_library','global_id_card_families','global_id_card_entitlements','global_id_card_purchases']);
+          'global_id_card_library','global_id_card_storage','global_id_card_families','global_id_card_entitlements','global_id_card_purchases']);
     }
   }
 }

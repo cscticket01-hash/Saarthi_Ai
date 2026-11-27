@@ -173,7 +173,19 @@ function fromEnvironment(env) {
   // Explicit opt-in bucket in the existing Firebase project; never infer a public bucket.
   const globalIdCardBucketName=env.SAARTHI_GLOBAL_ID_CARD_BUCKET;
   if(globalIdCardBucketName && ![PROJECT+'.appspot.com',PROJECT+'.firebasestorage.app'].includes(globalIdCardBucketName))throw Error('Invalid global ID library Firebase bucket');
-  const globalIdCardBucket=globalIdCardBucketName&&!testSchoolId?getStorage(app).bucket(globalIdCardBucketName):null;
+  const r2BucketName=env.SAARTHI_GLOBAL_ID_R2_BUCKET;
+  if(r2BucketName&&globalIdCardBucketName)throw Error('Configure one Global ID Card storage provider');
+  let globalIdCardBucket=globalIdCardBucketName&&!testSchoolId?getStorage(app).bucket(globalIdCardBucketName):null;
+  if(r2BucketName&&!testSchoolId){
+    const {SAARTHI_GLOBAL_ID_R2_ACCESS_KEY_ID:accessKeyId,SAARTHI_GLOBAL_ID_R2_SECRET_ACCESS_KEY:secretAccessKey,
+      SAARTHI_GLOBAL_ID_R2_ACCOUNT_ID:accountId}=env;
+    if(!accessKeyId||!secretAccessKey)throw Error('Global ID Card R2 credentials are incomplete');
+    const {AwsClient}=runtimeRequire('aws4fetch');
+    const client=new AwsClient({accessKeyId,secretAccessKey,service:'s3',region:'auto',retries:0});
+    globalIdCardBucket=require('../functions/global-id-card-r2').createGlobalIdCardR2({
+      db,accountId,bucketName:r2BucketName,request:client.fetch.bind(client),
+    });
+  }
   const managed=require('../functions/managed-schools').createManagedSchools({globalIdCardBucket,...managedFeatures,firebaseCredentialFingerprint:adminCredentialFingerprint,liveSyncSchools:require('../functions/live-sync-rollout').liveSyncSchools(env),atomicBundleTestSchools:testSchoolId&&env.SAARTHI_ATOMIC_BUNDLE_TEST_ENABLED==='true'?[testSchoolId]:[],edgeRecordParallelism:school=>edgeRecordParallelismForSchool(env,school),repairKnowledgeOptions:{enabled:env.SAARTHI_REPAIR_KNOWLEDGE_ENABLED==='true',privateKey:env.SAARTHI_REPAIR_KNOWLEDGE_PRIVATE_KEY,keyId:env.SAARTHI_REPAIR_KNOWLEDGE_KEY_ID||'repair-v1',reportSalt:env.SAARTHI_REPAIR_KNOWLEDGE_REPORT_SALT},cloudflareAllDataEnabled:env.SAARTHI_CF_ALL_DATA_ENABLED==='true',cloudflareAtomicSmallFiles:env.SAARTHI_CF_ATOMIC_SMALL_FILES==='true'&&env.SAARTHI_CF_ALL_DATA_ENABLED==='true',providerPressureJournal,googleQuotaScopes:JSON.parse(env.SAARTHI_GOOGLE_QUOTA_SCOPES||'{}'),cloudflareSync,changeFeedIdleGraceMillis:30000,auth,db,messaging:getMessaging(app),projectId:PROJECT,encryptionKey:env.SAARTHI_MANAGED_STORAGE_KEY,
     ...(testSchoolId?{attendanceCollection:'attendance_test_outbox',attendanceStore:require('../functions/attendance-queue').firestoreAttendanceStore(db,{schoolId:testSchoolId,collectionName:'attendance_test_outbox'})}:{}),
     monitor:require('../functions/managed-monitor').createMonitor({credential:app.options.credential,projectId:PROJECT}),

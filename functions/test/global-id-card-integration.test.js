@@ -1,10 +1,11 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict');
 const {createGlobalIdCardLibrary}=require('../global-id-card-library');
+const {createGlobalIdCardR2}=require('../global-id-card-r2');
 const {syntheticProbePdf,probeRuntime}=require('../global-id-card-analysis');
 const {createHash}=require('node:crypto');
 const front='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGMwaDgAAAJUAXHIMWMAAAAAAElFTkSuQmCC';
-function fixture(){
+function fixture(useR2=false){
  const docs=new Map(),objects=new Map();
  const snapshot=path=>({exists:docs.has(path),data:()=>structuredClone(docs.get(path))});
  const db={doc:path=>({path,get:async()=>snapshot(path)}),collection:root=>({orderBy:()=>({limit:()=>({get:async()=>({docs:[...docs.keys()].filter(k=>k.startsWith(root+'/')&&k.split('/').length===2).map(snapshot)})})})}),
@@ -14,18 +15,31 @@ function fixture(){
     set:(ref,value,opts)=>changes.push(()=>docs.set(ref.path,structuredClone(opts?.merge?{...docs.get(ref.path),...value}:value)))});
    changes.forEach(apply=>apply());return result;
   }};
- const bucket={getMetadata:async()=>[{iamConfiguration:{uniformBucketLevelAccess:{enabled:true},publicAccessPrevention:'enforced'}}],
+ const firebaseBucket={getMetadata:async()=>[{iamConfiguration:{uniformBucketLevelAccess:{enabled:true},publicAccessPrevention:'enforced'}}],
   iam:{getPolicy:async()=>[{bindings:[]}]},
   file:path=>({save:async bytes=>{if(objects.has(path))throw Object.assign(Error('exists'),{code:412});objects.set(path,Buffer.from(bytes));},
    download:async()=>{if(!objects.has(path))throw Error('missing object');return [Buffer.from(objects.get(path))];}})};
+ const bucket=useR2?createGlobalIdCardR2({
+  db,accountId:'1'.repeat(32),bucketName:'saarthi-id-library-staging',
+  request:async(url,options)=>{
+   const key=new URL(url).pathname.split('/').slice(2).join('/');
+   if(options.method==='HEAD')return new Response(null,{status:200});
+   if(options.method==='GET')return objects.has(key)?new Response(objects.get(key)):new Response(null,{status:404});
+   assert.equal(options.method,'PUT');
+   assert.equal(options.headers['If-None-Match'],'*');
+   if(objects.has(key))return new Response(null,{status:412});
+   objects.set(key,Buffer.from(options.body));
+   return new Response(null,{status:200});
+  },
+ }):firebaseBucket;
  const clock=1700000000000,actor={uid:'synthetic-developer'},member={uid:'synthetic-account',schoolId:'vs-'+'1'.repeat(32),entitlement:{expiresAt:clock+3600000}};
  const library=createGlobalIdCardLibrary({db,bucket,policyReviewed:true,now:()=>clock,analyzer:null,imageAnalyzer:null,rasterizer:null});
  return {library,docs,objects,member,actor,db,bucket,clock};
 }
 function pkg(id){return {manifest:{id,version:1,canvasWidth:300,canvasHeight:300,printWidthMm:54,printHeightMm:54,
   regions:[{key:'name',side:'front',kind:'text',x:10,y:10,width:180,height:20},{key:'qr',side:'front',kind:'qr',x:10,y:100,width:80,height:80}]},backgrounds:{front}};}
-test('private upload -> review -> publish -> school refresh -> package -> revision and rollback (mock Firebase)',async()=>{
- const {library,docs,objects,actor,member}=fixture();
+for(const useR2 of [false,true])test('private upload, publish, refresh, revision and rollback (mock '+(useR2?'R2':'Firebase Storage')+')',async()=>{
+ const {library,docs,objects,actor,member}=fixture(useR2);
  const source=syntheticProbePdf(),pdfBase64=source.toString('base64');
  async function upload(kind,previousId){
   const response=await library.developerAction('upload',{name:'Synthetic design',kind,syntheticSampleConfirmed:true,pdfBase64,...(previousId?{previousId}:{})},actor);
@@ -78,4 +92,18 @@ test('unreviewed Firebase policy blocks school refresh and developer upload',asy
  const library=createGlobalIdCardLibrary({db,bucket,now:()=>clock,policyReviewed:false,analyzer:null});
  await assert.rejects(library.schoolAction('list',{},member));
  await assert.rejects(library.developerAction('upload',{name:'Synthetic',kind:'studentId',syntheticSampleConfirmed:true,pdfBase64:syntheticProbePdf().toString('base64')},actor));
+});
+
+test('R2 enforces the 2 GB reservation before writing and does not double-count retries',async()=>{
+ const {bucket,docs,objects}=fixture(true);
+ const scope='global_id_card_storage/'+'1'.repeat(32);
+ docs.set(scope,{reservedBytes:1_999_999_997});
+ const options={metadata:{contentType:'application/pdf'}};
+ const key='global-id-card-library/private/gid-'+'a'.repeat(32)+'/source.pdf';
+ await bucket.file(key).save(Buffer.from('PDF'),options);
+ await assert.rejects(bucket.file(key).save(Buffer.from('PDF'),options),{code:412});
+ assert.equal(docs.get(scope).reservedBytes,2_000_000_000);
+ const another=key.replace('a'.repeat(32),'b'.repeat(32));
+ await assert.rejects(bucket.file(another).save(Buffer.from('PDF'),options),{status:507});
+ assert.equal(objects.size,1);
 });
