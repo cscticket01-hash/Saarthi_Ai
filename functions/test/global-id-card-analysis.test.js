@@ -27,3 +27,14 @@ test('separate PDF text objects and multiple fields on one row map without leaki
  assert.deepEqual(result.map(r=>[r.key,r.x,r.width]),[['class',36,14],['rollNo',112,20]]);
  assert.equal(JSON.stringify(result).includes('Hidden'),false);
 });
+
+test('source style and unique explicit image label are suggestions without sample values',()=>{
+ const {enrichCandidates}=require('../global-id-card-analysis');
+ const page={canvasWidth:240,canvasHeight:150,candidates:[{key:'name',x:80,y:40,width:50,height:10}],imageCandidates:[{x:10,y:10,width:30,height:30,role:'unclassified'}]};
+ const xml='<page width="240" height="150"><fontspec id="0" size="10" family="ABCDEF+DejaVuSans-Bold" color="#123456"/><text left="80" top="40" width="50" height="10" font="0">Synthetic person</text><text left="10" top="42" width="30" height="8" font="0">Photo</text></page>';
+ enrichCandidates(xml,[page]);
+ assert.equal(page.candidates[0].sourceFont,'DejaVuSans-Bold');
+ assert.equal(page.candidates[0].bold,true);assert.equal(page.candidates[0].textColor,'#123456');
+ assert.equal(page.imageCandidates[0].suggestedRole,'photo');
+ assert.equal(JSON.stringify(page).includes('Synthetic person'),false);
+});

@@ -36,6 +36,7 @@ class IdCardIndicText {
     required int maxLines,
     required String align,
     int color = 0xFF000000,
+    bool bold=false,
   }) async {
     if (!needsShaping(text)) return null;
     if (text.runes.length > 400 ||
@@ -67,6 +68,7 @@ class IdCardIndicText {
             style: TextStyle(
               color: ui.Color(color),
               fontSize: font,
+              fontWeight:bold?ui.FontWeight.bold:null,
               height: 1.16,
               fontFamily: hasBengali ? bengaliFamily : devanagariFamily,
               fontFamilyFallback: const [bengaliFamily, devanagariFamily],

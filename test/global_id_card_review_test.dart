@@ -19,6 +19,19 @@ void main(){
   });
   final manifest=IdCardManifest.fromJson({'version':1,'id':'gid-test','canvasWidth':200,'canvasHeight':100,
     'printWidthMm':100,'printHeightMm':50,'regions':[{'key':'name','side':'front','kind':'text','x':40,'y':20,'width':60,'height':20}]});
+  test('smooth gradient cleanup is explicit and preserves exterior pixels',(){
+    final source=img.Image(width:400,height:200,numChannels:4);
+    for(final p in source){p..r=(p.x*.4).round()..g=(p.y*.5).round()..b=100..a=255;}
+    final expected=source.getPixel(100,50).r.toInt();
+    img.fillRect(source,x1:90,y1:45,x2:180,y2:70,color:img.ColorRgba8(255,255,255,255));
+    final bytes=Uint8List.fromList(img.encodePng(source));
+    expect(()=>GlobalIdCardReview.cleanFlatRegions(bytes,manifest,'front'),throwsFormatException);
+    final cleaned=img.decodePng(GlobalIdCardReview.cleanFlatRegions(bytes,manifest,'front',allowSmoothGradient:true))!;
+    expect(cleaned.getPixel(100,50).r,closeTo(expected,1));
+    expect(cleaned.getPixel(5,5).r,source.getPixel(5,5).r);
+    source.setPixelRgba(78,38,255,255,255,255);
+    expect(()=>GlobalIdCardReview.cleanFlatRegions(Uint8List.fromList(img.encodePng(source)),manifest,'front',allowSmoothGradient:true),throwsFormatException);
+  });
   test('flat sample region is removed without changing original or other artwork',(){
     final source=img.Image(width:400,height:200,numChannels:4);
     img.fill(source,color:img.ColorRgba8(255,255,255,255));

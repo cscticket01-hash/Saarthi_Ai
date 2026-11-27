@@ -72,6 +72,49 @@ function parseImageCandidates(xml,pages){
   return images;
  });
 }
+// Source style and explicit image-label evidence. Never return raw text,
+// source filenames, embedded font data or sample values to the catalog.
+function enrichCandidates(xml,pages){
+ const attr=s=>Object.fromEntries([...s.matchAll(/([A-Za-z]+)="([^"]*)"/g)].map(x=>[x[1],x[2]]));
+ const blocks=[...xml.matchAll(/<page\b([^>]*)>([\s\S]*?)<\/page>/g)];
+ if(blocks.length!==pages.length)return;
+ const imageLabels=new Map([['photo','photo'],['student photo','photo'],['teacher photo','photo'],['staff photo','photo'],['school logo','logo'],['logo','logo'],['signature','signature'],["principal's signature",'signature'],['principal signature','signature'],['school seal','seal'],['seal','seal'],['qr code','qr'],['qr','qr']]);
+ for(let i=0;i<blocks.length;i++){
+  const block=blocks[i],page=pages[i],a=attr(block[1]),w=Number(a.width),h=Number(a.height);
+  if(!(w>0&&h>0))continue;
+  const sx=page.canvasWidth/w,sy=page.canvasHeight/h,fonts=new Map(),texts=[];
+  for(const match of block[2].matchAll(/<fontspec\b([^>]*?)\/?\s*>/g)){
+   const a=attr(match[1]),family=String(a.family||'').replace(/^[A-Z]{6}\+/,'');
+   if(!/^[A-Za-z0-9 ._-]{1,80}$/.test(family))continue;
+   const size=Number(a.size)*sy;
+   if(!Number.isFinite(size)||size<6||size>72||!/^#[0-9a-f]{6}$/i.test(a.color||''))continue;
+   fonts.set(a.id,{sourceFont:family,fontSize:size,textColor:a.color,bold:/bold|black|heavy|semibold/i.test(family)});
+  }
+  for(const match of block[2].matchAll(/<text\b([^>]*)>([\s\S]*?)<\/text>/g)){
+   const a=attr(match[1]),x=Number(a.left)*sx,y=Number(a.top)*sy,width=Number(a.width)*sx,height=Number(a.height)*sy;
+   if(![x,y,width,height].every(Number.isFinite)||x<0||y<0||width<=0||height<=0||x+width>page.canvasWidth+.5||y+height>page.canvasHeight+.5)continue;
+   const text=decode(match[2].replace(/<[^>]*>/g,'')).trim().replace(/[:.]+$/,'').toLowerCase();
+   const style=fonts.get(a.font);
+   texts.push({x,y,width,height,role:imageLabels.get(text),style:style?{...style,bold:style.bold||/^\s*<b>[^<]*<\/b>\s*$/.test(match[2])}:null});
+  }
+  for(const r of page.candidates){
+   const matches=texts.filter(t=>Math.max(0,Math.min(t.x+t.width,r.x+r.width)-Math.max(t.x,r.x))*Math.max(0,Math.min(t.y+t.height,r.y+r.height)-Math.max(t.y,r.y))>=.8*r.width*r.height);
+   if(matches.length===1&&matches[0].style)Object.assign(r,matches[0].style);
+  }
+  const images=page.imageCandidates||[],suggestions=[];
+  for(const t of texts.filter(t=>t.role)){
+   const near=images.filter(r=>{
+    const horizontal=Math.min(t.x+t.width,r.x+r.width)-Math.max(t.x,r.x);
+    const vertical=Math.min(t.y+t.height,r.y+r.height)-Math.max(t.y,r.y);
+    const dx=Math.max(0,t.x-r.x-r.width,r.x-t.x-t.width),dy=Math.max(0,t.y-r.y-r.height,r.y-t.y-t.height);
+    return (horizontal>=Math.min(t.width,r.width)*.55&&dy<=10)||(vertical>=Math.min(t.height,r.height)*.55&&dx<=10);
+   });
+   if(near.length===1)suggestions.push({image:near[0],role:t.role});
+  }
+  for(const s of suggestions)if(suggestions.filter(x=>x.image===s.image).length===1&&suggestions.filter(x=>x.role===s.role).length===1)
+    Object.assign(s.image,{suggestedRole:s.role,roleEvidence:'unique_explicit_label'});
+ }
+}
 async function analyzePdf(bytes,executable,imageExecutable){
  if(!executable)throw Object.assign(Error('Central PDF analysis runtime is not configured'),{status:503,publicMessage:true});
  const dir=await mkdtemp(join(tmpdir(),'saarthi-id-analysis-'));
@@ -88,8 +131,10 @@ async function analyzePdf(bytes,executable,imageExecutable){
     // must be isolated with CPU/memory/disk limits before enabling either tool.
     await run(imageExecutable,['-f','1','-l','3','-xml','-zoom','1','-noroundcoord',file,output],{cwd:dir,timeout:12000,maxBuffer:1024*1024,windowsHide:true});
     if((await stat(output)).size>2*1024*1024)throw Error('Image geometry too large');
-    const images=parseImageCandidates(await readFile(output,'utf8'),pages);
+    const xml=await readFile(output,'utf8');
+    const images=parseImageCandidates(xml,pages);
     pages.forEach((page,i)=>{page.imageCandidates=images[i];});
+    enrichCandidates(xml,pages);
     warnings.push('Embedded image locations are candidates only; classify each image and check vector QR artwork.');
    }catch(_){warnings.push('Image candidate extraction unavailable; manually review every photo/logo/seal/signature/QR region.');}
   }else warnings.push('Central image candidate runtime not configured.');
@@ -123,4 +168,4 @@ async function renderReviewSource(bytes,pages,executable){
   return rasters;
  }finally{await rm(dir,{recursive:true,force:true});}
 }
-module.exports={parseCandidates,parseImageCandidates,analyzePdf,renderReviewSource};
+module.exports={parseCandidates,parseImageCandidates,enrichCandidates,analyzePdf,renderReviewSource};

@@ -57,6 +57,7 @@ Map<String, dynamic> _serializeTemplate(IdCardManifest template) => {
         if (r.shape != 'rect') 'shape': r.shape,
         if (r.rotation != 0) 'rotation': r.rotation,
         if (template.id == IdCardCatalogEntry.greenBlueId || IdCardCatalog.isGlobalId(template.id)) 'textColor': r.textColor,
+        if(IdCardCatalog.isGlobalId(template.id)) 'bold':r.bold,
         'align': r.align,
         'label': r.label,
         'required': r.isRequired,

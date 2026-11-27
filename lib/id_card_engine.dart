@@ -237,6 +237,7 @@ class IdCardEngine {
         maxLines: region.maxLines,
         align: region.align,
         color: 0xFF000000 | int.parse(region.textColor.substring(1),radix:16),
+        bold:IdCardCatalog.isGlobalId(template.id)&&region.bold,
       );
       if (rendered != null) {
         shapedText['${region.side}:${region.key}'] = rendered;
@@ -250,6 +251,8 @@ class IdCardEngine {
       Map.unmodifiable(backgrounds),
       Map.unmodifiable(shapedText),
       font ?? await loadFont(),
+      IdCardCatalog.isGlobalId(template.id)&&template.regions.any((r)=>r.kind=='text'&&r.bold)
+        ? pw.Font.ttf(await rootBundle.load('assets/id_card_bold.ttf')):null,
       printMediaStage,
     );
   }
@@ -366,6 +369,7 @@ class PreparedIdCard {
     this.backgrounds,
     this.shapedText,
     this.font,
+    this.boldFont,
     this.printMediaStage,
   );
   final IdCardManifest template;
@@ -377,6 +381,7 @@ class PreparedIdCard {
   final Map<String, pw.MemoryImage> _printImageCache = {};
   final String qr;
   final pw.Font font;
+  final pw.Font? boldFont;
   final int printMediaStage;
   pw.Widget _regionGeometry(IdCardRegion r, pw.Widget child) {
     if (r.shape == 'oval') return pw.ClipOval(child: child);
@@ -442,7 +447,7 @@ class PreparedIdCard {
                         )
                       : IdCardLayout.text(
                           '${r.label}${data[r.key] ?? ''}',
-                          font: font,
+                          font: r.bold ? (boldFont??font) : font,
                           color: PdfColor.fromHex(r.textColor),
                           fontSize: r.fontSize,
                           minFontSize: r.minFontSize,

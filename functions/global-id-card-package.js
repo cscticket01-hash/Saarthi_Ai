@@ -42,6 +42,7 @@ function validatePackage(input,id){
   keys.add(key);
   const fontSize=r.fontSize??12,minFontSize=r.minFontSize??8,padding=r.padding??0;
   const maxLines=r.maxLines??1,wrap=r.wrap===true,rotation=r.rotation??0,fit=r.fit??'contain',shape=r.shape??'rect';
+  if(r.bold!==undefined&&typeof r.bold!=='boolean')bad('Invalid font weight');
   if(!labels.has(r.label??'')||!finite(fontSize,6,72)||!finite(minFontSize,6,fontSize)||!finite(padding,0,Math.min(r.width,r.height)/2)||padding*2>=Math.min(r.width,r.height)||
    !Number.isInteger(maxLines)||maxLines<1||maxLines>12||(!wrap&&maxLines!==1)||
    ![0,-90].includes(rotation)||(rotation!==0&&r.kind!=='text')||!['rect','oval'].includes(shape)||(shape==='oval'&&r.kind!=='image')||
@@ -52,7 +53,7 @@ function validatePackage(input,id){
   if(r.key==='photo'&&(r.width*pw/w<8||r.height*ph/h<10))bad('Photo region too small');
   return {key:r.key,side:r.side,kind:r.kind,x:r.x,y:r.y,width:r.width,height:r.height,
    label:r.label??'',fontSize,minFontSize,padding,wrap,maxLines,rotation,fit,shape,align:r.align??'left',
-   overflow:r.overflow??'ellipsis',textColor:r.textColor??'#000000',focusX:r.focusX??.5,focusY:r.focusY??.35,required:r.required===true};
+   overflow:r.overflow??'ellipsis',textColor:r.textColor??'#000000',bold:r.kind==='text'&&r.bold===true,focusX:r.focusX??.5,focusY:r.focusY??.35,required:r.required===true};
  });
  if(!keys.has('front:name')||!regions.some(r=>r.key==='qr'))bad('Name and authentication QR required');
  for(let i=0;i<regions.length;i++)for(const b of regions.slice(i+1)){

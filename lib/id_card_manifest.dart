@@ -112,6 +112,7 @@ class IdCardRegion {
         label = data['label']?.toString() ?? '',
         textColor = data['textColor']?.toString() ?? '#000000',
         isRequired = data['required']==true,
+        bold = data['bold']==true,
         padding = (data['padding'] as num? ?? 0).toDouble(),
         x = (data['x'] as num).toDouble(),
         y = (data['y'] as num).toDouble(),
@@ -165,7 +166,7 @@ class IdCardRegion {
   double get contentWidth => (rotation == 0 ? width : height) - 2 * padding;
   double get contentHeight => (rotation == 0 ? height : width) - 2 * padding;
   final double x, y, width, height, fontSize, minFontSize, focusX, focusY;
-  final bool wrap, isRequired;
+  final bool wrap, isRequired, bold;
   final double padding;
   final int maxLines;
   final String overflow;
