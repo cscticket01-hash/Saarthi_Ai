@@ -25,3 +25,7 @@ Upload attempts text and optional embedded-image geometry analysis after durable
 ## Versioned library
 
 A new revision has a unique immutable catalog ID and a shared family ID. A transaction assigns monotonic version numbers; published existing revisions remain selectable and school selections stay pinned. Developer can promote or restore a verified previous revision after storage checksum readback. Archive removes that revision from the active catalog without deleting source/package bytes. Current marker is metadata only; Windows accepts v1+ and preserves existing selection IDs. Older unverified drafts cannot be promoted. Existing free policy stays unchanged. History is bounded by the current 200-row library query; pagination and retention policy are separate scalability work.
+
+## Free-only offline catalogue lease
+
+The authenticated managed school list returns account UID, server time and an expiry bounded by the school licence and 24 hours. Windows uses the existing WindowsSecureStorage wrapper to retain only authorized FREE metadata; cache scope binds local profile, school, account and endpoint. Temporary network failures may use the exact unexpired free package already downloaded and hash-verified. Authoritative denials invalidate cached metadata. No premium offline access, payment activation, or licence extension. New downloads still need connectivity. Built-in lookups do not contact the global registry. The local free lease is not cryptographically signed DRM; physical Windows testing, clock/expiry and revoke acceptance remain required.

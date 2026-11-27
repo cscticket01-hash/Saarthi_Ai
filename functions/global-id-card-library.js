@@ -54,10 +54,10 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,analyzer=process.env.
     const rows=snapshot.docs.map(doc=>doc.data());
     const families=[...new Set(rows.map(r=>r.familyId||r.id))];
     const current=new Map(await Promise.all(families.map(async id=>{
-      const s=await familyRef(id).get();return [id,s.data()?.currentId||null];
+      const s=await familyRef(id).get();return [id,s.exists?(s.data()?.currentId||null):undefined];
     })));
     return rows.map(row=>({...row,isCurrent:current.get(row.familyId||row.id)===row.id||
-      (!current.get(row.familyId||row.id)&&!row.previousId&&row.state==='published')}));
+      (current.get(row.familyId||row.id)===undefined&&!row.previousId&&row.state==='published')}));
 
   }
   async function developerAction(action,b,actor){
@@ -213,7 +213,7 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,analyzer=process.env.
       if(!snap.exists||row.version!==b.version)invalid(404,'Template version unavailable');
       const grant=row.accessType==='premium'?(await db.doc('global_id_card_entitlements/'+member.schoolId+'/templates/'+row.id).get()).data():null;
       if(!accessDecision(row,grant,member.schoolId))invalid(403,'Template access not verified');
-      if(action==='access')return {success:true,schoolId:member.schoolId,packageSha256:row.packageSha256};
+      if(action==='access')return {success:true,schoolId:member.schoolId,uid:member.uid,packageSha256:row.packageSha256};
       const [bytes]=await storage().file(row.packagePath).download();
       if(bytes.length>MAX_PDF_BYTES||sha256(bytes)!==row.packageSha256)invalid(503,'Template checksum failed');
       return {success:true,schoolId:member.schoolId,template:publicEntry(row),packageSha256:row.packageSha256,packageBase64:bytes.toString('base64')};

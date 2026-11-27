@@ -1,6 +1,11 @@
 import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:io';
+import 'dart:async';
+import 'package:http/http.dart' as http;
+import 'windows_secure_storage.dart';
+import 'windows_connect/central_school_cloud.dart';
+import 'global_id_card_offline_policy.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'package:flutter/services.dart';
@@ -114,73 +119,104 @@ class IdCardCatalog {
     return available;
   }
 
-  static Future<IdCardCatalogEntry> find(String id) async =>
-      (await load()).firstWhere(
-        (e) => e.id == id,
-        orElse: () => throw const FormatException('Unknown ID template.'),
-      );
+  static Future<IdCardCatalogEntry> find(String id) async {
+    final entries=isGlobalId(id)?await _GlobalIdCatalog.read():await (_loaded ??= _load());
+    return entries.firstWhere((e)=>e.id==id,orElse:()=>throw const FormatException('Unknown ID template.'));
+  }
 }
 
 class _GlobalIdCatalog {
   static String? _scope;
   static DateTime? _checked;
+  static int _expiresAt=0;
   static List<_GlobalIdCatalogEntry> _entries=[];
   static Future<List<_GlobalIdCatalogEntry>>? _inFlight;
+  static const _storage=WindowsSecureStorage();
+  static bool temporary(Object e)=>e is SocketException||e is TimeoutException||
+    e is http.ClientException||(e is CentralCloudException&&!e.authoritativeAccessDenial&&(e.status==429||e.status>=500));
+  static String keyFor(String scope)=>'global_id_free_catalog_v1_'+sha256.convert(utf8.encode(scope)).toString();
+  static Future<void> invalidate(String scope) async{
+    if(_scope==scope){_entries=[];_checked=null;_expiresAt=0;}
+    try{await _storage.delete(key:keyFor(scope));}catch(_){}
+  }
+  static Future<Map<String,dynamic>?> offline(String scope,String school,String uid) async{
+    try{
+      final raw=await _storage.read(key:keyFor(scope));
+      if(raw==null||raw.length>256*1024)return null;
+      final value=Map<String,dynamic>.from(jsonDecode(raw) as Map);
+      return GlobalIdCardOfflinePolicy.valid(value,school:school,uid:uid,nowMs:DateTime.now().millisecondsSinceEpoch)?value:null;
+    }catch(_){return null;}
+  }
   static Future<List<_GlobalIdCatalogEntry>> read() async {
     if(kIsWeb||defaultTargetPlatform!=TargetPlatform.windows)return [];
     final db=FirebaseFirestore.instance;
     final origin=db.activeProfileId;
     final school=db.activeProfileIdentity['schoolSyncId']?.toString()??'';
     if(!RegExp(r'^vs-[a-f0-9]{32}$').hasMatch(school))return [];
-    final scope=jsonEncode([origin,school]);
     bool current()=>db.activeProfileId==origin&&db.activeProfileIdentity['schoolSyncId']==school;
-    if(_scope!=scope){_scope=scope;_checked=null;_entries=[];_inFlight=null;}
-    final previous=_checked;
-    if(previous!=null&&!DateTime.now().isBefore(previous)&&DateTime.now().difference(previous)<const Duration(seconds:60))return current()?_entries:[];
+    Map<String,dynamic> session;
+    try{session=await CentralSchoolCloud.saved();}catch(_){return [];}
+    final uid=session['uid']?.toString()??'',endpoint=session['endpoint']?.toString()??'';
+    if(!current()||session['managed']!=true||session['schoolId']!=school||uid.isEmpty||endpoint.isEmpty)return [];
+    final scope=jsonEncode([origin,school,uid,endpoint]);
+    if(_scope!=scope){_scope=scope;_checked=null;_expiresAt=0;_entries=[];_inFlight=null;}
+    final previous=_checked,now=DateTime.now();
+    if(previous!=null&&!now.isBefore(previous)&&now.difference(previous)<const Duration(seconds:60)&&now.millisecondsSinceEpoch<_expiresAt)return current()?_entries:[];
     final existing=_inFlight;
-    if(existing!=null){final value=await existing;return current()?value:[];}
+    if(existing!=null){final value=await existing;return current()&&_scope==scope?value:[];}
     final future=()async{
       try{
-        final reply=await ManagedSchoolSession.callForSchool(school,'managed/id-library/list',{});
-        if(!current()||reply['schoolId']!=school||reply['success']!=true)return <_GlobalIdCatalogEntry>[];
-        final raw=reply['templates'];
-        if(raw is! List||raw.length>200)throw const FormatException('Invalid global catalog');
-        final seen=<String>{};
+        Map<String,dynamic> reply;
+        try{
+          reply=await ManagedSchoolSession.callForSchool(school,'managed/id-library/list',{}).timeout(const Duration(seconds:25));
+        }catch(e){
+          if(!temporary(e)){await invalidate(scope);rethrow;}
+          final cached=await offline(scope,school,uid);
+          if(cached==null)rethrow;
+          reply=cached;
+        }
+        if(!current()||_scope!=scope)return <_GlobalIdCatalogEntry>[];
+        if(!GlobalIdCardOfflinePolicy.valid(reply,school:school,uid:uid,nowMs:DateTime.now().millisecondsSinceEpoch)){
+          await invalidate(scope);return <_GlobalIdCatalogEntry>[];
+        }
         final entries=<_GlobalIdCatalogEntry>[];
-        for(final value in raw){
+        for(final value in reply['templates'] as List){
           final row=Map<String,dynamic>.from(value as Map);
-          final id=row['id'];
-          if(id is! String||!IdCardCatalog.isGlobalId(id)||!seen.add(id))throw const FormatException('Invalid global template identity');
-          if(row['unlocked']!=true||row['accessType']!='free'||row['pricePaise']!=0)continue;
-          final entry=_GlobalIdCatalogEntry(row,origin,school);
-          // Keep the same immutable package in memory across unchanged refreshes.
-          final old=_entries.where((e)=>e.id==id&&e.packageHash==entry.packageHash&&e.name==entry.name);
+          if(!GlobalIdCardOfflinePolicy.freeRow(row))continue;
+          final entry=_GlobalIdCatalogEntry(row,origin,school,uid,endpoint,scope);
+          final old=_entries.where((e)=>e.id==entry.id&&e.packageHash==entry.packageHash&&e.name==entry.name);
           entries.add(old.isEmpty?entry:old.first);
         }
-        entries.sort((a,b)=>a.id.compareTo(b.id));
-        if(current()&&_scope==scope){_entries=entries;_checked=DateTime.now();}
-        return entries;
+        // Store only server-authorized free metadata; never extend an offline
+        // lease or persist any premium authorization.
+        final cached=<String,dynamic>{'success':true,'schoolId':school,'uid':uid,
+          'serverTime':reply['serverTime'],'expiresAt':reply['expiresAt'],'paymentEnabled':false,
+          'templates':(reply['templates'] as List).where((v)=>v is Map&&GlobalIdCardOfflinePolicy.freeRow(Map<String,dynamic>.from(v))).toList()};
+        try{await _storage.write(key:keyFor(scope),value:jsonEncode(cached));}
+        catch(_){/* Current verified online operation can still proceed. */}
+        entries.sort((a,b)=>a.name.compareTo(b.name));
+        if(current()&&_scope==scope){_entries=entries;_checked=DateTime.now();_expiresAt=reply['expiresAt'] as int;}
+        return current()&&_scope==scope?entries:<_GlobalIdCatalogEntry>[];
       }catch(_){
-        // Built-ins remain usable. No stale/unverified remote template is unlocked.
-        if(current()&&_scope==scope){_entries=[];_checked=DateTime.now();}
+        if(current()&&_scope==scope){_entries=[];_checked=null;_expiresAt=0;}
         return <_GlobalIdCatalogEntry>[];
       }
     }();
     _inFlight=future;
-    try{final value=await future;return current()?value:[];}
+    try{final value=await future;return current()&&_scope==scope?value:[];}
     finally{if(identical(_inFlight,future))_inFlight=null;}
   }
 }
 
 class _GlobalIdCatalogEntry extends IdCardCatalogEntry {
-  _GlobalIdCatalogEntry(Map<String,dynamic> row,this.origin,this.school):
+  _GlobalIdCatalogEntry(Map<String,dynamic> row,this.origin,this.school,this.uid,this.endpoint,this.scope):
     packageHash=row['packageSha256'] as String,version=row['version'] as int,
     super({'id':row['id'],'name':row['isCurrent']==true&&row['version']==1?row['name']:'${row['name']} • v${row['version']}${row['isCurrent']==true?'':' (previous)'}','kinds':[row['kind']],
       'manifest':'assets/global_id_card_placeholder.json'}) {
     if(version<1||version>10000||!RegExp(r'^[a-f0-9]{64}$').hasMatch(packageHash)||
       row['state']!='published'||row['mappingState']!='verified')throw const FormatException('Invalid global template metadata');
   }
-  final String origin,school,packageHash;
+  final String origin,school,uid,endpoint,scope,packageHash;
   final int version;
   ({IdCardManifest manifest,Map<String,Uint8List> backgrounds})? _prepared;
   Future<({IdCardManifest manifest,Map<String,Uint8List> backgrounds})>? _pending;
@@ -188,17 +224,31 @@ class _GlobalIdCatalogEntry extends IdCardCatalogEntry {
     final db=FirebaseFirestore.instance;
     if(db.activeProfileId!=origin||db.activeProfileIdentity['schoolSyncId']!=school)throw StateError('School changed during global ID access');
   }
+  Future<void> _accountGuard() async{
+    _guard();
+    final session=await CentralSchoolCloud.saved();
+    _guard();
+    if(session['managed']!=true||session['schoolId']!=school||session['uid']!=uid||
+       session['endpoint']!=endpoint)throw StateError('Global template account changed');
+  }
   Future<void> authorize() async{
-    _guard();
-    final reply=await ManagedSchoolSession.callForSchool(school,'managed/id-library/access',{'id':id,'version':version});
-    _guard();
-    if(reply['schoolId']!=school||reply['success']!=true||reply['packageSha256']!=packageHash)throw StateError('Global template changed or access revoked');
+    await _accountGuard();
+    try{
+      final reply=await ManagedSchoolSession.callForSchool(school,'managed/id-library/access',{'id':id,'version':version}).timeout(const Duration(seconds:25));
+      await _accountGuard();
+      if(reply['schoolId']!=school||reply['success']!=true||reply['packageSha256']!=packageHash)throw StateError('Global template changed or access revoked');
+    }catch(e){
+      if(!_GlobalIdCatalog.temporary(e)){await _GlobalIdCatalog.invalidate(scope);rethrow;}
+      await _accountGuard();
+      final cached=await _GlobalIdCatalog.offline(scope,school,uid);
+      if(cached==null||!GlobalIdCardOfflinePolicy.contains(cached,id:id,version:version,hash:packageHash))rethrow;
+    }
   }
   Future<File> _cacheFile() async{
     final root=await getApplicationSupportDirectory();
     _guard();
-    final scope=sha256.convert(utf8.encode(jsonEncode([origin,school]))).toString();
-    final folder=Directory('${root.path}${Platform.pathSeparator}global_id_card_cache_v1${Platform.pathSeparator}$scope');
+    final scopeHash=sha256.convert(utf8.encode(scope)).toString();
+    final folder=Directory('${root.path}${Platform.pathSeparator}global_id_card_cache_v1${Platform.pathSeparator}$scopeHash');
     await folder.create(recursive:true);
     _guard();
     return File('${folder.path}${Platform.pathSeparator}$id-$version-$packageHash.json');
@@ -215,13 +265,13 @@ class _GlobalIdCatalogEntry extends IdCardCatalogEntry {
     return (manifest:manifest,backgrounds:Map<String,Uint8List>.unmodifiable(images));
   }
   Future<({IdCardManifest manifest,Map<String,Uint8List> backgrounds})> _package() async{
-    _guard();
+    await _accountGuard();
     final saved=_prepared;
     if(saved!=null)return saved;
     if(_pending!=null){final result=await _pending!;_guard();return result;}
     final future=()async{
-      // This disk cache is a performance optimization, not an offline licence.
-      // A fresh authoritative access check is mandatory even for a cache hit.
+      // Authorize online or via an unexpired secure free-only catalog lease.
+      // Missing cached artwork must still be downloaded online.
       await authorize();
       File? cache;
       try{
