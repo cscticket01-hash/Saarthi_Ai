@@ -18,6 +18,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'id_card_catalog.dart';
 import 'green_blue_student_uid.dart';
+import 'id_card_school_branding.dart';
 import 'id_card_designer.dart';
 import 'id_card_designer_screen.dart';
 import 'id_card_draft_storage_io.dart';
@@ -126,7 +127,7 @@ class WindowsIdCardDesignerEntry {
     final data=<String,dynamic>{...profile,...studentData,'schoolName':profile['schoolName']??profile['name']??'','schoolAddress':profile['address']??'','class':first['studentClass']??first['class']??'','parentName':first['parentName']??first['fatherName']??''};
     final backgrounds=await entry.backgrounds();checkSchool();
     final images=<String,Uint8List>{};
-    final sources={'photo':first['photoUrl']??(first['photoBase64']==null?null:first['photoBase64'].toString().startsWith('data:image/')?first['photoBase64']:'data:image/png;base64,${first['photoBase64']}'),'logo':profile['logoUrl'],'signature':profile['principalSignatureUrl'],'seal':profile['sealUrl']};
+    final sources={'photo':first['photoUrl']??(first['photoBase64']==null?null:first['photoBase64'].toString().startsWith('data:image/')?first['photoBase64']:'data:image/png;base64,${first['photoBase64']}'),'logo':idCardBrandingSource(profile,'logo'),'signature':idCardBrandingSource(profile,'principalSignature'),'seal':idCardBrandingSource(profile,'seal')};
     for(final item in sources.entries){
       if(item.value==null)continue;
       final bytes=await schoolImageBytes(item.value.toString()).timeout(const Duration(seconds:8),onTimeout:()=>null);checkSchool();
@@ -140,7 +141,7 @@ class WindowsIdCardDesignerEntry {
       checkSchool();
       final manifest=IdCardManifest.fromJson(Map<String,dynamic>.from(draft['manifest'] as Map));
       if (!context.mounted) return;
-      await Navigator.of(context).push<void>(MaterialPageRoute(builder: (previewContext) =>
+      await NativeIdCardPreview.open(context, (previewContext) =>
         NativeIdCardPreview(template:manifest,data:data,images:images,
           backgrounds:backgrounds,qr:qr,
           onPrintDocument:(frontOnly) async {
@@ -162,7 +163,7 @@ class WindowsIdCardDesignerEntry {
             if(qr.isNotEmpty)await IdCardEngine.verifyExport(bytes,qr);
             checkSchool();
             await WindowsSavePdf.save(bytes,'school-id-preview.pdf');
-          })));
+          }));
     }
     // Applying a school-wide layout still uses the original explicit print-proof
     // review gate. Native preview alone is not a final print QR verification.

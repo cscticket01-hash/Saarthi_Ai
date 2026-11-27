@@ -8,6 +8,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 import 'id_card_engine.dart';
 import 'id_card_manifest.dart';
+import 'windows_appearance.dart';
 
 /// Native preview reads the same manifest and data as export. No PDF is built
 /// or rasterized to display a card. Print export remains separately reviewed.
@@ -21,6 +22,9 @@ class NativeIdCardPreview extends StatefulWidget {
   final Map<String, dynamic> data;
   final Map<String, Uint8List> images, backgrounds;
   final String qr;
+
+  static Future<void> open(BuildContext context, WidgetBuilder builder) =>
+      showDialog<void>(context: context, barrierDismissible: false, builder: builder);
   final Future<void> Function()? onDownload;
   final Future<void> Function(bool frontOnly)? onPrintDocument;
   final Future<void> Function(
@@ -146,9 +150,45 @@ class _NativeIdCardPreviewState extends State<NativeIdCardPreview> {
     final missing = widget.template.regions.where((r) => r.isRequired &&
       (r.kind == 'image' ? widget.images[r.key] == null :
         r.kind == 'qr' ? qr.isEmpty : (data[r.key]?.toString().trim().isEmpty ?? true)));
-    return Scaffold(appBar: AppBar(title: const Text('ID Card • Native preview')),
-      body: ListView(padding: const EdgeInsets.all(16), children: [
-        const SizedBox(height: 12),
+    WindowsAppearance.watch(context);
+    final theme = Theme.of(context);
+    final template = widget.template;
+    final screen = MediaQuery.sizeOf(context);
+    final ratio = template.width / template.height;
+    final count = template.hasBack ? 2 : 1;
+    final targetWidth = count * math.min(500.0, 420.0 * ratio) + (count - 1) * 12 + 40;
+    final dialogWidth = math.min(targetWidth, math.max(0.0, screen.width - 32));
+    final actions = <Widget>[
+      if (widget.onPrint != null || widget.onPrintDocument != null)
+        OutlinedButton.icon(
+          onPressed: busy || missing.isNotEmpty ? null :
+            () => runAction(() => printCards(qr), 'Print failed'),
+          icon: const Icon(Icons.print),
+          label: const Text('Print'),
+        ),
+      if (widget.onDownload != null)
+        FilledButton.icon(
+          onPressed: busy || missing.isNotEmpty ? null :
+            () => runAction(widget.onDownload!, 'PDF export failed'),
+          icon: const Icon(Icons.download),
+          label: const Text('Download ID Card'),
+        ),
+    ];
+    return PopScope(canPop: !busy, child: Dialog(
+      key: const ValueKey('id-card-preview-dialog'),
+      insetPadding: const EdgeInsets.all(16),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20),
+        side: BorderSide(color: WindowsAppearance.accent.withValues(alpha: .75))),
+      child: SizedBox(width: dialogWidth,
+        child: ListView(shrinkWrap: true, padding: const EdgeInsets.all(20), children: [
+        Row(children: [
+          Icon(Icons.badge_outlined, color: theme.colorScheme.primary),
+          const SizedBox(width: 10),
+          Expanded(child: Text('ID Card Preview', style: theme.textTheme.titleLarge)),
+          IconButton(tooltip: 'Close', icon: const Icon(Icons.close),
+            onPressed: busy ? null : () => Navigator.of(context).maybePop()),
+        ]),
+        const SizedBox(height: 16),
         if (missing.isNotEmpty) Text('Missing template fields: ' + missing.map((r) => r.key).join(', '),
           style: TextStyle(color: Theme.of(context).colorScheme.error)),
         LayoutBuilder(builder: (context, constraints) {
@@ -157,7 +197,8 @@ class _NativeIdCardPreviewState extends State<NativeIdCardPreview> {
           final gap = template.hasBack
               ? math.min(12.0, constraints.maxWidth / 4) : 0.0;
           final available = (constraints.maxWidth - gap) / count;
-          final height = math.min(380.0,
+          final maxHeight = math.min(420.0, math.max(80.0, screen.height - 220));
+          final height = math.min(maxHeight,
               available * template.height / template.width);
           return Center(child: Row(mainAxisSize: MainAxisSize.min,
             textDirection: TextDirection.ltr, children: [
@@ -168,25 +209,24 @@ class _NativeIdCardPreviewState extends State<NativeIdCardPreview> {
             ],
           ]));
         }),
-        const SizedBox(height: 12),
-        const Text('Native visual preview. PDF export uses the verified print renderer.'),
-        if (error != null) Text(error!),
-        if (widget.template.id != 'student-green-blue-modern-v1' &&
-            (widget.onPrint != null || widget.onPrintDocument != null))
-          OutlinedButton.icon(
-            onPressed: busy || missing.isNotEmpty ? null :
-              () => runAction(() => printCards(qr), 'Print failed'),
-            icon: const Icon(Icons.print),
-            label: const Text('Print'),
-          ),
-        if (widget.onDownload != null)
-          FilledButton.icon(
-            onPressed: busy || missing.isNotEmpty ? null :
-              () => runAction(widget.onDownload!, 'PDF export failed'),
-            icon: const Icon(Icons.download),
-            label: Text(widget.template.id == 'student-green-blue-modern-v1'
-                ? 'Download ID Card' : 'Download full PDF'),
-          ),
-      ]));
+        if (error != null) ...[const SizedBox(height: 8), Text(error!,
+          style: TextStyle(color: theme.colorScheme.error))],
+        if (actions.isNotEmpty) ...[
+          const SizedBox(height: 20),
+          LayoutBuilder(builder: (context, constraints) {
+            if (constraints.maxWidth < 340) {
+              return Column(crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [for (final action in actions) Padding(
+                  padding: const EdgeInsets.only(bottom: 8), child: action)]);
+            }
+            return Row(children: [
+              for (var i = 0; i < actions.length; i++) ...[
+                if (i > 0) const SizedBox(width: 12),
+                Expanded(child: actions[i]),
+              ],
+            ]);
+          }),
+        ],
+      ]))));
   }
 }

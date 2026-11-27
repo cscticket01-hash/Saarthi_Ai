@@ -6,6 +6,7 @@ import 'id_card_bulk_engine.dart';
 import 'id_card_engine.dart';
 import 'id_card_manifest.dart';
 import 'green_blue_student_uid.dart';
+import 'id_card_school_branding.dart';
 import 'school_qr_link.dart';
 import 'windows_local_firestore.dart';
 import 'windows_connect/central_school_cloud.dart';
@@ -125,7 +126,12 @@ class IdCardSchoolSource {
     }
     final shared = <String, Uint8List>{};
     for (final key in ['logo','signature','seal']) {
-      final bytes = await image(profile[key == 'logo' ? 'logoUrl' : key == 'signature' ? 'principalSignatureUrl' : 'sealUrl']);
+      if (!template.regions.any((r)=>r.kind=='image' && r.key==key)) continue;
+      final source = idCardBrandingSource(profile, key == 'signature' ? 'principalSignature' : key);
+      final bytes = await image(source);
+      if (source != null && (bytes == null || bytes.isEmpty)) {
+        throw StateError('Configured school $key is unavailable. Retry bulk export.');
+      }
       if (bytes != null) shared[key] = bytes;
     }
     final students = <IdCardBulkStudent>[], findings = <Map<String,String>>[];

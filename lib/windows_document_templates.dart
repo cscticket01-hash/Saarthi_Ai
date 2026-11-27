@@ -19,6 +19,7 @@ import 'windows_connect/atomic_person_portrait_delivery.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'id_card_catalog.dart';
 import 'green_blue_student_uid.dart';
+import 'id_card_school_branding.dart';
 import 'school_media_budgets.dart';
 import 'id_card_engine.dart';
 import 'id_card_manifest.dart';
@@ -173,13 +174,13 @@ class WindowsDocumentTemplates {
         ? await greenBlueStudentData(data) : data;
     checkSchool();
     // School Data is authoritative; load only branding used by this manifest.
-    Object? source(String slot, String field) =>
+    String? source(String slot, String prefix) =>
         manifest.regions.any((r) => r.kind == 'image' && r.key == slot)
-            ? profile[field] : null;
+            ? idCardBrandingSource(profile, prefix) : null;
     final brandingSources = [
-      source('logo', 'logoUrl'),
-      source('signature', 'principalSignatureUrl'),
-      source('seal', 'sealUrl'),
+      source('logo', 'logo'),
+      source('signature', 'principalSignature'),
+      source('seal', 'seal'),
     ];
     final assets = await Future.wait<Uint8List?>([
       _personPhoto(data),
@@ -195,9 +196,10 @@ class WindowsDocumentTemplates {
     return (
       template: manifest,
       data: <String,dynamic>{...profile,...cardData,'schoolName':schoolName,
-        'schoolAddress':profile['address'] ?? '',
+        'schoolAddress':profile['address'] ?? profile['schoolAddress'] ?? '',
+        'schoolLocation':profile['address'] ?? profile['schoolAddress'] ?? '',
         'designation':data['designation'] ?? data['role'] ?? (kind == 'studentId' ? 'Student' : 'Teacher'),
-        'rollNo':data['rollNo'] ?? data['employeeId'] ?? data['teacherId'] ?? '',
+        'rollNo':data['rollNo'] ?? data['roll'] ?? data['employeeId'] ?? data['teacherId'] ?? '',
         'parentName':data['parentName'] ?? data['fatherName'] ?? '',
       },
       images: <String,Uint8List>{
@@ -225,10 +227,10 @@ class WindowsDocumentTemplates {
     if (!context.mounted) return true;
     final hasPhoto = card.images['photo']?.isNotEmpty == true;
     final compact=IdCardEngine.compactQr(qr);
-    await Navigator.of(context).push<void>(MaterialPageRoute(builder: (previewContext) =>
+    await NativeIdCardPreview.open(context, (previewContext) =>
       NativeIdCardPreview(template:card.template,data:card.data,images:card.images,
         backgrounds:card.backgrounds,qr:compact,
-        onPrintDocument:hasPhoto && card.template.id != greenBlueStudentTemplateId ? (frontOnly) async {
+        onPrintDocument:hasPhoto || card.template.id == greenBlueStudentTemplateId ? (frontOnly) async {
           checkSchool();
           final bytes = await IdCardEngine.render(card.template,card.data,
             images:card.images,backgrounds:card.backgrounds,qr:compact,frontOnly:frontOnly,printOnly:true);
@@ -248,7 +250,7 @@ class WindowsDocumentTemplates {
           if (compact.isNotEmpty) await IdCardEngine.verifyExport(bytes,compact);
           checkSchool();
           await WindowsSavePdf.save(bytes,filename);
-        } : null)));
+        } : null));
     return true;
   }
 
@@ -1581,9 +1583,9 @@ class _SchoolDocumentTemplatesScreenState
               ? WindowsDocumentTemplates.plainSelection : 'manifest:${entry.id}',
         );
         if (!mounted || db.activeProfileId != profile || card == null) return;
-        await Navigator.of(context).push<void>(MaterialPageRoute(builder: (_) =>
+        await NativeIdCardPreview.open(context, (_) =>
           NativeIdCardPreview(template: card.template, data: card.data,
-            images: card.images, backgrounds: card.backgrounds)));
+            images: card.images, backgrounds: card.backgrounds));
       } catch (error) {
         if (mounted) ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Template preview unavailable: $error')));
