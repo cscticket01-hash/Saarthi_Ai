@@ -11,11 +11,11 @@ const SERVICE='srv-db3tgfu7bikc73abm7a0';
 const PURPOSE='vidya-saarthi-isolated-test-firebase-credential-v1';
 const AAD=Buffer.from([PURPOSE,PROJECT,SERVICE].join('\n'));
 const hex=b=>createHash('sha256').update(b).digest('hex');
-function validCredential(key){
- return key&&key.type==='service_account'&&key.project_id===PROJECT&&
+function validCredential(key,projectId=PROJECT){
+ return key&&key.type==='service_account'&&key.project_id===projectId&&
   typeof key.private_key==='string'&&key.private_key.includes('BEGIN PRIVATE KEY')&&
   typeof key.client_email==='string'&&
-  key.client_email.endsWith('@'+PROJECT+'.iam.gserviceaccount.com');
+  key.client_email.endsWith('@'+projectId+'.iam.gserviceaccount.com');
 }
 function publicWrappingKey(old){
  if(!validCredential(old))throw Error('Invalid isolated TEST wrapping credential');

@@ -98,3 +98,14 @@ test('HTTP ingress admits actual native 256/512 KiB chunks while preserving acti
   assert.equal((await post({action:'managed/file/upload',base64:'A'.repeat(800000)})).status,200);
  });
 });
+
+test('ID library staging rejects production storage and credentials',()=>{
+ const staging={SAARTHI_ID_LIBRARY_STAGING:'true'};
+ assert.throws(()=>fromEnvironment({...staging,SAARTHI_GLOBAL_ID_R2_BUCKET:'saarthi-id-library-prod'}),/dedicated project and bucket/);
+ assert.throws(()=>fromEnvironment({SAARTHI_GLOBAL_ID_R2_BUCKET:'saarthi-id-library-staging'}),/requires the staging project/);
+ const {validCredential}=require('../../staging-school-cloud/test-firebase-credential-envelope.cjs');
+ const stagingKey={type:'service_account',project_id:'saarthi-ai-staging',client_email:'fixture@saarthi-ai-staging.iam.gserviceaccount.com',private_key:'BEGIN PRIVATE KEY'};
+ assert.ok(validCredential(stagingKey,'saarthi-ai-staging'));
+ assert.equal(validCredential(stagingKey),false);
+ assert.equal(validCredential({...stagingKey,project_id:'saarthi-ai-df12b'},'saarthi-ai-staging'),false);
+});

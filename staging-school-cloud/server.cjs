@@ -3,6 +3,8 @@ const {createSchoolCloud,LEGACY_SUPPORT_ACTIONS} = require('../functions/school-
 const {randomUUID,createHash}=require('node:crypto');
 const ACTIONS=new Set(['onboard','status','migration/import','drive/link','profile/initialize','school/bind','license/activate','school/heartbeat','installation/status','school/notice','setup/diagnostic',...require('../functions/managed-support').SUPPORT_ACTIONS.map(a=>a.replace('managed/','')),...LEGACY_SUPPORT_ACTIONS]);
 const PROJECT = 'saarthi-ai-df12b';
+const ID_LIBRARY_STAGING_PROJECT = 'saarthi-ai-staging';
+const ID_LIBRARY_STAGING_BUCKET = 'saarthi-id-library-staging';
 function isolatedTestSchool(env) {
   if(env.SAARTHI_ISOLATED_TEST_MODE===undefined||env.SAARTHI_ISOLATED_TEST_MODE==='false')return null;
   if(env.SAARTHI_ISOLATED_TEST_MODE!=='true'||!/^vs-[a-f0-9]{32}$/.test(env.SAARTHI_ISOLATED_TEST_SCHOOL_ID||''))throw Error('Isolated TEST school configuration required');
@@ -20,7 +22,7 @@ function edgeRecordParallelismForSchool(env,school){
  return allowed.every(value=>/^vs-[a-f0-9]{32}$/.test(value))&&
    allowed.includes(school)?3:1;
 }
-function createHandler({handle,health,allowedOrigins=[],testSchoolId=null,runtimeCommit=null,adminCredentialFingerprint=null,wrappingPublicKey=null,wrappingKeyFingerprint=null,logger=entry=>console.info(JSON.stringify(entry))}) {
+function createHandler({handle,health,projectId=PROJECT,allowedOrigins=[],testSchoolId=null,runtimeCommit=null,adminCredentialFingerprint=null,wrappingPublicKey=null,wrappingKeyFingerprint=null,logger=entry=>console.info(JSON.stringify(entry))}) {
   if(testSchoolId!==null&&!/^vs-[a-f0-9]{32}$/.test(testSchoolId))throw Error('Invalid isolated TEST school');
   let windowStart=Date.now(), requests=0,anonymousRequests=0;
   let healthCache;
@@ -45,7 +47,7 @@ function createHandler({handle,health,allowedOrigins=[],testSchoolId=null,runtim
     if(req.method==='GET' && req.url==='/school-cloud/healthz'){
       try{
         if(!healthCache || Date.now()-healthCache.at>30000){await health();healthCache={at:Date.now()};}
-        return send(200,{service:'vidya-saarthi-central-staging',projectId:PROJECT,architecture:'central-v2',ready:true,
+        return send(200,{service:'vidya-saarthi-central-staging',projectId,architecture:'central-v2',ready:true,
           ...(testSchoolId&&/^[a-f0-9]{40}$/.test(runtimeCommit||'')?{runtimeCommit}: {}),
           ...(testSchoolId&&/^[a-f0-9]{64}$/.test(adminCredentialFingerprint||'')?{adminCredentialFingerprint}: {}),
            ...(testSchoolId&&typeof wrappingPublicKey==='string'&&/^[A-Za-z0-9+/]+={0,2}$/.test(wrappingPublicKey)&&/^[a-f0-9]{64}$/.test(wrappingKeyFingerprint||'')?{wrappingPublicKey,wrappingKeyFingerprint}: {})});
@@ -139,6 +141,15 @@ function managedFeatureOptions(env,testSchoolId) {
 }
 function fromEnvironment(env) {
   const testSchoolId=isolatedTestSchool(env);
+  const staging=env.SAARTHI_ID_LIBRARY_STAGING==='true';
+  const projectId=staging?ID_LIBRARY_STAGING_PROJECT:PROJECT;
+  if(staging&&(testSchoolId||env.SAARTHI_TEST_FIREBASE_ADMIN_ENVELOPE||
+    env.SAARTHI_GLOBAL_ID_CARD_BUCKET||
+    (env.SAARTHI_GLOBAL_ID_R2_BUCKET&&env.SAARTHI_GLOBAL_ID_R2_BUCKET!==ID_LIBRARY_STAGING_BUCKET)||
+    env.SAARTHI_CF_SYNC_URL))
+    throw Error('ID library staging requires its dedicated project and bucket');
+  if(!staging&&env.SAARTHI_GLOBAL_ID_R2_BUCKET===ID_LIBRARY_STAGING_BUCKET)
+    throw Error('ID library staging bucket requires the staging project');
   const managedFeatures=managedFeatureOptions(env,testSchoolId);
   const runtimeRequire=require('node:module').createRequire(require.resolve('../oauth-broker/package.json'));
   const {initializeApp,getApps,cert}=runtimeRequire('firebase-admin/app');
@@ -148,7 +159,7 @@ function fromEnvironment(env) {
   const {getStorage}=runtimeRequire('firebase-admin/storage');
   const oldCredential=JSON.parse(env.SAARTHI_FIREBASE_ADMIN_JSON || '{}');
   const {validCredential,publicWrappingKey,unwrapCredential}=require('./test-firebase-credential-envelope.cjs');
-  if(!validCredential(oldCredential))throw Error('Invalid central staging credential configuration');
+  if(!validCredential(oldCredential,projectId))throw Error('Invalid central staging credential configuration');
   if(env.SAARTHI_TEST_FIREBASE_ADMIN_ENVELOPE&&!testSchoolId)
     throw Error('Encrypted credential override requires isolated TEST school');
   const wrapping=testSchoolId?publicWrappingKey(oldCredential):null;
@@ -156,23 +167,23 @@ function fromEnvironment(env) {
     ?unwrapCredential(oldCredential,JSON.parse(env.SAARTHI_TEST_FIREBASE_ADMIN_ENVELOPE))
     :oldCredential;
   const adminCredentialFingerprint=createHash('sha256').update(String(key.client_email||'')).digest('hex');
-  if(!validCredential(key))throw Error('Invalid effective TEST Firebase credential configuration');
-  const app=initializeApp({credential:cert(key),projectId:PROJECT},'central-render-staging');
+  if(!validCredential(key,projectId))throw Error('Invalid effective TEST Firebase credential configuration');
+  const app=initializeApp({credential:cert(key),projectId},'central-render-staging');
   const auth=getAuth(app),db=getFirestore(app);
   db.settings({ignoreUndefinedProperties:true});
   const clientIds=(env.SAARTHI_GOOGLE_OAUTH_CLIENT_IDS || env.SAARTHI_GOOGLE_DESKTOP_CLIENT_ID || '').split(',').filter(Boolean);
   if(!clientIds.length) throw new Error('Missing central OAuth audience configuration');
-  const legacyHandle=createSchoolCloud({auth,db,projectId:PROJECT,clientIds,allowNewSchools:env.SAARTHI_MANAGED_ONLY!=='true',diagnostics:entry=>console.info(JSON.stringify(entry)),verifyLegacy:async(projectId,token)=>{
+  const legacyHandle=staging?null:createSchoolCloud({auth,db,projectId,clientIds,allowNewSchools:env.SAARTHI_MANAGED_ONLY!=='true',diagnostics:entry=>console.info(JSON.stringify(entry)),verifyLegacy:async(projectId,token)=>{
     const name='legacy-proof-'+projectId;
     const legacy=getApps().find(a=>a.name===name) || initializeApp({projectId},name);
     return getAuth(legacy).verifyIdToken(String(token || '')); 
   }});
   const providerPressureJournal=env.SAARTHI_SHARED_QUOTA_ENABLED==='true'
-    ?require('../functions/provider-pressure-journal').createProviderPressureJournal({db,projectId:PROJECT}):null;
+    ?require('../functions/provider-pressure-journal').createProviderPressureJournal({db,projectId}):null;
   const cloudflareSync=require('../functions/cloudflare-sync').createCloudflareSync({providerPressureJournal,url:env.SAARTHI_CF_SYNC_URL,key:env.SAARTHI_CF_SYNC_KEY,schools:(env.SAARTHI_CF_SYNC_SCHOOLS||'').split(',').filter(Boolean)});
   // Explicit opt-in bucket in the existing Firebase project; never infer a public bucket.
   const globalIdCardBucketName=env.SAARTHI_GLOBAL_ID_CARD_BUCKET;
-  if(globalIdCardBucketName && ![PROJECT+'.appspot.com',PROJECT+'.firebasestorage.app'].includes(globalIdCardBucketName))throw Error('Invalid global ID library Firebase bucket');
+  if(globalIdCardBucketName && ![projectId+'.appspot.com',projectId+'.firebasestorage.app'].includes(globalIdCardBucketName))throw Error('Invalid global ID library Firebase bucket');
   const r2BucketName=env.SAARTHI_GLOBAL_ID_R2_BUCKET;
   if(r2BucketName&&globalIdCardBucketName)throw Error('Configure one Global ID Card storage provider');
   let globalIdCardBucket=globalIdCardBucketName&&!testSchoolId?getStorage(app).bucket(globalIdCardBucketName):null;
@@ -186,9 +197,9 @@ function fromEnvironment(env) {
       db,accountId,bucketName:r2BucketName,request:client.fetch.bind(client),
     });
   }
-  const managed=require('../functions/managed-schools').createManagedSchools({globalIdCardBucket,...managedFeatures,firebaseCredentialFingerprint:adminCredentialFingerprint,liveSyncSchools:require('../functions/live-sync-rollout').liveSyncSchools(env),atomicBundleTestSchools:testSchoolId&&env.SAARTHI_ATOMIC_BUNDLE_TEST_ENABLED==='true'?[testSchoolId]:[],edgeRecordParallelism:school=>edgeRecordParallelismForSchool(env,school),repairKnowledgeOptions:{enabled:env.SAARTHI_REPAIR_KNOWLEDGE_ENABLED==='true',privateKey:env.SAARTHI_REPAIR_KNOWLEDGE_PRIVATE_KEY,keyId:env.SAARTHI_REPAIR_KNOWLEDGE_KEY_ID||'repair-v1',reportSalt:env.SAARTHI_REPAIR_KNOWLEDGE_REPORT_SALT},cloudflareAllDataEnabled:env.SAARTHI_CF_ALL_DATA_ENABLED==='true',cloudflareAtomicSmallFiles:env.SAARTHI_CF_ATOMIC_SMALL_FILES==='true'&&env.SAARTHI_CF_ALL_DATA_ENABLED==='true',providerPressureJournal,googleQuotaScopes:JSON.parse(env.SAARTHI_GOOGLE_QUOTA_SCOPES||'{}'),cloudflareSync,changeFeedIdleGraceMillis:30000,auth,db,messaging:getMessaging(app),projectId:PROJECT,encryptionKey:env.SAARTHI_MANAGED_STORAGE_KEY,
+  const managed=require('../functions/managed-schools').createManagedSchools({globalIdCardBucket,...managedFeatures,firebaseCredentialFingerprint:adminCredentialFingerprint,liveSyncSchools:require('../functions/live-sync-rollout').liveSyncSchools(env),atomicBundleTestSchools:testSchoolId&&env.SAARTHI_ATOMIC_BUNDLE_TEST_ENABLED==='true'?[testSchoolId]:[],edgeRecordParallelism:school=>edgeRecordParallelismForSchool(env,school),repairKnowledgeOptions:{enabled:env.SAARTHI_REPAIR_KNOWLEDGE_ENABLED==='true',privateKey:env.SAARTHI_REPAIR_KNOWLEDGE_PRIVATE_KEY,keyId:env.SAARTHI_REPAIR_KNOWLEDGE_KEY_ID||'repair-v1',reportSalt:env.SAARTHI_REPAIR_KNOWLEDGE_REPORT_SALT},cloudflareAllDataEnabled:env.SAARTHI_CF_ALL_DATA_ENABLED==='true',cloudflareAtomicSmallFiles:env.SAARTHI_CF_ATOMIC_SMALL_FILES==='true'&&env.SAARTHI_CF_ALL_DATA_ENABLED==='true',providerPressureJournal,googleQuotaScopes:JSON.parse(env.SAARTHI_GOOGLE_QUOTA_SCOPES||'{}'),cloudflareSync,changeFeedIdleGraceMillis:30000,auth,db,messaging:getMessaging(app),projectId,encryptionKey:env.SAARTHI_MANAGED_STORAGE_KEY,
     ...(testSchoolId?{attendanceCollection:'attendance_test_outbox',attendanceStore:require('../functions/attendance-queue').firestoreAttendanceStore(db,{schoolId:testSchoolId,collectionName:'attendance_test_outbox'})}:{}),
-    monitor:require('../functions/managed-monitor').createMonitor({credential:app.options.credential,projectId:PROJECT}),
+    monitor:require('../functions/managed-monitor').createMonitor({credential:app.options.credential,projectId}),
     cloudflareMonitor:require('../functions/cloudflare-monitor').createCloudflareMonitor({
       accountId:env.SAARTHI_CF_ACCOUNT_ID,
       analyticsToken:env.SAARTHI_CF_ANALYTICS_TOKEN,
@@ -209,8 +220,13 @@ function fromEnvironment(env) {
   };
   const complaintTimer=setInterval(sweepComplaints,6*60*60*1000);complaintTimer.unref();
   setImmediate(sweepComplaints);
-  const handle=async req => {await verifyTest();return /^(managed\/|developer\/managed\/)/.test(req.body?.action || '') ? managed(req) : legacyHandle(req);};
-  return createHandler({handle,testSchoolId,runtimeCommit:env.RENDER_GIT_COMMIT,adminCredentialFingerprint,...(wrapping||{}),allowedOrigins:(env.SAARTHI_SCHOOL_WEB_ORIGINS || '').split(',').filter(Boolean),health:async()=>{
+  const handle=async req => {
+    await verifyTest();
+    if(/^(managed\/|developer\/managed\/)/.test(req.body?.action || ''))return managed(req);
+    if(staging)throw Object.assign(Error('Legacy school operations are disabled in ID library staging'),{status:404});
+    return legacyHandle(req);
+  };
+  return createHandler({handle,projectId,testSchoolId,runtimeCommit:env.RENDER_GIT_COMMIT,adminCredentialFingerprint,...(wrapping||{}),allowedOrigins:(env.SAARTHI_SCHOOL_WEB_ORIGINS || '').split(',').filter(Boolean),health:async()=>{
     await verifyTest();
     await db.doc('_central_staging_health/runtime').get();
     try{await auth.getUser('__saarthi_staging_health__');}catch(e){if(e.code!=='auth/user-not-found')throw e;}
