@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
+import 'package:crypto/crypto.dart';
 
 import 'id_card_manifest.dart';
 
@@ -44,6 +45,21 @@ class IdCardCatalogEntry {
     return m;
   }
 
+  static const greenBlueId = 'student-green-blue-modern-v1';
+  static const greenBlueAsset = 'assets/student_green_blue_modern_front.png';
+  static const greenBlueSha256 = '08912d18ce48222ac150f0b3bd3189270ad96534e7764d243d8456d8d243e2b9';
+  static bool isApprovedGreenBlueArtwork(Uint8List bytes) =>
+      bytes.length == 337769 && sha256.convert(bytes).toString() == greenBlueSha256;
+
+  Future<bool> hasApprovedGreenBlueArtwork() async {
+    if (id != greenBlueId) return true;
+    if (frontAsset != greenBlueAsset || backAsset != null) return false;
+    final assets = await AssetManifest.loadFromAssetBundle(rootBundle);
+    if (!assets.listAssets().contains(greenBlueAsset)) return false;
+    final bytes = await rootBundle.load(greenBlueAsset);
+    return isApprovedGreenBlueArtwork(bytes.buffer.asUint8List(bytes.offsetInBytes, bytes.lengthInBytes));
+  }
+
   Future<Map<String, Uint8List>> backgrounds() async => {
     if (frontAsset != null)
       'front': (await rootBundle.load(frontAsset!)).buffer.asUint8List(),
@@ -72,7 +88,11 @@ class IdCardCatalog {
     for (final entry in result) {
       await entry.manifest();
     }
-    return result;
+    final available = <IdCardCatalogEntry>[];
+    for (final entry in result) {
+      if (await entry.hasApprovedGreenBlueArtwork()) available.add(entry);
+    }
+    return available;
   }
 
   static Future<IdCardCatalogEntry> find(String id) async =>

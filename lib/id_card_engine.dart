@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:image/image.dart' as img;
 import 'package:zxing2/qrcode.dart' as zx;
@@ -15,6 +16,8 @@ import 'package:pdf/widgets.dart' as pw;
 import 'school_media_budgets.dart';
 import 'school_pdf_media.dart';
 import 'id_card_manifest.dart';
+import 'id_card_catalog.dart';
+import 'package:crypto/crypto.dart';
 import 'id_card_layout.dart';
 import 'id_card_indic_text.dart';
 
@@ -125,7 +128,8 @@ class IdCardEngine {
   }
 
   static Map<String,dynamic> normalizedInput(IdCardManifest template,Map<String,dynamic> data) {
-    if (template.id == 'student-svn-navy-green-v1') {
+    if (template.id == 'student-svn-navy-green-v1' ||
+        template.id == 'student-green-blue-modern-v1') {
       String first(List<String> keys) {
         for (final key in keys) {
           final value = data[key]?.toString().trim() ?? '';
@@ -141,10 +145,16 @@ class IdCardEngine {
         'parentName': first(['parentName', 'fatherName', 'guardianName']),
         'class': first(['studentClass', 'class']),
         'rollNo': first(['rollNo', 'roll']),
-        'studentUid': first(['studentUid', 'studentCardId', 'studentId']),
+        'studentUid': template.id == 'student-green-blue-modern-v1' ? ''
+            : first(['studentUid', 'studentCardId', 'studentId']),
         'dob': first(['dateOfBirth', 'dob']),
         'contact': first(['parentContact', 'contact', 'contactNo', 'phone']),
         'address': first(['streetAddress', 'address']),
+        if (template.id == 'student-green-blue-modern-v1')
+          'pinCode': first(['pinCode', 'pin', 'pincode']),
+        if (template.id == 'student-green-blue-modern-v1')
+          'confirmedUniversalStudentUid': first(['_greenBlueVerifiedUid']).isEmpty
+              ? '' : 'Student ID - ${first(['_greenBlueVerifiedUid'])}',
       };
     }
     if(template.id == 'student-maroon-gold-v1') {
@@ -179,6 +189,11 @@ class IdCardEngine {
     pw.Font? font,
     int printMediaStage = 0,
   }) async {
+    if (template.id == IdCardCatalogEntry.greenBlueId && printMediaStage == 2 &&
+        (backgrounds['front'] == null ||
+         !IdCardCatalogEntry.isApprovedGreenBlueArtwork(backgrounds['front']!))) {
+      throw const FormatException('Original approved Green Blue Modern artwork is unavailable or changed.');
+    }
     data = normalizedInput(template,data);
     qr = compactQr(qr);
     for (final r in template.regions) {
@@ -197,8 +212,8 @@ class IdCardEngine {
       final value = '${region.label}${data[region.key] ?? ''}';
       final rendered = await IdCardIndicText.rasterize(
         value,
-        width: region.width - 2 * region.padding,
-        height: region.height - 2 * region.padding,
+        width: region.contentWidth,
+        height: region.contentHeight,
         fontSize: region.fontSize,
         minFontSize: region.minFontSize,
         maxLines: region.maxLines,
@@ -226,6 +241,12 @@ class IdCardEngine {
 
   static Future<Uint8List> render(IdCardManifest template, Map<String,dynamic> data, {Map<String,Uint8List> images=const {},String qr='',Map<String,Uint8List> backgrounds=const {},bool frontOnly=false,bool printOnly=false}) => _render(template,data,images:images,qr:qr,backgrounds:backgrounds,frontOnly:frontOnly,printOnly:printOnly);
 
+  /// Explicit user-local download only; never enters the 85 KiB cloud outbox.
+  static Future<Uint8List> renderLocalDownload(IdCardManifest template, Map<String,dynamic> data, {
+    Map<String,Uint8List> images=const {}, String qr='', Map<String,Uint8List> backgrounds=const {},
+  }) => render(template, data, images:images, qr:qr, backgrounds:backgrounds,
+    printOnly:template.id == 'student-green-blue-modern-v1');
+
   static Future<Uint8List> _render(
     IdCardManifest template,
     Map<String, dynamic> data, {
@@ -240,7 +261,11 @@ class IdCardEngine {
     // Embed school-owned source backgrounds at their actual CR80 print size.
     // This is bitmap-only optimization; the original image assets, vector
     // QR, Indic text shaping and layout geometry remain unchanged.
-    final optimizedBackgrounds = <String, Uint8List>{
+    final fullResolution = printOnly && template.id == 'student-green-blue-modern-v1';
+    if (fullResolution && backgrounds['front'] == null) {
+      throw const FormatException('Original Green Blue Modern artwork is unavailable.');
+    }
+    final optimizedBackgrounds = fullResolution ? backgrounds : <String, Uint8List>{
       for (final entry in backgrounds.entries)
         entry.key: SchoolPdfMedia.cardBackground(
           entry.value, widthMm: template.printWidth,
@@ -254,7 +279,7 @@ class IdCardEngine {
       qr: qr,
       backgrounds: optimizedBackgrounds,
       font: useCompactVectorFont ? pw.Font.helvetica() : null,
-      printMediaStage: compactBitmapAssets ? 1 : 0,
+      printMediaStage: fullResolution ? 2 : compactBitmapAssets ? 1 : 0,
     );
     final pdf = pw.Document(theme: pw.ThemeData.withFont(base: prepared.font));
     final width = template.printWidth * PdfPageFormat.mm;
@@ -335,7 +360,18 @@ class PreparedIdCard {
   final String qr;
   final pw.Font font;
   final int printMediaStage;
-  pw.Widget buildSide(String name) => pw.SizedBox(
+  pw.Widget _regionGeometry(IdCardRegion r, pw.Widget child) {
+    if (r.shape == 'oval') return pw.ClipOval(child: child);
+    if (r.rotation == -90) {
+      return pw.Transform.rotateBox(
+        angle: math.pi / 2,
+        unconstrained: true,
+        child: pw.SizedBox(width: r.contentWidth, height: r.contentHeight, child: child),
+      );
+    }
+    return child;
+  }
+  pw.Widget buildSide(String name, {Map<String, pw.MemoryImage>? backgroundImageCache}) => pw.SizedBox(
     width: template.width,
     height: template.height,
     child: pw.Stack(
@@ -344,7 +380,9 @@ class PreparedIdCard {
         if (backgrounds[name] != null)
           pw.Positioned.fill(
             child: pw.Image(
-              pw.MemoryImage(backgrounds[name]!),
+              backgroundImageCache == null ? pw.MemoryImage(backgrounds[name]!) :
+                backgroundImageCache.putIfAbsent(sha256.convert(backgrounds[name]!).toString(),
+                  () => pw.MemoryImage(backgrounds[name]!)),
               fit: pw.BoxFit.contain,
             ),
           ),
@@ -358,7 +396,7 @@ class PreparedIdCard {
               child: pw.Padding(
                 padding: pw.EdgeInsets.all(r.padding),
                 child: pw.ClipRect(
-                  child: r.kind == 'image'
+                  child: _regionGeometry(r, r.kind == 'image'
                       ? images[r.key] == null
                             ? pw.SizedBox()
                             : IdCardLayout.image(
@@ -367,8 +405,9 @@ class PreparedIdCard {
                                 focusX: r.focusX,
                                 focusY: r.focusY,
                                 imageCache: _printImageCache,
-                                printDpi: printMediaStage == 0 ? 300 : 280,
+                                printDpi: printMediaStage == 2 ? 600 : printMediaStage == 0 ? 300 : 280,
                                 jpegQuality: printMediaStage == 0 ? 88 : 84,
+                                lossless: printMediaStage == 2,
                               )
                       : r.kind == 'qr'
                       ? qr.isEmpty
@@ -397,7 +436,7 @@ class PreparedIdCard {
                               : r.align == 'right'
                               ? pw.TextAlign.right
                               : pw.TextAlign.left,
-                        ),
+                        )),
                 ),
               ),
             ),

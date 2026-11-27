@@ -106,6 +106,8 @@ class IdCardRegion {
         side = data['side'] as String,
         kind = data['kind'] as String,
         fit = data['fit']?.toString() ?? 'contain',
+        shape = data['shape']?.toString() ?? 'rect',
+        rotation = (data['rotation'] as int? ?? 0),
         align = data['align']?.toString() ?? 'left',
         label = data['label']?.toString() ?? '',
         textColor = data['textColor']?.toString() ?? '#000000',
@@ -129,6 +131,10 @@ class IdCardRegion {
         !{'front', 'back'}.contains(side) ||
         !{'text', 'image', 'qr'}.contains(kind) ||
         !{'contain', 'cover'}.contains(fit) ||
+        !{'rect', 'oval'}.contains(shape) ||
+        (shape == 'oval' && kind != 'image') ||
+        !{0, -90}.contains(rotation) ||
+        (rotation != 0 && kind != 'text') ||
         !{'left', 'center', 'right'}.contains(align) ||
         [x, y, width, height, fontSize].any((n) => !n.isFinite) ||
         x < 0 ||
@@ -154,7 +160,10 @@ class IdCardRegion {
       throw const FormatException('Invalid ID region.');
     }
   }
-  final String key, side, kind, fit, align, label, textColor;
+  final String key, side, kind, fit, align, label, textColor, shape;
+  final int rotation;
+  double get contentWidth => (rotation == 0 ? width : height) - 2 * padding;
+  double get contentHeight => (rotation == 0 ? height : width) - 2 * padding;
   final double x, y, width, height, fontSize, minFontSize, focusX, focusY;
   final bool wrap, isRequired;
   final double padding;

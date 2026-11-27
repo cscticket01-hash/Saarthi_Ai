@@ -18,6 +18,7 @@ import 'windows_connect/central_school_cloud.dart';
 import 'windows_connect/atomic_person_portrait_delivery.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'id_card_catalog.dart';
+import 'green_blue_student_uid.dart';
 import 'school_media_budgets.dart';
 import 'id_card_engine.dart';
 import 'id_card_manifest.dart';
@@ -104,9 +105,11 @@ class WindowsDocumentTemplates {
   }) async {
     final entry = await IdCardCatalog.find(templateId);
     final manifest = reviewedManifest ?? await entry.manifest();
+    final cardData = manifest.id == greenBlueStudentTemplateId
+        ? await greenBlueStudentData(data) : data;
     return IdCardEngine.render(
       manifest,
-      data,
+      cardData,
       qr: qr,
       printOnly:printOnly,
       backgrounds: await entry.backgrounds(),
@@ -166,9 +169,10 @@ class WindowsDocumentTemplates {
       throw StateError('Selected template is not for this person category.');
     final manifest = reviewed ?? await entry.manifest();
     final backgrounds = await entry.backgrounds();
+    final cardData = manifest.id == greenBlueStudentTemplateId
+        ? await greenBlueStudentData(data) : data;
     checkSchool();
-    // School Data is authoritative, not branding copies on a person record.
-    // Do not request unused images (e.g. a seal on a seal-free design).
+    // School Data is authoritative; load only branding used by this manifest.
     Object? source(String slot, String field) =>
         manifest.regions.any((r) => r.kind == 'image' && r.key == slot)
             ? profile[field] : null;
@@ -190,7 +194,7 @@ class WindowsDocumentTemplates {
     }
     return (
       template: manifest,
-      data: <String,dynamic>{...profile,...data,'schoolName':schoolName,
+      data: <String,dynamic>{...profile,...cardData,'schoolName':schoolName,
         'schoolAddress':profile['address'] ?? '',
         'designation':data['designation'] ?? data['role'] ?? (kind == 'studentId' ? 'Student' : 'Teacher'),
         'rollNo':data['rollNo'] ?? data['employeeId'] ?? data['teacherId'] ?? '',
@@ -224,7 +228,7 @@ class WindowsDocumentTemplates {
     await Navigator.of(context).push<void>(MaterialPageRoute(builder: (previewContext) =>
       NativeIdCardPreview(template:card.template,data:card.data,images:card.images,
         backgrounds:card.backgrounds,qr:compact,
-        onPrintDocument:hasPhoto ? (frontOnly) async {
+        onPrintDocument:hasPhoto && card.template.id != greenBlueStudentTemplateId ? (frontOnly) async {
           checkSchool();
           final bytes = await IdCardEngine.render(card.template,card.data,
             images:card.images,backgrounds:card.backgrounds,qr:compact,frontOnly:frontOnly,printOnly:true);
@@ -236,19 +240,39 @@ class WindowsDocumentTemplates {
           await WindowsBrowserPrint.open(previewContext,bytes,title:'ID card',
             preserveActualSize:true,isCurrent:(){try{checkSchool();return true;}catch(_){return false;}});
         } : null,
-        onDownload:hasPhoto ? () async {
+        onDownload:hasPhoto || card.template.id == greenBlueStudentTemplateId ? () async {
           checkSchool();
-          final bytes = SchoolMediaBudgets.verifyGeneratedPdf(
-            kind,
-            await IdCardEngine.render(card.template, card.data,
-              images: card.images, backgrounds: card.backgrounds, qr: compact),
-          );
+          final bytes = await IdCardEngine.renderLocalDownload(card.template, card.data,
+            images: card.images, backgrounds: card.backgrounds, qr: compact);
           checkSchool();
           if (compact.isNotEmpty) await IdCardEngine.verifyExport(bytes,compact);
           checkSchool();
           await WindowsSavePdf.save(bytes,filename);
         } : null)));
     return true;
+  }
+
+  /// Student dashboard download action. Native record preview never calls this.
+  static Future<Uint8List> downloadStudentIdPdf(Map<String,dynamic> data, {required String qr}) async {
+    final db = FirebaseFirestore.instance;
+    final origin = db.activeProfileId, school = db.activeProfileIdentity['schoolSyncId'];
+    void guard() {
+      if (db.activeProfileId != origin || db.activeProfileIdentity['schoolSyncId'] != school) {
+        throw StateError('School changed; reopen the ID card.');
+      }
+    }
+    final card = await nativePersonCard('studentId', data);
+    guard();
+    if (card == null || (card.template.id != greenBlueStudentTemplateId && card.images['photo']?.isNotEmpty != true)) {
+      throw StateError('ID card unavailable. Verify the student photo.');
+    }
+    final compact = IdCardEngine.compactQr(qr);
+    final bytes = await IdCardEngine.renderLocalDownload(card.template, card.data,
+      images: card.images, backgrounds: card.backgrounds, qr: compact);
+    guard();
+    if (compact.isNotEmpty) await IdCardEngine.verifyExport(bytes, compact);
+    guard();
+    return bytes;
   }
 
   static Future<Map<String, dynamic>> selections() async =>
@@ -361,6 +385,9 @@ class WindowsDocumentTemplates {
       if (photo == null || photo.isEmpty) return null;
       final card = await nativePersonCard(kind,data);
       if (card != null) {
+        if (card.template.id == greenBlueStudentTemplateId) {
+          throw StateError('Use Download ID Card for the full-resolution local PDF.');
+        }
         qr = IdCardEngine.compactQr(qr);
         final bytes=await IdCardEngine.render(card.template,card.data,
           images:card.images,backgrounds:card.backgrounds,qr:qr,printOnly:printOnly);
@@ -570,7 +597,9 @@ class WindowsDocumentTemplates {
         ?await WindowsIdCardDesignerEntry.reviewed(template,FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']?.toString()??'local:$origin')
         :await (await IdCardCatalog.find(template is String?template.replaceFirst('manifest:',''):studentIdTemplateId)).manifest();
       if(manifest==null)throw StateError('Verified ID design is required.');
-      final normalized=IdCardEngine.normalizedInput(manifest,Map<String,dynamic>.from(effective));
+      final cardData = manifest.id == greenBlueStudentTemplateId
+          ? await greenBlueStudentData(effective) : effective;
+      final normalized=IdCardEngine.normalizedInput(manifest,Map<String,dynamic>.from(cardData));
       text={for(final region in manifest.regions.where((r)=>r.kind=='text'))region.key:normalized[region.key]?.toString()??''};
       slots=manifest.regions.where((r)=>r.kind=='image').map((r)=>r.key).toSet();
     } else {
@@ -1117,6 +1146,10 @@ class WindowsDocumentTemplates {
           .where((e) => e.kinds.contains(kind))
           .toList();
       final entry = choices[index - legacyCount];
+      if (entry.id == greenBlueStudentTemplateId) {
+        // Gallery and selection must use native preview, not the PDF renderer.
+        return null;
+      }
       return manifestId(
         branding,
         templateId: entry.id,
@@ -1624,7 +1657,23 @@ class _SchoolDocumentTemplatesScreenState
     final ref = db.collection('school_settings').doc('document_templates');
     // Validate the exact selected financial renderer before changing selection.
     // The approved manifest cannot silently become a different version.
-    if (WindowsDocumentTemplates.supportsPlain(kind)) {
+    if (kind == 'studentId' && value == 'manifest:$greenBlueStudentTemplateId') {
+      // Selecting the bundled approved layout must not generate a PDF.
+      final entry = await IdCardCatalog.find(greenBlueStudentTemplateId);
+      if (!await entry.hasApprovedGreenBlueArtwork()) {
+        throw StateError('Approved original artwork is missing.');
+      }
+      await entry.manifest();
+      if (!mounted) return;
+      final confirmed = await showDialog<bool>(context: context, builder: (ctx) =>
+        AlertDialog(title: const Text('Use Green Blue Modern for this school?'),
+          content: const Text('Update all school PCs to a version that includes this template before selecting it.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('All PCs updated')),
+          ]));
+      if (confirmed != true || !mounted) return;
+    } else if (WindowsDocumentTemplates.supportsPlain(kind)) {
       final preview = WindowsDocumentTemplates.financialKind(kind)
         ? await WindowsDocumentTemplates._selected(kind,sample,selectionOverride:value,printOnly:true)
         : await WindowsDocumentTemplates.renderTemplate(kind,index,sample);
@@ -1706,7 +1755,7 @@ class _SchoolDocumentTemplatesScreenState
                 child: OutlinedButton.icon(
                   onPressed: _loading || _openingDesigner ? null : _openBulk,
                   icon: const Icon(Icons.print),
-                  label: const Text('Class bulk front/back PDF'),
+                  label: const Text('Class bulk ID Cards'),
                 ),
               ),
             const SizedBox(height: 10),
@@ -1855,6 +1904,8 @@ class _SchoolDocumentTemplatesScreenState
                         Text(
                           i < 0
                               ? 'No decorative template'
+                              : entry?.id == greenBlueStudentTemplateId
+                              ? 'Front only • 85.6 × 54.1 mm'
                               : portrait
                               ? 'Front | Back • each 54 × 85.6 mm'
                               : _kind.endsWith('Id')

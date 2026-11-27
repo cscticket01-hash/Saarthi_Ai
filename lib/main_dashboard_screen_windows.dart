@@ -5311,6 +5311,8 @@ Future<Map<String, dynamic>> _getIdCardStudentData() async {
     'dob': dob,
     'photoUrl': photoUrl,
     'studentId': studentId,
+    'mobileStableId': existingStudentDoc.data()?['mobileStableId'],
+    'schoolId': existingStudentDoc.data()?['schoolId'],
     'studentUid': studentUid,
     'showStudentUid': showStudentUid,
     'qrData': qrData,
@@ -5354,8 +5356,8 @@ Future<void> _downloadIdCard() async {
     final data =
         await _getIdCardStudentData();
 
-    final pdfBytes =
-        await _buildIdCardPdf();
+    final pdfBytes = await WindowsDocumentTemplates.downloadStudentIdPdf(
+      data, qr: data['qrData'].toString());
 
     final name =
         data['name'].toString();

@@ -35,7 +35,8 @@ void main() {
     final entries = await IdCardCatalog.load();
     expect(
       entries.where((e)=>e.kinds.contains('studentId')).map((e)=>e.id).toList(),
-      ['student-maroon-gold-v1', 'student-svn-navy-green-v1'],
+      ['student-maroon-gold-v1', 'student-svn-navy-green-v1',
+        if (File(IdCardCatalogEntry.greenBlueAsset).existsSync()) IdCardCatalogEntry.greenBlueId],
     );
     for(final entry in entries) { expect((await entry.manifest()).id, entry.id); }
     final svn = await IdCardCatalog.find('student-svn-navy-green-v1');
@@ -55,6 +56,29 @@ void main() {
         throwsFormatException,
       );
     }
+  });
+  test('Green Blue Modern is front-only with confirmed UID, oval photo and exact geometry', () {
+    final raw = jsonDecode(File('assets/student_green_blue_modern_manifest.json').readAsStringSync()) as Map<String,dynamic>;
+    final template = IdCardManifest.fromJson(raw);
+    expect(template.hasBack, isFalse);
+    expect(template.regions.singleWhere((r)=>r.key=='photo').shape, 'oval');
+    expect(template.regions.singleWhere((r)=>r.key=='confirmedUniversalStudentUid').rotation, -90);
+    expect(IdCardEngine.normalizedInput(template, {'studentId':'legacy','studentUid':'temporary'})['confirmedUniversalStudentUid'], '');
+    expect(IdCardEngine.normalizedInput(template, {'_greenBlueVerifiedUid':'STU-DEMO-TEST-000001'})['confirmedUniversalStudentUid'], 'Student ID - STU-DEMO-TEST-000001');
+    expect(template.printWidth, closeTo(85.598, .001));
+    expect(template.printHeight, closeTo(54.102, .001));
+  });
+  test('Green Blue Modern release asset matches exact original 600 DPI master', () async {
+    final asset = File(IdCardCatalogEntry.greenBlueAsset);
+    expect(asset.existsSync(), isTrue, reason: 'Upload the approved original PNG before merging.');
+    final bytes = await asset.readAsBytes();
+    expect(IdCardCatalogEntry.isApprovedGreenBlueArtwork(bytes), isTrue);
+    final entry = await IdCardCatalog.find(IdCardCatalogEntry.greenBlueId);
+    expect(await entry.hasApprovedGreenBlueArtwork(), isTrue);
+    final card = await IdCardEngine.renderLocalDownload(await entry.manifest(),
+      {'schoolName':'Synthetic School','name':'Synthetic Student'}, backgrounds:await entry.backgrounds());
+    expect(latin1.decode(card).startsWith('%PDF'), isTrue);
+    expect(RegExp(r'/Type\s*/Page\b').allMatches(latin1.decode(card)).length, 1);
   });
   test('manifest rejects overflow, duplicate regions, unknown version and distorted print dimensions', () {
     final raw = manifest();
