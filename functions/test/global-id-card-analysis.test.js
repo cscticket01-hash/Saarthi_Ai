@@ -17,3 +17,13 @@ test('image geometry is scaled to design units and never includes extracted samp
  assert.equal(JSON.stringify(result).includes('sample-person'),false);
  assert.throws(()=>parseImageCandidates(xml,[{...pages[0],canvasHeight:300}]));
 });
+
+test('separate PDF text objects and multiple fields on one row map without leaking values',()=>{
+ const word=(x,right,value)=>'<word xMin="'+x+'" yMin="40" xMax="'+right+'" yMax="50">'+value+'</word>';
+ const xml='<page width="242" height="153">'+
+  '<line>'+word(10,30,'Class')+'</line><line>'+word(32,34,':')+word(36,50,'Demo')+'</line>'+
+  '<line>'+word(80,95,'Roll')+word(98,110,'No:')+'</line><line>'+word(112,132,'Hidden')+'</line></page>';
+ const result=parseCandidates(xml)[0].candidates;
+ assert.deepEqual(result.map(r=>[r.key,r.x,r.width]),[['class',36,14],['rollNo',112,20]]);
+ assert.equal(JSON.stringify(result).includes('Hidden'),false);
+});

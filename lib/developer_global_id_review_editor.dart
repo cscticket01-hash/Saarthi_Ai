@@ -30,6 +30,7 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
         slots.add({...r,'key':''});
       }
     }
+    GlobalIdCardReview.suggestQr(pages,slots,images);
   }
   Map<String,dynamic> get page=>pages.firstWhere((p)=>p['side']==side);
   double n(Map<String,dynamic> row,String key)=>(row[key] as num?)?.toDouble()??0;

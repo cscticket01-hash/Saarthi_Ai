@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:image/image.dart' as img;
+import 'package:zxing2/qrcode.dart' as zx;
 import 'id_card_manifest.dart';
 
 /// Conservative, review-only raster cleanup. It does not inpaint or invent
@@ -10,6 +11,41 @@ class GlobalIdCardReview {
   static const imageFields={'photo','logo','signature','seal'};
   static const textFields={'schoolName','schoolAddress','schoolLocation','schoolEmail','schoolContactNo','name','parentName','dob','class','section','rollNo','designation','subject','contact','address','pinCode','district','state','country','session','employeeId','bloodGroup','emergencyContact','academicSession','confirmedUniversalStudentUid'};
   static String kind(String key)=>imageFields.contains(key)?'image':key=='qr'?'qr':'text';
+  /// Suggest a QR role only when an actual embedded raster decodes uniquely.
+  /// The decoded sample string is never retained, displayed or returned.
+  static void suggestQr(List<Map<String,dynamic>> pages,List<Map<String,dynamic>> slots,Map<String,Uint8List> rasters){
+    if(slots.any((r)=>r['key']=='qr'))return;
+    final detected=<Map<String,dynamic>>[];
+    var inspected=0;
+    for(final page in pages){
+      final side=page['side'],bytes=rasters[side];
+      if(bytes==null||bytes.length>8*1024*1024)continue;
+      final source=img.decodePng(bytes);
+      if(source==null||source.width*source.height>20000000)continue;
+      final sx=source.width/(page['canvasWidth'] as num),sy=source.height/(page['canvasHeight'] as num);
+      for(final row in slots.where((r)=>r['side']==side&&r['key']==''&&r['kind']=='image')){
+        if(inspected>=24)return;
+        final w=(row['width'] as num).toDouble(),h=(row['height'] as num).toDouble();
+        if(w<=0||h<=0||w/h<.75||w/h>1.33)continue;
+        inspected++;
+        final x=((row['x'] as num)*sx).floor().clamp(0,source.width-1).toInt();
+        final y=((row['y'] as num)*sy).floor().clamp(0,source.height-1).toInt();
+        final right=(((row['x'] as num)+w)*sx).ceil().clamp(x+1,source.width).toInt();
+        final bottom=(((row['y'] as num)+h)*sy).ceil().clamp(y+1,source.height).toInt();
+        if(right-x<40||bottom-y<40)continue;
+        try{
+          var crop=img.copyCrop(source,x:x,y:y,width:right-x,height:bottom-y);
+          final long=math.max(crop.width,crop.height);
+          if(long>800)crop=img.copyResize(crop,width:(crop.width*800/long).round(),height:(crop.height*800/long).round(),interpolation:img.Interpolation.nearest);
+          final pixels=Int32List(crop.width*crop.height);
+          for(final p in crop)pixels[p.y*crop.width+p.x]=(p.r.toInt()<<16)|(p.g.toInt()<<8)|p.b.toInt();
+          final decoded=zx.QRCodeReader().decode(zx.BinaryBitmap(zx.HybridBinarizer(zx.RGBLuminanceSource(crop.width,crop.height,pixels))));
+          if(decoded.text.isNotEmpty)detected.add(row);
+        }catch(_){/* No reliable QR evidence; keep it unclassified. */}
+      }
+    }
+    if(detected.length==1)detected.single['key']='qr';
+  }
   static Uint8List cleanFlatRegions(Uint8List bytes,IdCardManifest manifest,String side){
     if(bytes.length>8*1024*1024)throw const FormatException('Source raster is too large.');
     final decoded=img.decodePng(bytes);

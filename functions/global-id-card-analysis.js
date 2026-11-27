@@ -5,7 +5,7 @@ const {mkdtemp,writeFile,readFile,stat,readdir,rm}=require('node:fs/promises');
 const {tmpdir}=require('node:os');
 const {join}=require('node:path');
 const run=promisify(execFile);
-const aliases={name:'name','student name':'name','teacher name':'name','father name':'parentName','father/guardian':'parentName','guardian name':'parentName','dob':'dob','d.o.b':'dob','date of birth':'dob',class:'class','roll no':'rollNo','roll number':'rollNo','ph no':'contact',phone:'contact',address:'address',pin:'pinCode',district:'district','school name':'schoolName',designation:'designation',subject:'subject'};
+const aliases={name:'name','student name':'name','teacher name':'name','father name':'parentName','father/guardian':'parentName','father/guardain':'parentName','father/guardian name':'parentName','father':'parentName','parent name':'parentName','guardian name':'parentName','dob':'dob','d.o.b':'dob','date of birth':'dob',class:'class','roll no':'rollNo','roll number':'rollNo','ph no':'contact',phone:'contact','phone no':'contact','contact no':'contact',contact:'contact',address:'address',pin:'pinCode','pin code':'pinCode',district:'district',dist:'district',state:'state',country:'country','school name':'schoolName',designation:'designation',subject:'subject'};
 const decode=s=>s.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&apos;/g,"'");
 function parseCandidates(xml){
  const pages=[...xml.matchAll(/<page\s+width="([\d.]+)"\s+height="([\d.]+)"[^>]*>([\s\S]*?)<\/page>/g)];
@@ -14,19 +14,38 @@ function parseCandidates(xml){
   const width=Number(page[1]),height=Number(page[2]);
   if(!Number.isFinite(width)||!Number.isFinite(height)||width<=0||height<=0||width*25.4/72>150||height*25.4/72>150)throw Object.assign(Error('PDF page is not a supported ID card size'),{status:400,publicMessage:true});
   const candidates=[];
-  for(const line of page[3].matchAll(/<line\b[^>]*>([\s\S]*?)<\/line>/g)){
-   const words=[...line[1].matchAll(/<word\s+xMin="([\d.]+)"\s+yMin="([\d.]+)"\s+xMax="([\d.]+)"\s+yMax="([\d.]+)"[^>]*>([^<]*)<\/word>/g)].map(w=>({x:+w[1],y:+w[2],right:+w[3],bottom:+w[4],text:decode(w[5])}));
-   const joined=words.map(w=>w.text).join(' ');
-   const match=joined.match(/^([^:]{1,40}):\s*(.+)$/);
-   const label=match&&match[1].trim().toLowerCase();
-   const key=label&&Object.hasOwn(aliases,label)?aliases[label]:null;
-   if(!key)continue;
-   let split=words.findIndex(w=>w.text.includes(':'));
-   if(split<0||split===words.length-1||!words[split].text.endsWith(':'))continue;
-   const value=words.slice(split+1);
-   const x=Math.min(...value.map(v=>v.x)),y=Math.min(...value.map(v=>v.y)),right=Math.max(...value.map(v=>v.right)),bottom=Math.max(...value.map(v=>v.bottom));
-   if(x<0||y<0||right>width||bottom>height||right<=x||bottom<=y)continue;
-   candidates.push({key,side:n?'back':'front',x,y,width:right-x,height:bottom-y,reviewRequired:true});
+  // Canva frequently stores labels and values as separate text objects.
+  // Group by vertical geometry rather than the PDF block boundaries.
+  const words=[...page[3].matchAll(/<word\s+xMin="([\d.]+)"\s+yMin="([\d.]+)"\s+xMax="([\d.]+)"\s+yMax="([\d.]+)"[^>]*>([^<]*)<\/word>/g)]
+    .slice(0,2048).map(w=>({x:+w[1],y:+w[2],right:+w[3],bottom:+w[4],text:decode(w[5]).trim()}))
+    .filter(w=>w.text&&w.x>=0&&w.y>=0&&w.right>w.x&&w.bottom>w.y&&w.right<=width&&w.bottom<=height);
+  words.sort((a,b)=>(a.y+a.bottom)-(b.y+b.bottom)||a.x-b.x);
+  const rows=[];
+  for(const word of words){
+   const overlap=r=>Math.min(r.bottom,word.bottom)-Math.max(r.y,word.y);
+   const row=rows.find(r=>overlap(r)>=.6*Math.min(r.bottom-r.y,word.bottom-word.y)&&
+    Math.abs((r.y+r.bottom-word.y-word.bottom)/2)<=.45*Math.max(r.bottom-r.y,word.bottom-word.y));
+   if(row)row.words.push(word);
+   else rows.push({y:word.y,bottom:word.bottom,words:[word]});
+  }
+  for(const row of rows){
+   const line=row.words.sort((a,b)=>a.x-b.x),anchors=[];
+   for(let i=0;i<line.length;i++){
+    if(!line[i].text.endsWith(':'))continue;
+    // A combined label/value in the same word has no separable bbox.
+    for(let j=Math.max(0,i-4);j<=i;j++){
+     const label=line.slice(j,i+1).map(w=>w.text).join(' ').replace(/:\s*$/,'').trim().toLowerCase();
+     if(!Object.hasOwn(aliases,label))continue;
+     anchors.push({start:j,end:i,key:aliases[label]});break;
+    }
+   }
+   for(let i=0;i<anchors.length;i++){
+    const a=anchors[i],value=line.slice(a.end+1,anchors[i+1]?.start??line.length);
+    if(!value.length||value.some(w=>w.text.endsWith(':')))continue;
+    const x=Math.min(...value.map(v=>v.x)),y=Math.min(...value.map(v=>v.y)),right=Math.max(...value.map(v=>v.right)),bottom=Math.max(...value.map(v=>v.bottom));
+    if(x<0||y<0||right>width||bottom>height||right<=x||bottom<=y)continue;
+    candidates.push({key:a.key,side:n?'back':'front',x,y,width:right-x,height:bottom-y,reviewRequired:true});
+   }
   }
   return {side:n?'back':'front',canvasWidth:width,canvasHeight:height,printWidthMm:width*25.4/72,printHeightMm:height*25.4/72,candidates:candidates.slice(0,128)};
  });
