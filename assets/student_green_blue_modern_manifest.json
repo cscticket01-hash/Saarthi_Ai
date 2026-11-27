@@ -31,6 +31,21 @@
       "maxLines": 2
     },
     {
+      "key": "schoolLocation",
+      "side": "front",
+      "kind": "text",
+      "x": 96,
+      "y": 64,
+      "width": 370,
+      "height": 13,
+      "fontSize": 10,
+      "minFontSize": 7,
+      "label": "",
+      "textColor": "#ffffff",
+      "align": "center",
+      "wrap": false
+    },
+    {
       "key": "photo",
       "side": "front",
       "kind": "image",

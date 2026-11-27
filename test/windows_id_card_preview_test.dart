@@ -5,6 +5,8 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../lib/windows_document_templates.dart';
 import '../lib/windows_local_firestore.dart';
 import '../lib/windows_runtime_flags.dart';
+import '../lib/id_card_school_branding.dart';
+import '../lib/windows_school_image_cache.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -154,6 +156,35 @@ void main() {
     expect(card!.images.containsKey('seal'), isFalse);
     await expectLater(WindowsDocumentTemplates.nativePersonCard(
       'otherStaffId', {'schoolId': school, 'name': 'Synthetic'}), throwsStateError);
+  });
+  test('Green Blue saved branding supports inline and school-scoped cached file IDs', () async {
+    const pixel = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGMwaDgAAAJUAXHIMWMAAAAAAElFTkSuQmCC';
+    await WindowsSchoolImageCache.store(school,'synthetic-logo','data:image/png;base64,$pixel');
+    await db.collection('school_config').doc('school_profile_cache').set({
+      'schoolId': school, 'schoolName':'Saved School','address':'Saved address',
+      'logoFileId':'synthetic-logo','principalSignatureBase64':pixel,
+      'sealBase64':'data:image/png;base64,$pixel',
+    });
+    // The URL resolver must preserve existing private-school Drive identity.
+    expect(idCardBrandingSource({'logoFileId':'synthetic-logo'},'logo'),
+      'https://drive.google.com/file/d/synthetic-logo/view');
+    // Inline values need no connection; test them independently from managed cloud.
+    await db.collection('school_config').doc('school_profile_cache').set({
+      'schoolId':school,'schoolName':'Saved School','address':'Saved address',
+      'logoBase64':pixel,'principalSignatureBase64':pixel,
+      'sealBase64':'data:image/png;base64,$pixel',
+    });
+    final card = await WindowsDocumentTemplates.nativePersonCard('studentId',{
+      'schoolId':school,'name':'Synthetic student','roll':'7',
+    },selection:'manifest:student-green-blue-modern-v1');
+    expect(card!.data['schoolLocation'],'Saved address');
+    expect(card.data['rollNo'],'7');
+    for(final key in ['logo','signature','seal']) {
+      expect(card.images[key],orderedEquals(base64Decode(pixel)));
+    }
+    expect((await db.collection('_windows_document_outbox').get()).docs,isEmpty);
+    expect(idCardBrandingSource({'logoUrl':'data:image/png;base64,%%%', 'logoBase64':pixel},'logo'),
+      'data:image/png;base64,%%%');
   });
   test('a photo-backed ID keeps its interactive PDF preview', () async {
     final bytes = await WindowsDocumentTemplates.selected('studentId', {

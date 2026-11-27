@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import '../lib/id_card_manifest.dart';
 import '../lib/id_card_native_preview.dart';
+import '../lib/teacher_reference_native_preview.dart';
 
 void main() {
   final template=IdCardManifest.fromJson({
@@ -30,8 +31,8 @@ void main() {
     expect(front.top, back.top);
     expect(front.size, back.size);
     expect(count,0);
-    await tester.ensureVisible(find.text('Download full PDF'));
-    await tester.tap(find.text('Download full PDF'));
+    await tester.ensureVisible(find.text('Download ID Card'));
+    await tester.tap(find.text('Download ID Card'));
     await tester.pumpAndSettle();
     expect(count,1);
   });
@@ -83,7 +84,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(sides,[false]);
   });
-  testWidgets('Green Blue Modern only invokes export on Download ID Card', (tester) async {
+  testWidgets('Green Blue Modern invokes Print and Download only on explicit actions', (tester) async {
     final frontOnly = IdCardManifest.fromJson({
       'id':'student-green-blue-modern-v1','version':1,'canvasWidth':100,'canvasHeight':60,
       'printWidthMm':85.6,'printHeightMm':51.36,
@@ -95,11 +96,15 @@ void main() {
       onPrintDocument:(_) async { prints++; })));
     await tester.pumpAndSettle();
     expect(downloads,0); expect(prints,0);
-    expect(find.text('Print'),findsNothing);
+    expect(find.text('Print'),findsOneWidget);
+    await tester.ensureVisible(find.text('Print'));
+    await tester.tap(find.text('Print'));
+    await tester.pumpAndSettle();
+    expect(prints,1); expect(downloads,0);
     await tester.ensureVisible(find.text('Download ID Card'));
     await tester.tap(find.text('Download ID Card'));
     await tester.pumpAndSettle();
-    expect(downloads,1); expect(prints,0);
+    expect(downloads,1); expect(prints,1);
   });
   testWidgets('a front-only manifest renders without a back-side selector', (tester) async {
     final frontOnly = IdCardManifest.fromJson({
@@ -130,6 +135,46 @@ void main() {
     expect(printed, [true]);
   });
 
+  testWidgets('popup preserves dashboard and closes without generating output', (tester) async {
+    var renders=0;
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: Builder(builder: (context) =>
+      Column(children:[const Text('School Admin Console'), TextButton(
+        onPressed:()=>NativeIdCardPreview.open(context, (_)=>NativeIdCardPreview(
+          template:template, data:const {'name':'Synthetic','backText':'Details'},
+          onDownload:() async { renders++; }, onPrintDocument:(_) async { renders++; })),
+        child:const Text('View ID Card'))])))));
+    await tester.tap(find.text('View ID Card'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('id-card-preview-dialog')),findsOneWidget);
+    expect(find.text('School Admin Console'),findsOneWidget);
+    expect(renders,0);
+    await tester.tap(find.byTooltip('Close'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('id-card-preview-dialog')),findsNothing);
+    expect(find.text('School Admin Console'),findsOneWidget);
+    expect(renders,0);
+  });
+
+  for(var i=0;i<4;i++) {
+    testWidgets('legacy teacher design $i paints both native sides without export',(tester) async {
+      final geometry=teacherReferencePreviewGeometry(i);
+      final sides=teacherReferenceNativeSides(i,{'name':'Synthetic teacher','schoolName':'Synthetic school'}, {}, '');
+      var exports=0;
+      await tester.pumpWidget(MaterialApp(home:NativeIdCardPreview(
+        template:geometry,data:const {},sideBuilder:(side)=>side=='front'?sides.front:sides.back,
+        onPrintDocument:(_)async{exports++;},onDownload:()async{exports++;})));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(),isNull);
+      expect(exports,0);
+      final front=tester.getRect(find.byKey(const ValueKey('id-card-front')));
+      final back=tester.getRect(find.byKey(const ValueKey('id-card-back')));
+      expect(front.right,lessThan(back.left));expect(front.size,back.size);
+      expect(geometry.width>geometry.height,i==2);
+      expect(find.text('Synthetic teacher'),findsOneWidget);
+      await tester.tap(find.text('Download ID Card'));
+      await tester.pumpAndSettle();expect(exports,1);
+    });
+  }
   testWidgets('narrow preview keeps equal sides in one row and actions below', (tester) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(350, 650);
@@ -146,7 +191,7 @@ void main() {
     expect(front.size, back.size);
     expect(back.right, lessThanOrEqualTo(350));
     expect(tester.getTopLeft(find.text('Print')).dy, greaterThan(back.bottom));
-    expect(tester.getTopLeft(find.text('Download full PDF')).dy,
+    expect(tester.getTopLeft(find.text('Download ID Card')).dy,
         greaterThan(tester.getTopLeft(find.text('Print')).dy));
     expect(tester.takeException(), isNull);
   });
