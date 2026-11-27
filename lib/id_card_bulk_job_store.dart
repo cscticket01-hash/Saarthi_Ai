@@ -124,6 +124,9 @@ class IdCardBulkJobStore {
       onProgress: onProgress,
     );
     final bytes = rendered.pdf;
+    if (bytes.length > 64 * 1024 * 1024) {
+      throw const FormatException('Bulk PDF exceeds existing local storage limit. Download fewer students per batch.');
+    }
     final hash = sha256.convert(bytes).toString();
     // Never publish the PDF before its exact source and scope are checked.
     await _serial(jobId, () => Isolate.run(() => _withJobLock(storageRoot, boundSchool, jobId, (meta, pdf) async {

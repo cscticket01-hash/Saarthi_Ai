@@ -9,6 +9,8 @@ import 'package:pdf/widgets.dart' as pw;
 
 import 'id_card_engine.dart';
 import 'id_card_manifest.dart';
+import 'id_card_catalog.dart';
+import 'school_media_budgets.dart';
 import 'school_qr_link.dart';
 
 Object? _canonical(Object? value, [int depth = 0]) {
@@ -52,6 +54,9 @@ Map<String, dynamic> _serializeTemplate(IdCardManifest template) => {
         'side': r.side,
         'kind': r.kind,
         'fit': r.fit,
+        if (r.shape != 'rect') 'shape': r.shape,
+        if (r.rotation != 0) 'rotation': r.rotation,
+        if (template.id == IdCardCatalogEntry.greenBlueId) 'textColor': r.textColor,
         'align': r.align,
         'label': r.label,
         'required': r.isRequired,
@@ -205,9 +210,10 @@ class IdCardBulkPlan {
     this.backPlacement = IdCardBackPlacement.mirrorColumns,
   }) : _printWidthMm = template.printWidth,
        _printHeightMm = template.printHeight,
+       _hasBack = template.hasBack,
        _templateJson = jsonEncode(_canonical(_serializeTemplate(template))),
        students = List.unmodifiable(students) {
-    if (!template.hasBack) {
+    if (!template.hasBack && template.id != IdCardCatalogEntry.greenBlueId) {
       throw const FormatException('Duplex bulk printing requires a front and back template.');
     }
     if (students.isEmpty ||
@@ -228,6 +234,11 @@ class IdCardBulkPlan {
     if (template.regions.length > 128)
       throw const FormatException('Bulk template region limit exceeded.');
     for (final student in students) {
+      if (template.id == IdCardCatalogEntry.greenBlueId &&
+          (student._backgrounds['front'] == null ||
+           !IdCardCatalogEntry.isApprovedGreenBlueArtwork(student._backgrounds['front']!))) {
+        throw const FormatException('Original approved Green Blue Modern artwork is missing or changed.');
+      }
       assetBytes += [
         ...student._images.values,
         ...student._backgrounds.values,
@@ -264,6 +275,7 @@ class IdCardBulkPlan {
   }
   final String _templateJson;
   final double _printWidthMm, _printHeightMm;
+  final bool _hasBack;
   final List<IdCardBulkStudent> students;
   final bool landscape;
   final double gapMm, minimumMarginMm;
@@ -281,6 +293,7 @@ class IdCardBulkPlan {
           .floor();
   int get capacity => columns * rows;
   int get sheetCount => (students.length / capacity).ceil();
+  int get sidesPerSheet => _hasBack ? 2 : 1;
   double get leftMarginMm =>
       (paperWidthMm - columns * _printWidthMm - (columns - 1) * gapMm) / 2;
   double get topMarginMm =>
@@ -288,6 +301,7 @@ class IdCardBulkPlan {
   Map<String, dynamic> placement(int index, {required bool back}) {
     if (index < 0 || index >= students.length)
       throw RangeError.index(index, students);
+    if (back && !_hasBack) throw StateError('Front-only ID template.');
     final slot = index % capacity;
     var row = slot ~/ columns, column = slot % columns;
     if (back && backPlacement == IdCardBackPlacement.mirrorColumns)
@@ -295,7 +309,7 @@ class IdCardBulkPlan {
     if (back && backPlacement == IdCardBackPlacement.mirrorRows)
       row = rows - 1 - row;
     return {
-      'page': 2 * (index ~/ capacity) + (back ? 1 : 0),
+      'page': sidesPerSheet * (index ~/ capacity) + (back ? 1 : 0),
       'leftMm': leftMarginMm + column * (_printWidthMm + gapMm),
       'topMm': topMarginMm + row * (_printHeightMm + gapMm),
       'widthMm': _printWidthMm,
@@ -312,13 +326,14 @@ class IdCardBulkPlan {
     'gapMm': gapMm,
     'minimumMarginMm': minimumMarginMm,
     'backPlacement': backPlacement.name,
-    'pageCount': sheetCount * 2,
+    'pageCount': sheetCount * sidesPerSheet,
+    if (template.id == IdCardCatalogEntry.greenBlueId) 'templateId': template.id,
     'cards': [
       for (var i = 0; i < students.length; i++)
         {
           ...students[i]._identity,
           'front': placement(i, back: false),
-          'back': placement(i, back: true),
+          if (_hasBack) 'back': placement(i, back: true),
         },
     ],
   };
@@ -420,6 +435,8 @@ class IdCardBulkEngine {
     guard();
     final pdf = pw.Document(theme: pw.ThemeData.withFont(base: font));
     final template = plan.template;
+    final fullResolution = template.id == IdCardCatalogEntry.greenBlueId;
+    final backgroundImageCache = <String, pw.MemoryImage>{};
     for (var sheet = 0; sheet < plan.sheetCount; sheet++) {
       final start = sheet * plan.capacity;
       final end = math.min(start + plan.capacity, plan.students.length);
@@ -435,10 +452,11 @@ class IdCardBulkEngine {
             images: student.images,
             backgrounds: student.backgrounds,
             font: font,
+            printMediaStage: fullResolution ? 2 : 0,
           ),
         );
       }
-      for (final back in [false, true]) {
+      for (final back in [false, if (template.hasBack) true]) {
         guard();
         pdf.addPage(
           pw.Page(
@@ -465,6 +483,7 @@ class IdCardBulkEngine {
                         fit: pw.BoxFit.contain,
                         child: prepared[index - start].buildSide(
                           back ? 'back' : 'front',
+                          backgroundImageCache: fullResolution ? backgroundImageCache : null,
                         ),
                       ),
                     ),
@@ -482,6 +501,7 @@ class IdCardBulkEngine {
     }
     final bytes = await pdf.save();
     guard();
+    if (fullResolution) SchoolMediaBudgets.verifyPrintPdf(bytes);
     return IdCardBulkResult(bytes, fingerprint, plan.manifest);
   }
 }

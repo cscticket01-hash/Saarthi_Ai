@@ -30,6 +30,7 @@ void main() {
     String? classId,
     Map<String, dynamic>? data,
     Map<String, Uint8List> images = const {},
+    Map<String, Uint8List> backgrounds = const {},
   }) {
     final id = 'synthetic-$index';
     return IdCardBulkStudent(
@@ -50,6 +51,7 @@ void main() {
             'rollNo': '$index',
           },
       images: images,
+      backgrounds: backgrounds,
     );
   }
 
@@ -165,6 +167,22 @@ void main() {
     },
   );
 
+  test('Green Blue Modern bulk keeps front-only layout and original artwork', () async {
+    final m = IdCardManifest.fromJson(jsonDecode(File('assets/student_green_blue_modern_manifest.json').readAsStringSync()) as Map<String,dynamic>);
+    final artwork = File('assets/student_green_blue_modern_front.png').readAsBytesSync();
+    final plan = IdCardBulkPlan(template:m, students:[
+      for (var i=0;i<2;i++) student(i, backgrounds:{'front':artwork}),
+    ]);
+    expect(plan.sidesPerSheet, 1);
+    expect(plan.manifest['pageCount'], 1);
+    expect((plan.manifest['cards'] as List).first.containsKey('back'), isFalse);
+    final restored = IdCardBulkPlan.fromDurableSnapshot(plan.durableSnapshot);
+    expect(restored.selectionFingerprint, plan.selectionFingerprint);
+    expect(restored.template.regions.singleWhere((r)=>r.key=='photo').shape,'oval');
+    expect(restored.template.regions.singleWhere((r)=>r.key=='confirmedUniversalStudentUid').rotation,-90);
+    final result = await IdCardBulkEngine.render(restored);
+    expect(RegExp(r'/Type\s*/Page\b').allMatches(latin1.decode(result.pdf)).length,1);
+  });
   test('real application bulk rendering preserves A4 two-sided page counts and no partial cancel result', () async {
     final selection = plan(10);
     final progress = <int>[];

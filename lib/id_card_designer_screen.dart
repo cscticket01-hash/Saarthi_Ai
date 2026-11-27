@@ -40,6 +40,11 @@ class _DesignerState extends State<IdCardDesignerScreen> {
   bool saving = false;
   String? error;
   IdCardDesigner get editor => widget.designer;
+  Widget _regionGeometry(IdCardRegion r, Widget child) {
+    if (r.shape == 'oval') return ClipOval(child: child);
+    if (r.rotation == -90) return RotatedBox(quarterTurns: 3, child: child);
+    return child;
+  }
   void edit(void Function() action) {
     try {
       action();
@@ -179,7 +184,7 @@ class _DesignerState extends State<IdCardDesignerScreen> {
                                 ),
                               ),
                               child: ClipRect(
-                                child:
+                                child: _regionGeometry(r,
                                     r.kind == 'image' &&
                                         widget.images[r.key] != null
                                     ? Image.memory(
@@ -207,7 +212,7 @@ class _DesignerState extends State<IdCardDesignerScreen> {
                                         ),
                                         maxLines: r.maxLines,
                                         overflow: TextOverflow.ellipsis,
-                                      ),
+                                      )),
                               ),
                             ),
                           ),

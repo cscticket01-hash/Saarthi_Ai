@@ -87,6 +87,24 @@ void main() {
     await tester.pumpAndSettle();
     expect(sides,[true,false]);
   });
+  testWidgets('Green Blue Modern only invokes export on Download ID Card', (tester) async {
+    final frontOnly = IdCardManifest.fromJson({
+      'id':'student-green-blue-modern-v1','version':1,'canvasWidth':100,'canvasHeight':60,
+      'printWidthMm':85.6,'printHeightMm':51.36,
+      'regions':[{'key':'name','side':'front','kind':'text','x':2,'y':2,'width':90,'height':20,'fontSize':12}],
+    });
+    var downloads = 0, prints = 0;
+    await tester.pumpWidget(MaterialApp(home:NativeIdCardPreview(template:frontOnly,
+      data:const {'name':'Synthetic student'}, onDownload:() async { downloads++; },
+      onPrintDocument:(_) async { prints++; })));
+    await tester.pumpAndSettle();
+    expect(downloads,0); expect(prints,0);
+    expect(find.text('Print'),findsNothing);
+    await tester.ensureVisible(find.text('Download ID Card'));
+    await tester.tap(find.text('Download ID Card'));
+    await tester.pumpAndSettle();
+    expect(downloads,1); expect(prints,0);
+  });
   testWidgets('a front-only manifest renders without a back-side selector', (tester) async {
     final frontOnly = IdCardManifest.fromJson({
       'id': 'test-front-only', 'version': 1, 'canvasWidth': 100, 'canvasHeight': 60,

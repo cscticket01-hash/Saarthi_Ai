@@ -288,6 +288,7 @@ class IdCardLayout {
     int printDpi = 300,
     int jpegQuality = 88,
     Map<String, pw.MemoryImage>? imageCache,
+    bool lossless = false,
   }) =>
       pw.LayoutBuilder(
         builder: (_, bounds) {
@@ -306,7 +307,10 @@ class IdCardLayout {
           final printPixels = (math.max(bounds.maxWidth, bounds.maxHeight) *
                   2.1 * printDpi / 300).ceil()
               .clamp(printDpi < 300 ? 72 : 96, 480).toInt();
-          final prepared = preparePdfImage(
+          final prepared = lossless
+            ? prepareImage(bytes, aspect: bounds.maxWidth / bounds.maxHeight,
+                cover: cover, focusX: focusX, focusY: focusY)
+            : preparePdfImage(
             bytes,
             aspect: bounds.maxWidth / bounds.maxHeight,
             cover: cover,

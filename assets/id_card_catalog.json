@@ -1,7 +1,7 @@
 [
   {
     "id": "student-maroon-gold-v1",
-    "name": "Maroon & Gold \u2022 Front + Back",
+    "name": "Maroon & Gold • Front + Back",
     "manifest": "assets/student_maroon_gold_manifest.json",
     "kinds": [
       "studentId"
@@ -13,13 +13,24 @@
     "id": "student-svn-navy-green-v1",
     "name": "SVN Navy & Green • Front + Back (Clean Photo)",
     "manifest": "assets/student_svn_navy_green_manifest.json",
-    "kinds": ["studentId"],
+    "kinds": [
+      "studentId"
+    ],
     "frontAsset": "assets/student_svn_navy_green_front.png",
     "backAsset": "assets/student_svn_navy_green_back.png"
   },
   {
+    "id": "student-green-blue-modern-v1",
+    "name": "Green Blue Modern • Front only",
+    "manifest": "assets/student_green_blue_modern_manifest.json",
+    "kinds": [
+      "studentId"
+    ],
+    "frontAsset": "assets/student_green_blue_modern_front.png"
+  },
+  {
     "id": "school-id-v1",
-    "name": "School ID \u2022 Manifest Front + Back",
+    "name": "School ID • Manifest Front + Back",
     "manifest": "assets/school_id_manifest_v1.json",
     "kinds": [
       "teacherId",
