@@ -159,19 +159,6 @@ class WindowsDocumentTemplates {
     final schoolName = [profile['schoolName'],profile['name'],data['schoolName']]
       .map((value) => value?.toString().trim() ?? '')
       .firstWhere((value) => value.isNotEmpty, orElse: () => '');
-    final brandingSources = [data['schoolLogoUrl'] ?? profile['logoUrl'],
-      data['principalSignatureUrl'] ?? profile['principalSignatureUrl'],profile['sealUrl']];
-    final assets = await Future.wait<Uint8List?>([
-      _personPhoto(data), _image(brandingSources[0]), _image(brandingSources[1]),
-      _image(brandingSources[2]),
-    ]);
-    checkSchool();
-    for (var i=0;i<brandingSources.length;i++) {
-      if ((brandingSources[i]?.toString().trim() ?? '').isNotEmpty &&
-          (assets[i+1] == null || assets[i+1]!.isEmpty)) {
-        throw StateError('Configured school logo, signature or seal is unavailable. Existing ID retained.');
-      }
-    }
     final reviewed = kind == 'studentId' && v is String && v.startsWith('reviewed:')
         ? await WindowsIdCardDesignerEntry.reviewed(v,school?.toString() ?? 'local:$origin')
         : null;
@@ -185,6 +172,26 @@ class WindowsDocumentTemplates {
     final cardData = manifest.id == greenBlueStudentTemplateId
         ? await greenBlueStudentData(data) : data;
     checkSchool();
+    // School Data is authoritative; load only branding used by this manifest.
+    Object? source(String slot, String field) =>
+        manifest.regions.any((r) => r.kind == 'image' && r.key == slot)
+            ? profile[field] : null;
+    final brandingSources = [
+      source('logo', 'logoUrl'),
+      source('signature', 'principalSignatureUrl'),
+      source('seal', 'sealUrl'),
+    ];
+    final assets = await Future.wait<Uint8List?>([
+      _personPhoto(data),
+      for (final branding in brandingSources) _image(branding),
+    ]);
+    checkSchool();
+    for (var i = 0; i < brandingSources.length; i++) {
+      if ((brandingSources[i]?.toString().trim() ?? '').isNotEmpty &&
+          (assets[i + 1] == null || assets[i + 1]!.isEmpty)) {
+        throw StateError('Configured school logo, signature or seal is unavailable. Existing ID retained.');
+      }
+    }
     return (
       template: manifest,
       data: <String,dynamic>{...profile,...cardData,'schoolName':schoolName,
@@ -391,7 +398,8 @@ class WindowsDocumentTemplates {
       }
     }
     qr = IdCardEngine.compactQr(qr);
-    final rendered = await _selected(kind, data, qr: qr,printOnly:printOnly);
+    final rendered = await _selected(kind, data, qr: qr,printOnly:printOnly,
+        personPreview: previewOnly || printOnly);
     final bytes = rendered == null ? null : printOnly
         ? SchoolMediaBudgets.verifyPrintPdf(rendered)
         : SchoolMediaBudgets.verifyGeneratedPdf(kind, rendered);
@@ -851,6 +859,7 @@ class WindowsDocumentTemplates {
     String qr = '',
     Object? selectionOverride,
     bool printOnly=false,
+    bool personPreview=false,
   }) async {
     final origin = FirebaseFirestore.instance.activeProfileId;
     if (data['schoolId'] != null &&
@@ -921,13 +930,23 @@ class WindowsDocumentTemplates {
         'paidPaise':data['paidPaise']??0,
       },schoolName:schoolName,plain:plain);
     }
-    final brandingSources = [data['schoolLogoUrl'] ?? profile['logoUrl'],
-      data['principalSignatureUrl'] ?? profile['principalSignatureUrl'], profile['sealUrl']];
+    final useSchoolBranding = personPreview && personKind(kind);
+    if (useSchoolBranding && profile['schoolId'] != null &&
+        profile['schoolId'] != FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']) {
+      throw StateError('Foreign school branding cannot be used.');
+    }
+    // Legacy teacher layouts have logo/signature slots but no seal slot.
+    final legacyTeacher = useSchoolBranding && kind == 'teacherId' && v is num;
+    final brandingSources = [
+      useSchoolBranding ? profile['logoUrl'] : data['schoolLogoUrl'] ?? profile['logoUrl'],
+      useSchoolBranding ? profile['principalSignatureUrl'] : data['principalSignatureUrl'] ?? profile['principalSignatureUrl'],
+      legacyTeacher ? null : profile['sealUrl'],
+    ];
     final assets = await Future.wait<Uint8List?>([
       _personPhoto(data),
-      _image(data['schoolLogoUrl'] ?? profile['logoUrl']),
-      _image(data['principalSignatureUrl'] ?? profile['principalSignatureUrl']),
-      _image(kind == 'receipt' ? (data['schoolSealUrl'] ?? profile['sealUrl']) : profile['sealUrl']),
+      _image(brandingSources[0]),
+      _image(brandingSources[1]),
+      _image(kind == 'receipt' ? (data['schoolSealUrl'] ?? profile['sealUrl']) : brandingSources[2]),
     ]);
     if (FirebaseFirestore.instance.activeProfileId != origin)
       throw StateError('School changed during document preview.');
@@ -1092,13 +1111,29 @@ class WindowsDocumentTemplates {
       }
     }
     if (kind == 'payslip') return renderWindowsPayslip({...data, ...{'netPaise':2850000,'paidPaise':2000000,'basicPaise':2500000,'allowancePaise':400000,'deductionPaise':50000,'role':'Teacher','month':'2026-10','status':'Part paid'}},schoolName:branding['schoolName']?.toString()??'');
+    final school = FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'];
+    if (personKind(kind) && profile['schoolId'] != null &&
+        profile['schoolId'] != school) {
+      throw StateError('Foreign school branding cannot be used.');
+    }
+    final legacyTeacher = kind == 'teacherId' && index >= 0 &&
+        index < windowsReferenceDocumentNames['teacherId']!.length;
+    final brandingSources = [profile['logoUrl'], profile['principalSignatureUrl'],
+      legacyTeacher ? null : profile['sealUrl']];
     final images = await Future.wait<Uint8List?>([
-      _image(profile['logoUrl']),
-      _image(profile['principalSignatureUrl']),
-      _image(profile['sealUrl']),
+      for (final source in brandingSources) _image(source),
     ]);
-    if (FirebaseFirestore.instance.activeProfileId != origin)
+    if (FirebaseFirestore.instance.activeProfileId != origin ||
+        FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] != school)
       throw StateError('School changed during template preview.');
+    if (personKind(kind)) {
+      for (var i = 0; i < brandingSources.length; i++) {
+        if ((brandingSources[i]?.toString().trim() ?? '').isNotEmpty &&
+            (images[i] == null || images[i]!.isEmpty)) {
+          throw StateError('Configured school branding is unavailable. Retry preview.');
+        }
+      }
+    }
     final legacyCount = kind == 'studentId'
         ? windowsStudentIdNames.length
         : kind == 'teacherId'
@@ -1537,12 +1572,13 @@ class _SchoolDocumentTemplatesScreenState
     final kind=_kind;
     final title=index<0?'Plain White preview':_names[kind]![index];
     final entry = _manifestEntry(kind, index);
-    if (entry != null) {
+    if (entry != null || (WindowsDocumentTemplates.personKind(kind) && index == -1)) {
       try {
         final db = FirebaseFirestore.instance;
         final profile = db.activeProfileId;
         final card = await WindowsDocumentTemplates.nativePersonCard(
-          kind, _sample, selection: 'manifest:${entry.id}',
+          kind, _sample, selection: entry == null
+              ? WindowsDocumentTemplates.plainSelection : 'manifest:${entry.id}',
         );
         if (!mounted || db.activeProfileId != profile || card == null) return;
         await Navigator.of(context).push<void>(MaterialPageRoute(builder: (_) =>

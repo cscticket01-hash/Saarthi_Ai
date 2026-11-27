@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -30,7 +31,7 @@ class NativeIdCardPreview extends StatefulWidget {
 }
 
 class _NativeIdCardPreviewState extends State<NativeIdCardPreview> {
-  bool both = true, busy = false;
+  bool busy = false;
   String? error;
   final printBoundaries = {'front': GlobalKey(), 'back': GlobalKey()};
 
@@ -75,10 +76,12 @@ class _NativeIdCardPreviewState extends State<NativeIdCardPreview> {
       maxLines: r.maxLines, overflow: r.overflow == 'ellipsis' ? TextOverflow.ellipsis : TextOverflow.clip);
     return r.rotation == -90 ? RotatedBox(quarterTurns: 3, child: text) : text;
   }
-  Widget side(String name, Map<String, dynamic> data, String qr) {
+  Widget side(String name, Map<String, dynamic> data, String qr, double height) {
     final m = widget.template;
     return SizedBox(
-      height: 380, child: FittedBox(fit: BoxFit.contain,
+      key: ValueKey('id-card-$name'),
+      width: height * m.width / m.height,
+      height: height, child: FittedBox(fit: BoxFit.contain,
         child: RepaintBoundary(
           key: printBoundaries[name],
           child: SizedBox(width: m.width, height: m.height, child: ColoredBox(
@@ -109,11 +112,11 @@ class _NativeIdCardPreviewState extends State<NativeIdCardPreview> {
   Future<void> printCards(String qr) async {
     final template = widget.template;
     if (widget.onPrintDocument != null) {
-      await widget.onPrintDocument!(!both || !template.hasBack);
+      await widget.onPrintDocument!(!template.hasBack);
       return;
     }
     final ratio = template.printWidth * 300 / 25.4 / template.width;
-    final sides = both && template.hasBack ? const ['front', 'back'] : const ['front'];
+    final sides = template.hasBack ? const ['front', 'back'] : const ['front'];
     final pages = <({Uint8List png, int width, int height})>[];
     for (final side in sides) {
       final boundary = printBoundaries[side]?.currentContext?.findRenderObject();
@@ -141,22 +144,30 @@ class _NativeIdCardPreviewState extends State<NativeIdCardPreview> {
     final data = IdCardEngine.normalizedInput(widget.template, widget.data);
     final qr = IdCardEngine.compactQr(widget.qr);
     final missing = widget.template.regions.where((r) => r.isRequired &&
-      ((both && widget.template.hasBack) || r.side == 'front') &&
       (r.kind == 'image' ? widget.images[r.key] == null :
         r.kind == 'qr' ? qr.isEmpty : (data[r.key]?.toString().trim().isEmpty ?? true)));
     return Scaffold(appBar: AppBar(title: const Text('ID Card • Native preview')),
       body: ListView(padding: const EdgeInsets.all(16), children: [
-        if (widget.template.hasBack) SegmentedButton<bool>(segments: const [
-          ButtonSegment(value: false, label: Text('Front only')),
-          ButtonSegment(value: true, label: Text('Front + back')),
-        ], selected: {both}, onSelectionChanged: busy ? null : (v) => setState(() => both = v.single)),
         const SizedBox(height: 12),
         if (missing.isNotEmpty) Text('Missing template fields: ' + missing.map((r) => r.key).join(', '),
           style: TextStyle(color: Theme.of(context).colorScheme.error)),
-        Column(children: [
-          side('front', data, qr),
-          if (both && widget.template.hasBack) ...[const SizedBox(height: 12), side('back', data, qr)],
-        ]),
+        LayoutBuilder(builder: (context, constraints) {
+          final template = widget.template;
+          final count = template.hasBack ? 2 : 1;
+          final gap = template.hasBack
+              ? math.min(12.0, constraints.maxWidth / 4) : 0.0;
+          final available = (constraints.maxWidth - gap) / count;
+          final height = math.min(380.0,
+              available * template.height / template.width);
+          return Center(child: Row(mainAxisSize: MainAxisSize.min,
+            textDirection: TextDirection.ltr, children: [
+            side('front', data, qr, height),
+            if (template.hasBack) ...[
+              SizedBox(width: gap),
+              side('back', data, qr, height),
+            ],
+          ]));
+        }),
         const SizedBox(height: 12),
         const Text('Native visual preview. PDF export uses the verified print renderer.'),
         if (error != null) Text(error!),

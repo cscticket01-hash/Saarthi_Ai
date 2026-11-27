@@ -330,8 +330,9 @@ Future<Uint8List> _renderWindowsReferenceDocument({
                 );
   pw.Widget asset(Uint8List? bytes, String placeholder, {bool cover = false}) =>
       bytes == null
-          ? pw.Center(
-              child: label(placeholder, size: 11, color: PdfColors.grey600))
+          ? (kind == 'teacherId' && !cover
+              ? pw.SizedBox()
+              : pw.Center(child: label(placeholder, size: 11, color: PdfColors.grey600)))
           : pw.ClipRect(
               child: kind == 'teacherId'
                   ? IdCardLayout.image(bytes, cover: cover, imageCache: imageCache,

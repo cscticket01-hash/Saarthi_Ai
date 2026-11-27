@@ -14906,7 +14906,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
         previewOnly: true,printOnly:true);
     if (bytes != null && mounted) {
       await WindowsDocumentTemplates.preview(context, bytes,
-          title: 'Teacher ID card • Front & back',
+          title: 'Teacher ID card',
           notice: 'Android login needs this ID card record synced to the school backend and the matching Android app update.',
           onPrint: () async {
             try { if(mounted) await WindowsBrowserPrint.open(context,bytes,title:'Teacher ID card',preserveActualSize:true); }

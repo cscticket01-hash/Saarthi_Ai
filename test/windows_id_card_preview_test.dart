@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -94,6 +95,66 @@ void main() {
       expect((await db.collection('_windows_document_outbox').get()).docs,isEmpty);
     });
   }
+  test('native ID uses only saved school branding and template slots', () async {
+    const pixel = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGMwaDgAAAJUAXHIMWMAAAAAAElFTkSuQmCC';
+    const saved = 'data:image/png;base64,$pixel';
+    const stale = 'data:image/png;base64,%%%';
+    await db.collection('school_config').doc('school_profile_cache').set({
+      'schoolId': school, 'schoolName': 'Saved School',
+      'logoUrl': saved, 'principalSignatureUrl': saved, 'sealUrl': saved,
+    });
+    for (final kind in ['studentId', 'teacherId', 'otherStaffId']) {
+      final card = await WindowsDocumentTemplates.nativePersonCard(kind, {
+        'schoolId': school, 'name': 'Synthetic', 'schoolName': 'Old School',
+        'schoolLogoUrl': stale, 'principalSignatureUrl': stale,
+        'schoolSealUrl': stale,
+      });
+      expect(card!.data['schoolName'], 'Saved School');
+      for (final key in ['logo', 'signature', 'seal']) {
+        expect(card.images[key], orderedEquals(base64Decode(pixel)));
+      }
+    }
+    final decorative = await WindowsDocumentTemplates.nativePersonCard(
+      'studentId', {'schoolId': school, 'name': 'Synthetic'},
+      selection: 'manifest:student-maroon-gold-v1');
+    expect(decorative!.images.containsKey('seal'), isFalse);
+    expect(decorative.images['logo'], orderedEquals(base64Decode(pixel)));
+    expect((await db.collection('_windows_document_outbox').get()).docs, isEmpty);
+  });
+
+  test('missing saved branding leaves slots empty and ignores stale person copies', () async {
+    await db.collection('school_config').doc('school_profile_cache').set({
+      'schoolId': school, 'schoolName': 'Saved School',
+    });
+    final card = await WindowsDocumentTemplates.nativePersonCard('studentId', {
+      'schoolId': school, 'name': 'Synthetic',
+      'schoolLogoUrl': 'data:image/png;base64,%%%',
+      'principalSignatureUrl': 'data:image/png;base64,%%%',
+    });
+    expect(card!.images, isEmpty);
+    const pixel = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGMwaDgAAAJUAXHIMWMAAAAAAElFTkSuQmCC';
+    await db.collection('school_config').doc('school_profile_cache').set({
+      'schoolId': school, 'schoolName': 'Saved School',
+      'logoUrl': 'data:image/png;base64,$pixel',
+    });
+    final reopened = await WindowsDocumentTemplates.nativePersonCard(
+      'studentId', {'schoolId': school, 'name': 'Synthetic'});
+    expect(reopened!.images['logo'], orderedEquals(base64Decode(pixel)));
+    expect(card.images, isEmpty); // Previously displayed snapshot remains exact.
+  });
+
+  test('unused seal never blocks a decorative student preview', () async {
+    await db.collection('school_config').doc('school_profile_cache').set({
+      'schoolId': school, 'schoolName': 'Saved School',
+      'sealUrl': 'data:image/png;base64,%%%',
+    });
+    final card = await WindowsDocumentTemplates.nativePersonCard(
+      'studentId', {'schoolId': school, 'name': 'Synthetic'},
+      selection: 'manifest:student-svn-navy-green-v1');
+    expect(card!.images.containsKey('seal'), isFalse);
+    await expectLater(WindowsDocumentTemplates.nativePersonCard(
+      'otherStaffId', {'schoolId': school, 'name': 'Synthetic'}), throwsStateError);
+  });
   test('a photo-backed ID keeps its interactive PDF preview', () async {
     final bytes = await WindowsDocumentTemplates.selected('studentId', {
       'schoolId': school, 'name': 'Synthetic TEST', 'class': '1',
