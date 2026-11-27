@@ -17,11 +17,15 @@ class NativeIdCardPreview extends StatefulWidget {
     super.key, required this.template, required this.data,
     this.images = const {}, this.backgrounds = const {}, this.qr = '',
     this.onDownload, this.onPrint, this.onPrintDocument,
+    this.sideBuilder, this.actionsEnabled = true,
   });
   final IdCardManifest template;
   final Map<String, dynamic> data;
   final Map<String, Uint8List> images, backgrounds;
   final String qr;
+  /// Legacy vector designs use the same popup, but supply their shared native layers.
+  final Widget Function(String side)? sideBuilder;
+  final bool actionsEnabled;
 
   static Future<void> open(BuildContext context, WidgetBuilder builder) =>
       showDialog<void>(context: context, barrierDismissible: false, builder: builder);
@@ -89,7 +93,7 @@ class _NativeIdCardPreviewState extends State<NativeIdCardPreview> {
         child: RepaintBoundary(
           key: printBoundaries[name],
           child: SizedBox(width: m.width, height: m.height, child: ColoredBox(
-          color: Colors.white, child: Stack(clipBehavior: Clip.hardEdge, children: [
+          color: Colors.white, child: widget.sideBuilder?.call(name) ?? Stack(clipBehavior: Clip.hardEdge, children: [
             if (widget.backgrounds[name] != null)
               Positioned.fill(child: Image.memory(widget.backgrounds[name]!, fit: BoxFit.contain)),
             for (final r in m.regions.where((r) => r.side == name))
@@ -157,18 +161,18 @@ class _NativeIdCardPreviewState extends State<NativeIdCardPreview> {
     final ratio = template.width / template.height;
     final count = template.hasBack ? 2 : 1;
     final targetWidth = count * math.min(500.0, 420.0 * ratio) + (count - 1) * 12 + 40;
-    final dialogWidth = math.min(targetWidth, math.max(0.0, screen.width - 32));
+    final double dialogWidth = math.min(targetWidth.toDouble(), math.max(0.0, screen.width - 32.0));
     final actions = <Widget>[
       if (widget.onPrint != null || widget.onPrintDocument != null)
         OutlinedButton.icon(
-          onPressed: busy || missing.isNotEmpty ? null :
+          onPressed: busy || !widget.actionsEnabled || missing.isNotEmpty ? null :
             () => runAction(() => printCards(qr), 'Print failed'),
           icon: const Icon(Icons.print),
           label: const Text('Print'),
         ),
       if (widget.onDownload != null)
         FilledButton.icon(
-          onPressed: busy || missing.isNotEmpty ? null :
+          onPressed: busy || !widget.actionsEnabled || missing.isNotEmpty ? null :
             () => runAction(widget.onDownload!, 'PDF export failed'),
           icon: const Icon(Icons.download),
           label: const Text('Download ID Card'),

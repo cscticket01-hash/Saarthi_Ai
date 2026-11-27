@@ -20,6 +20,7 @@ import 'windows_connect/managed_school_session.dart';
 import 'id_card_catalog.dart';
 import 'green_blue_student_uid.dart';
 import 'id_card_school_branding.dart';
+import 'teacher_reference_native_preview.dart';
 import 'school_media_budgets.dart';
 import 'id_card_engine.dart';
 import 'id_card_manifest.dart';
@@ -223,14 +224,21 @@ class WindowsDocumentTemplates {
     }
     final card=await nativePersonCard(kind,data);
     checkSchool();
-    if (card == null) return false;
+    if (card == null) {
+      if (kind == 'teacherId' && context.mounted) {
+        await previewLegacyTeacher(context,data,qr:qr,filename:filename);
+        return true;
+      }
+      return false;
+    }
     if (!context.mounted) return true;
     final hasPhoto = card.images['photo']?.isNotEmpty == true;
     final compact=IdCardEngine.compactQr(qr);
     await NativeIdCardPreview.open(context, (previewContext) =>
       NativeIdCardPreview(template:card.template,data:card.data,images:card.images,
         backgrounds:card.backgrounds,qr:compact,
-        onPrintDocument:hasPhoto || card.template.id == greenBlueStudentTemplateId ? (frontOnly) async {
+        actionsEnabled:hasPhoto || card.template.id == greenBlueStudentTemplateId,
+        onPrintDocument:(frontOnly) async {
           checkSchool();
           final bytes = await IdCardEngine.render(card.template,card.data,
             images:card.images,backgrounds:card.backgrounds,qr:compact,frontOnly:frontOnly,printOnly:true);
@@ -241,8 +249,8 @@ class WindowsDocumentTemplates {
           if (!previewContext.mounted) return;
           await WindowsBrowserPrint.open(previewContext,bytes,title:'ID card',
             preserveActualSize:true,isCurrent:(){try{checkSchool();return true;}catch(_){return false;}});
-        } : null,
-        onDownload:hasPhoto || card.template.id == greenBlueStudentTemplateId ? () async {
+        },
+        onDownload:() async {
           checkSchool();
           final bytes = await IdCardEngine.renderLocalDownload(card.template, card.data,
             images: card.images, backgrounds: card.backgrounds, qr: compact);
@@ -250,8 +258,83 @@ class WindowsDocumentTemplates {
           if (compact.isNotEmpty) await IdCardEngine.verifyExport(bytes,compact);
           checkSchool();
           await WindowsSavePdf.save(bytes,filename);
-        } : null));
+        }));
     return true;
+  }
+
+  /// Legacy numeric layouts keep their existing PDF renderer, but now share
+  /// the same vector layout with the native modal. No PDF before an action.
+  static Future<void> previewLegacyTeacher(BuildContext context, Map<String,dynamic> data,
+      {String qr='',String filename='teacher-id.pdf',int? selection,bool gallery=false}) async {
+    final db=FirebaseFirestore.instance,origin=db.activeProfileId;
+    final school=db.activeProfileIdentity['schoolSyncId'];
+    void checkSchool() {
+      if(db.activeProfileId!=origin || db.activeProfileIdentity['schoolSyncId']!=school ||
+        (data['schoolId']!=null && data['schoolId']!=school)) {
+        throw StateError('School changed. Reopen teacher ID.');
+      }
+    }
+    checkSchool();
+    final selected=selection??(await selections())['teacherId'];
+    checkSchool();
+    if(selected is! num || selected!=selected.toInt() ||
+      selected<0 || selected>=windowsReferenceDocumentNames['teacherId']!.length) {
+      throw StateError('Teacher template changed. Reopen the ID card.');
+    }
+    final i=selected.toInt();
+    final profile=(await db.collection('school_config').doc('school_profile_cache').get()).data()??{};
+    checkSchool();
+    if(profile['schoolId']!=null&&profile['schoolId']!=school) throw StateError('Foreign school branding');
+    final sources=[idCardBrandingSource(profile,'logo'),idCardBrandingSource(profile,'principalSignature')];
+    final assets=await Future.wait<Uint8List?>([
+      _personPhoto(data),for(final source in sources)_image(source),
+    ]);
+    checkSchool();
+    for(var n=0;n<sources.length;n++) {
+      if(sources[n]!=null&&(assets[n+1]==null||assets[n+1]!.isEmpty)) {
+        throw StateError('Configured teacher ID branding unavailable. Retry.');
+      }
+    }
+    final effective=<String,dynamic>{...profile,...data,
+      'schoolName':[profile['schoolName'],profile['name'],data['schoolName']]
+        .map((v)=>v?.toString().trim()??'').firstWhere((v)=>v.isNotEmpty,orElse:()=> ''),
+      'schoolAddress':profile['address']??profile['schoolAddress']??'',
+      'schoolEmail':profile['schoolEmail']??profile['email']??'',
+      'schoolContactNo':profile['schoolContactNo']??'',
+    };
+    final compact=IdCardEngine.compactQr(qr);
+    final images=<String,Uint8List>{
+      if(assets[0]!=null)'photo':assets[0]!,
+      if(assets[1]!=null)'logo':assets[1]!,
+      if(assets[2]!=null)'signature':assets[2]!,
+    };
+    final geometry=teacherReferencePreviewGeometry(i);
+    final sides=teacherReferenceNativeSides(i,effective,images,compact);
+    Future<Uint8List> render() async {
+      checkSchool();
+      final bytes=SchoolMediaBudgets.verifyPrintPdf(await renderWindowsReferenceDocument(
+        kind:'teacherId',template:i,data:effective,qr:compact,photo:assets[0],
+        logo:assets[1],signature:assets[2],printOnly:true));
+      checkSchool();
+      if(compact.isNotEmpty)await IdCardEngine.verifyExport(bytes,compact);
+      checkSchool();
+      return bytes;
+    }
+    if(!context.mounted)return;
+    await NativeIdCardPreview.open(context,(previewContext)=>NativeIdCardPreview(
+      template:geometry,data:effective,qr:compact,sideBuilder:(side)=>side=='front'?sides.front:sides.back,
+      actionsEnabled:assets[0]?.isNotEmpty==true,
+      onPrintDocument:gallery?null:(_) async {
+        final bytes=await render();
+        if(!previewContext.mounted)return;
+        await WindowsBrowserPrint.open(previewContext,bytes,title:'Teacher ID card',
+          preserveActualSize:true,isCurrent:(){try{checkSchool();return true;}catch(_){return false;}});
+      },
+      onDownload:gallery?null:() async {
+        final bytes=await render();
+        await WindowsSavePdf.save(bytes,filename);
+      },
+    ));
   }
 
   /// Student dashboard download action. Native record preview never calls this.
@@ -1593,6 +1676,10 @@ class _SchoolDocumentTemplatesScreenState
       return;
     }
     try {
+      if(kind=='teacherId' && index>=0 && index<windowsReferenceDocumentNames['teacherId']!.length) {
+        await WindowsDocumentTemplates.previewLegacyTeacher(context,_sample,selection:index,gallery:true);
+        return;
+      }
       final paper=_uploadedPaperLabel(index);
       final bytes = await WindowsDocumentTemplates.renderTemplate(kind,index,_sample);
       if (bytes == null) throw StateError('Template renderer returned no document.');

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import '../lib/id_card_manifest.dart';
 import '../lib/id_card_native_preview.dart';
+import '../lib/teacher_reference_native_preview.dart';
 
 void main() {
   final template=IdCardManifest.fromJson({
@@ -154,6 +155,26 @@ void main() {
     expect(renders,0);
   });
 
+  for(var i=0;i<4;i++) {
+    testWidgets('legacy teacher design $i paints both native sides without export',(tester) async {
+      final geometry=teacherReferencePreviewGeometry(i);
+      final sides=teacherReferenceNativeSides(i,{'name':'Synthetic teacher','schoolName':'Synthetic school'}, {}, '');
+      var exports=0;
+      await tester.pumpWidget(MaterialApp(home:NativeIdCardPreview(
+        template:geometry,data:const {},sideBuilder:(side)=>side=='front'?sides.front:sides.back,
+        onPrintDocument:(_)async{exports++;},onDownload:()async{exports++;})));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(),isNull);
+      expect(exports,0);
+      final front=tester.getRect(find.byKey(const ValueKey('id-card-front')));
+      final back=tester.getRect(find.byKey(const ValueKey('id-card-back')));
+      expect(front.right,lessThan(back.left));expect(front.size,back.size);
+      expect(geometry.width>geometry.height,i==2);
+      expect(find.text('Synthetic teacher'),findsOneWidget);
+      await tester.tap(find.text('Download ID Card'));
+      await tester.pumpAndSettle();expect(exports,1);
+    });
+  }
   testWidgets('narrow preview keeps equal sides in one row and actions below', (tester) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(350, 650);
