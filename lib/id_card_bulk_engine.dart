@@ -56,7 +56,7 @@ Map<String, dynamic> _serializeTemplate(IdCardManifest template) => {
         'fit': r.fit,
         if (r.shape != 'rect') 'shape': r.shape,
         if (r.rotation != 0) 'rotation': r.rotation,
-        if (template.id == IdCardCatalogEntry.greenBlueId) 'textColor': r.textColor,
+        if (template.id == IdCardCatalogEntry.greenBlueId || IdCardCatalog.isGlobalId(template.id)) 'textColor': r.textColor,
         'align': r.align,
         'label': r.label,
         'required': r.isRequired,
@@ -213,7 +213,7 @@ class IdCardBulkPlan {
        _hasBack = template.hasBack,
        _templateJson = jsonEncode(_canonical(_serializeTemplate(template))),
        students = List.unmodifiable(students) {
-    if (!template.hasBack && template.id != IdCardCatalogEntry.greenBlueId) {
+    if (!template.hasBack && template.id != IdCardCatalogEntry.greenBlueId && !IdCardCatalog.isGlobalId(template.id)) {
       throw const FormatException('Duplex bulk printing requires a front and back template.');
     }
     if (students.isEmpty ||
@@ -327,7 +327,7 @@ class IdCardBulkPlan {
     'minimumMarginMm': minimumMarginMm,
     'backPlacement': backPlacement.name,
     'pageCount': sheetCount * sidesPerSheet,
-    if (template.id == IdCardCatalogEntry.greenBlueId) 'templateId': template.id,
+    if (template.id == IdCardCatalogEntry.greenBlueId || IdCardCatalog.isGlobalId(template.id)) 'templateId': template.id,
     'cards': [
       for (var i = 0; i < students.length; i++)
         {
@@ -435,7 +435,7 @@ class IdCardBulkEngine {
     guard();
     final pdf = pw.Document(theme: pw.ThemeData.withFont(base: font));
     final template = plan.template;
-    final fullResolution = template.id == IdCardCatalogEntry.greenBlueId;
+    final fullResolution = template.id == IdCardCatalogEntry.greenBlueId || IdCardCatalog.isGlobalId(template.id);
     final backgroundImageCache = <String, pw.MemoryImage>{};
     for (var sheet = 0; sheet < plan.sheetCount; sheet++) {
       final start = sheet * plan.capacity;

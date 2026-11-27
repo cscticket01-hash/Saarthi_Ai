@@ -6,6 +6,7 @@ import 'id_card_bulk_engine.dart';
 import 'id_card_engine.dart';
 import 'id_card_manifest.dart';
 import 'green_blue_student_uid.dart';
+import 'id_card_catalog.dart';
 import 'id_card_school_branding.dart';
 import 'school_qr_link.dart';
 import 'windows_local_firestore.dart';
@@ -157,7 +158,8 @@ class IdCardSchoolSource {
           'academicSession': row['academicSession'] ?? profile['academicSession'] ?? '',
           'sourceRecordRevision': row['_syncRevision'] ?? 'local-unversioned',
           'sourceRecordId': id,
-          if (template.id == greenBlueStudentTemplateId)
+          if (IdCardCatalog.isGlobalId(template.id)) 'country': row['country']??'',
+          if (template.id == greenBlueStudentTemplateId || IdCardCatalog.isGlobalId(template.id))
             '_greenBlueVerifiedUid': (await greenBlueStudentData(row))['_greenBlueVerifiedUid'],
         };
         ensureActive();

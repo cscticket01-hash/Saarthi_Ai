@@ -137,11 +137,12 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,analyzer=process.env.
     invalid(400,'Unknown global ID card operation');
   }
   async function schoolAction(action,b,member){
-    if(action==='package'){
+    if(action==='package'||action==='access'){
       const snap=await refs(b.id).get(),row=snap.data();
       if(!snap.exists||row.version!==b.version)invalid(404,'Template version unavailable');
       const grant=row.accessType==='premium'?(await db.doc('global_id_card_entitlements/'+member.schoolId+'/templates/'+row.id).get()).data():null;
       if(!accessDecision(row,grant,member.schoolId))invalid(403,'Template access not verified');
+      if(action==='access')return {success:true,schoolId:member.schoolId,packageSha256:row.packageSha256};
       const [bytes]=await storage().file(row.packagePath).download();
       if(bytes.length>MAX_PDF_BYTES||sha256(bytes)!==row.packageSha256)invalid(503,'Template checksum failed');
       return {success:true,schoolId:member.schoolId,template:publicEntry(row),packageSha256:row.packageSha256,packageBase64:bytes.toString('base64')};
