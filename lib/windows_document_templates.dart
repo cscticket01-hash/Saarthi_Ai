@@ -18,6 +18,7 @@ import 'windows_connect/central_school_cloud.dart';
 import 'windows_connect/atomic_person_portrait_delivery.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'id_card_catalog.dart';
+import 'green_blue_student_uid.dart';
 import 'school_media_budgets.dart';
 import 'id_card_engine.dart';
 import 'id_card_manifest.dart';
@@ -104,9 +105,11 @@ class WindowsDocumentTemplates {
   }) async {
     final entry = await IdCardCatalog.find(templateId);
     final manifest = reviewedManifest ?? await entry.manifest();
+    final cardData = manifest.id == greenBlueStudentTemplateId
+        ? await greenBlueStudentData(data) : data;
     return IdCardEngine.render(
       manifest,
-      data,
+      cardData,
       qr: qr,
       printOnly:printOnly,
       backgrounds: await entry.backgrounds(),
@@ -179,10 +182,12 @@ class WindowsDocumentTemplates {
       throw StateError('Selected template is not for this person category.');
     final manifest = reviewed ?? await entry.manifest();
     final backgrounds = await entry.backgrounds();
+    final cardData = manifest.id == greenBlueStudentTemplateId
+        ? await greenBlueStudentData(data) : data;
     checkSchool();
     return (
       template: manifest,
-      data: <String,dynamic>{...profile,...data,'schoolName':schoolName,
+      data: <String,dynamic>{...profile,...cardData,'schoolName':schoolName,
         'schoolAddress':profile['address'] ?? '',
         'designation':data['designation'] ?? data['role'] ?? (kind == 'studentId' ? 'Student' : 'Teacher'),
         'rollNo':data['rollNo'] ?? data['employeeId'] ?? data['teacherId'] ?? '',
@@ -561,7 +566,9 @@ class WindowsDocumentTemplates {
         ?await WindowsIdCardDesignerEntry.reviewed(template,FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']?.toString()??'local:$origin')
         :await (await IdCardCatalog.find(template is String?template.replaceFirst('manifest:',''):studentIdTemplateId)).manifest();
       if(manifest==null)throw StateError('Verified ID design is required.');
-      final normalized=IdCardEngine.normalizedInput(manifest,Map<String,dynamic>.from(effective));
+      final cardData = manifest.id == greenBlueStudentTemplateId
+          ? await greenBlueStudentData(effective) : effective;
+      final normalized=IdCardEngine.normalizedInput(manifest,Map<String,dynamic>.from(cardData));
       text={for(final region in manifest.regions.where((r)=>r.kind=='text'))region.key:normalized[region.key]?.toString()??''};
       slots=manifest.regions.where((r)=>r.kind=='image').map((r)=>r.key).toSet();
     } else {

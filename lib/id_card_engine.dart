@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:image/image.dart' as img;
 import 'package:zxing2/qrcode.dart' as zx;
@@ -125,7 +126,8 @@ class IdCardEngine {
   }
 
   static Map<String,dynamic> normalizedInput(IdCardManifest template,Map<String,dynamic> data) {
-    if (template.id == 'student-svn-navy-green-v1') {
+    if (template.id == 'student-svn-navy-green-v1' ||
+        template.id == 'student-green-blue-modern-v1') {
       String first(List<String> keys) {
         for (final key in keys) {
           final value = data[key]?.toString().trim() ?? '';
@@ -141,10 +143,16 @@ class IdCardEngine {
         'parentName': first(['parentName', 'fatherName', 'guardianName']),
         'class': first(['studentClass', 'class']),
         'rollNo': first(['rollNo', 'roll']),
-        'studentUid': first(['studentUid', 'studentCardId', 'studentId']),
+        'studentUid': template.id == 'student-green-blue-modern-v1' ? ''
+            : first(['studentUid', 'studentCardId', 'studentId']),
         'dob': first(['dateOfBirth', 'dob']),
         'contact': first(['parentContact', 'contact', 'contactNo', 'phone']),
         'address': first(['streetAddress', 'address']),
+        if (template.id == 'student-green-blue-modern-v1')
+          'pinCode': first(['pinCode', 'pin', 'pincode']),
+        if (template.id == 'student-green-blue-modern-v1')
+          'confirmedUniversalStudentUid': first(['_greenBlueVerifiedUid']).isEmpty
+              ? '' : 'Student ID - ${first(['_greenBlueVerifiedUid'])}',
       };
     }
     if(template.id == 'student-maroon-gold-v1') {
@@ -197,8 +205,8 @@ class IdCardEngine {
       final value = '${region.label}${data[region.key] ?? ''}';
       final rendered = await IdCardIndicText.rasterize(
         value,
-        width: region.width - 2 * region.padding,
-        height: region.height - 2 * region.padding,
+        width: region.contentWidth,
+        height: region.contentHeight,
         fontSize: region.fontSize,
         minFontSize: region.minFontSize,
         maxLines: region.maxLines,
@@ -335,6 +343,17 @@ class PreparedIdCard {
   final String qr;
   final pw.Font font;
   final int printMediaStage;
+  pw.Widget _regionGeometry(IdCardRegion r, pw.Widget child) {
+    if (r.shape == 'oval') return pw.ClipOval(child: child);
+    if (r.rotation == -90) {
+      return pw.Transform.rotateBox(
+        angle: math.pi / 2,
+        unconstrained: true,
+        child: pw.SizedBox(width: r.contentWidth, height: r.contentHeight, child: child),
+      );
+    }
+    return child;
+  }
   pw.Widget buildSide(String name) => pw.SizedBox(
     width: template.width,
     height: template.height,
@@ -358,7 +377,7 @@ class PreparedIdCard {
               child: pw.Padding(
                 padding: pw.EdgeInsets.all(r.padding),
                 child: pw.ClipRect(
-                  child: r.kind == 'image'
+                  child: _regionGeometry(r, r.kind == 'image'
                       ? images[r.key] == null
                             ? pw.SizedBox()
                             : IdCardLayout.image(
@@ -397,7 +416,7 @@ class PreparedIdCard {
                               : r.align == 'right'
                               ? pw.TextAlign.right
                               : pw.TextAlign.left,
-                        ),
+                        )),
                 ),
               ),
             ),

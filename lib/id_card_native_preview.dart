@@ -37,22 +37,27 @@ class _NativeIdCardPreviewState extends State<NativeIdCardPreview> {
   Widget content(IdCardRegion r, Map<String, dynamic> data, String qr) {
     if (r.kind == 'image') {
       final bytes = widget.images[r.key];
-      return bytes == null ? const SizedBox.shrink() : Image.memory(
+      if (bytes == null) return const SizedBox.shrink();
+      final photo = Image.memory(
         bytes, fit: r.fit == 'cover' ? BoxFit.cover : BoxFit.contain,
         alignment: Alignment(r.focusX * 2 - 1, r.focusY * 2 - 1),
       );
+      return r.shape == 'oval' ? ClipOval(child: photo) : photo;
     }
     if (r.kind == 'qr') {
       return qr.isEmpty ? const SizedBox.shrink() : QrImageView(
-        data: qr, padding: EdgeInsets.zero, backgroundColor: Colors.white,
+        data: qr,
+        padding: widget.template.id == 'student-green-blue-modern-v1'
+            ? const EdgeInsets.all(4) : EdgeInsets.zero,
+        backgroundColor: Colors.white,
       );
     }
     final value = r.label + (data[r.key]?.toString() ?? '');
     final align = r.align == 'center' ? TextAlign.center :
       r.align == 'right' ? TextAlign.right : TextAlign.left;
     final color = Color(0xff000000 | int.parse(r.textColor.substring(1), radix: 16));
-    final availableWidth = r.width - r.padding * 2;
-    final availableHeight = r.height - r.padding * 2;
+    final availableWidth = r.contentWidth;
+    final availableHeight = r.contentHeight;
     TextStyle style(double size) => TextStyle(color: color, fontSize: size);
     var size = r.fontSize;
     // Bounded fitting: do not grow beyond the reviewed manifest geometry.
@@ -66,8 +71,9 @@ class _NativeIdCardPreviewState extends State<NativeIdCardPreview> {
       if (fits || size <= r.minFontSize) break;
       size = (size - .5).clamp(r.minFontSize, r.fontSize).toDouble();
     }
-    return Text(value, textAlign: align, style: style(size), softWrap: r.wrap,
+    final text = Text(value, textAlign: align, style: style(size), softWrap: r.wrap,
       maxLines: r.maxLines, overflow: r.overflow == 'ellipsis' ? TextOverflow.ellipsis : TextOverflow.clip);
+    return r.rotation == -90 ? RotatedBox(quarterTurns: 3, child: text) : text;
   }
   Widget side(String name, Map<String, dynamic> data, String qr) {
     final m = widget.template;

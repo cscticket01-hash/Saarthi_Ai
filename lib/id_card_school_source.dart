@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 import 'id_card_bulk_engine.dart';
 import 'id_card_engine.dart';
 import 'id_card_manifest.dart';
+import 'green_blue_student_uid.dart';
 import 'school_qr_link.dart';
 import 'windows_local_firestore.dart';
 import 'windows_connect/central_school_cloud.dart';
@@ -146,10 +147,14 @@ class IdCardSchoolSource {
           'address': row['address'] ?? '', 'contact': row['contact'] ?? row['contactNo'] ?? '',
           'district': row['district'] ?? '', 'state': row['state'] ?? '',
           'pinCode': row['pinCode']?.toString() ?? '', 'designation': 'Student',
+          'dob': row['dateOfBirth'] ?? row['dob'] ?? '',
           'academicSession': row['academicSession'] ?? profile['academicSession'] ?? '',
           'sourceRecordRevision': row['_syncRevision'] ?? 'local-unversioned',
           'sourceRecordId': id,
+          if (template.id == greenBlueStudentTemplateId)
+            '_greenBlueVerifiedUid': (await greenBlueStudentData(row))['_greenBlueVerifiedUid'],
         };
+        ensureActive();
         var missing = false;
         for (final r in template.regions.where((r) => r.isRequired)) {
           if (r.kind == 'image' ? images[r.key] == null : r.kind == 'text' && (data[r.key]?.toString().trim().isEmpty ?? true)) {
