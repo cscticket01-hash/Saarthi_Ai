@@ -40,7 +40,7 @@ function accessDecision(row,grant,school){
     grant.schoolId===school&&grant.templateId===row.id&&grant.version===row.version&&
     grant.source==='developer_grant';
 }
-function createGlobalIdCardLibrary({db,bucket,now=Date.now,analyzer=process.env.SAARTHI_GLOBAL_ID_PDFTOTEXT}){
+function createGlobalIdCardLibrary({db,bucket,now=Date.now,analyzer=process.env.SAARTHI_GLOBAL_ID_PDFTOTEXT,imageAnalyzer=process.env.SAARTHI_GLOBAL_ID_PDFTOHTML}){
   const collection='global_id_card_library';
   const refs=id=>{if(!ID.test(id||''))invalid(400,'Invalid template identity');return db.doc(collection+'/'+id);};
   function storage(){
@@ -52,7 +52,7 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,analyzer=process.env.
     return snapshot.docs.map(doc=>doc.data());
   }
   async function developerAction(action,b,actor){
-    if(action==='list')return {success:true,templates:(await list()).map(publicEntry),paymentEnabled:false,storageConfigured:!!bucket};
+    if(action==='list')return {success:true,templates:(await list()).map(publicEntry),paymentEnabled:false,storageConfigured:!!bucket,analysisConfigured:!!analyzer,imageAnalysisConfigured:!!imageAnalyzer};
     if(action==='upload'){
       const {name,kind,bytes,sourceSha256}=parseSource(b);
       const id='gid-'+randomUUID().replaceAll('-','');
@@ -69,6 +69,20 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,analyzer=process.env.
         accessType:'free',pricePaise:0,currency:'INR',createdBy:actor.uid,
         createdAt:now(),updatedAt:now()};
       await ref.create(row);
+      // Upload is durable before analysis begins. Failure keeps the source
+      // retryable and private rather than reporting a false publication.
+      if(analyzer){
+        try{
+          const analysis=await analyzePdf(readback,analyzer,imageAnalyzer);
+          const next={mappingState:'review_required',analysis,updatedAt:now()};
+          await db.runTransaction(async tx=>{
+            const latest=await tx.get(ref);
+            if(latest.data()?.state!=='draft'||latest.data()?.sourceSha256!==sourceSha256)invalid(409,'Draft changed');
+            tx.set(ref,next,{merge:true});
+          });
+          return {success:true,template:publicEntry({...row,...next})};
+        }catch(_){/* Source remains stored; Analyze may retry explicitly. */}
+      }
       return {success:true,template:publicEntry(row)};
     }
     if(action==='analyze'){
@@ -76,7 +90,7 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,analyzer=process.env.
       if(!snap.exists||row.state!=='draft')invalid(409,'Open a draft first');
       const [source]=await storage().file(row.sourcePath).download();
       if(source.length>MAX_PDF_BYTES||sha256(source)!==row.sourceSha256)invalid(503,'Source checksum failed');
-      const analysis=await analyzePdf(source,analyzer);
+      const analysis=await analyzePdf(source,analyzer,imageAnalyzer);
       await db.runTransaction(async tx=>{
         const latest=await tx.get(ref);
         if(latest.data()?.state!=='draft'||latest.data()?.sourceSha256!==row.sourceSha256)invalid(409,'Draft changed');

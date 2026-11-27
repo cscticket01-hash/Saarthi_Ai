@@ -1,5 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
+import 'dart:io';
+import 'package:path_provider/path_provider.dart';
 
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
@@ -134,7 +136,7 @@ class _GlobalIdCatalog {
     bool current()=>db.activeProfileId==origin&&db.activeProfileIdentity['schoolSyncId']==school;
     if(_scope!=scope){_scope=scope;_checked=null;_entries=[];_inFlight=null;}
     final previous=_checked;
-    if(previous!=null&&DateTime.now().difference(previous)<const Duration(seconds:60))return current()?_entries:[];
+    if(previous!=null&&!DateTime.now().isBefore(previous)&&DateTime.now().difference(previous)<const Duration(seconds:60))return current()?_entries:[];
     final existing=_inFlight;
     if(existing!=null){final value=await existing;return current()?value:[];}
     final future=()async{
@@ -192,28 +194,63 @@ class _GlobalIdCatalogEntry extends IdCardCatalogEntry {
     _guard();
     if(reply['schoolId']!=school||reply['success']!=true||reply['packageSha256']!=packageHash)throw StateError('Global template changed or access revoked');
   }
+  Future<File> _cacheFile() async{
+    final root=await getApplicationSupportDirectory();
+    _guard();
+    final scope=sha256.convert(utf8.encode(jsonEncode([origin,school]))).toString();
+    final folder=Directory('${root.path}${Platform.pathSeparator}global_id_card_cache_v1${Platform.pathSeparator}$scope');
+    await folder.create(recursive:true);
+    _guard();
+    return File('${folder.path}${Platform.pathSeparator}$id-$version-$packageHash.json');
+  }
+  ({IdCardManifest manifest,Map<String,Uint8List> backgrounds}) _decodePackage(Uint8List bytes){
+    if(bytes.length>8*1024*1024||sha256.convert(bytes).toString()!=packageHash)throw const FormatException('Global package checksum mismatch');
+    final data=Map<String,dynamic>.from(jsonDecode(utf8.decode(bytes)) as Map);
+    final manifest=IdCardManifest.fromJson(Map<String,dynamic>.from(data['manifest'] as Map));
+    if(manifest.id!=id)throw const FormatException('Global manifest identity mismatch');
+    final raw=Map<String,dynamic>.from(data['backgrounds'] as Map);
+    if(!raw.containsKey('front')||raw.containsKey('back')!=manifest.hasBack||raw.length!=(manifest.hasBack?2:1))throw const FormatException('Global artwork sides mismatch');
+    final images=<String,Uint8List>{for(final e in raw.entries)e.key:base64Decode(e.value as String)};
+    for(final image in images.values){SchoolImageInput.validate(image);}
+    return (manifest:manifest,backgrounds:Map<String,Uint8List>.unmodifiable(images));
+  }
   Future<({IdCardManifest manifest,Map<String,Uint8List> backgrounds})> _package() async{
     _guard();
     final saved=_prepared;
     if(saved!=null)return saved;
     if(_pending!=null){final result=await _pending!;_guard();return result;}
     final future=()async{
+      // This disk cache is a performance optimization, not an offline licence.
+      // A fresh authoritative access check is mandatory even for a cache hit.
+      await authorize();
+      File? cache;
+      try{
+        cache=await _cacheFile();
+        if(await cache.exists()&&await cache.length()<=8*1024*1024){
+          final result=_decodePackage(await cache.readAsBytes());
+          _guard();return result;
+        }
+      }catch(_){/* Cache failures must not replace or unlock remote templates. */}
+      _guard();
       final reply=await ManagedSchoolSession.callForSchool(school,'managed/id-library/package',{'id':id,'version':version});
       _guard();
       if(reply['schoolId']!=school||reply['success']!=true||reply['packageSha256']!=packageHash)throw StateError('Global package identity mismatch');
       final encoded=reply['packageBase64'];
       if(encoded is! String||encoded.length>11200000)throw const FormatException('Global package too large');
       final bytes=base64Decode(encoded);
-      if(bytes.length>8*1024*1024||sha256.convert(bytes).toString()!=packageHash)throw const FormatException('Global package checksum mismatch');
-      final data=Map<String,dynamic>.from(jsonDecode(utf8.decode(bytes)) as Map);
-      final manifest=IdCardManifest.fromJson(Map<String,dynamic>.from(data['manifest'] as Map));
-      if(manifest.id!=id)throw const FormatException('Global manifest identity mismatch');
-      final raw=Map<String,dynamic>.from(data['backgrounds'] as Map);
-      if(!raw.containsKey('front')||raw.containsKey('back')!=manifest.hasBack||raw.length!=(manifest.hasBack?2:1))throw const FormatException('Global artwork sides mismatch');
-      final images=<String,Uint8List>{for(final e in raw.entries)e.key:base64Decode(e.value as String)};
-      for(final image in images.values){SchoolImageInput.validate(image);}
+      final result=_decodePackage(bytes);
       _guard();
-      return (manifest:manifest,backgrounds:Map<String,Uint8List>.unmodifiable(images));
+      if(cache!=null){
+        File? temporary;
+        try{
+          // Only reviewed clean artwork and manifest; no person data or secrets.
+          temporary=File('${cache.path}.tmp');
+          await temporary.writeAsBytes(bytes,flush:true);
+          _guard();
+          await temporary.rename(cache.path);
+        }catch(_){try{if(temporary!=null&&await temporary.exists())await temporary.delete();}catch(_){}}
+      }
+      _guard();return result;
     }();
     _pending=future;
     try{final result=await future;_guard();_prepared=result;return result;}

@@ -10,7 +10,7 @@ class DeveloperGlobalIdLibrary extends StatefulWidget {
 }
 class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
   List<Map<String,dynamic>> rows=[];
-  bool busy=false, storageReady=false;
+  bool busy=false, storageReady=false, analysisReady=false, imageAnalysisReady=false;
   String kind='studentId';
   String? message;
   static const categories={'studentId':'Student','teacherId':'Teacher','otherStaffId':'Other Staff'};
@@ -22,7 +22,8 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
       final result=await ManagedDeveloperService.call('id-library/list',{});
       if(!mounted)return;
       setState((){rows=(result['templates'] as List).map((v)=>Map<String,dynamic>.from(v as Map)).toList();
-        storageReady=result['storageConfigured']==true;message=null;});
+        storageReady=result['storageConfigured']==true;analysisReady=result['analysisConfigured']==true;
+        imageAnalysisReady=result['imageAnalysisConfigured']==true;message=null;});
     }catch(e){if(mounted)setState(()=>message='Library unavailable: $e');}
     finally{if(mounted)setState(()=>busy=false);}
   }
@@ -132,6 +133,8 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
         selected:kind==e.key,onSelected:busy?null:(_)=>setState(()=>kind=e.key))]),
       if(busy)const LinearProgressIndicator(),
       if(!storageReady&&!busy)const Text('Private Firebase template storage is not configured. Upload disabled.'),
+      if(storageReady&&!analysisReady)const Text('Central PDF text analysis is not configured; uploads remain private drafts.'),
+      if(storageReady&&analysisReady&&!imageAnalysisReady)const Text('Image geometry analysis is not configured; manual image-slot review required.'),
       if(message!=null)Text(message!,style:TextStyle(color:Theme.of(context).colorScheme.error)),
       for(final row in rows.where((r)=>r['kind']==kind))
         ListTile(title:Text('${row['name']}'),subtitle:Text('v${row['version']} • ${row['state']} • ${row['mappingState']}'),
