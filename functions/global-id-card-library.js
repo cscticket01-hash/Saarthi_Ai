@@ -1,7 +1,7 @@
 'use strict';
 const {createHash,randomUUID}=require('node:crypto');
 const {validatePackage,verifySourceGeometry}=require('./global-id-card-package');
-const {analyzePdf,renderReviewSource}=require('./global-id-card-analysis');
+const {analyzePdf,renderReviewSource,probeRuntime}=require('./global-id-card-analysis');
 const MAX_PDF_BYTES=8*1024*1024;
 const KINDS=new Set(['studentId','teacherId','otherStaffId']);
 const ID=/^gid-[a-f0-9]{32}$/;
@@ -91,6 +91,12 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
       return {success:true,templates:(await list()).map(publicEntry),paymentEnabled:false,
         storageConfigured:!!bucket,storageReady:status.ready,storageReason:status.reason,
         analysisConfigured:!!analyzer,imageAnalysisConfigured:!!imageAnalyzer,reviewRasterizerConfigured:!!rasterizer};
+    }
+    if(action==='runtime-check'){
+      const status=await storageStatus();
+      const checks=await probeRuntime(analyzer,imageAnalyzer,rasterizer);
+      return {success:true,storageReady:status.ready,storageReason:status.reason,checks,
+        ready:status.ready&&checks.text&&checks.imageGeometry&&checks.raster};
     }
     if(action==='upload'){
       const {name,kind,bytes,sourceSha256}=parseSource(b);

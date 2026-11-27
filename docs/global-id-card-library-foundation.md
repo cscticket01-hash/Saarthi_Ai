@@ -50,3 +50,7 @@ Source XML now proposes image roles only from unique nearby explicit labels, and
 ## Source-fidelity safeguards
 
 Source physical dimensions and side count are checked again by the broker at publication. Independent original sample removal rectangles allow output fields to expand without wiping the surrounding design or leaving the old sample behind. Exact reserved fictional sample phrases can identify common label-free text fields; ordinary arbitrary names still need evidence and review. This does not recover artwork hidden under arbitrary pixels or guarantee exact fonts. New online global catalogue/package requests fail closed while Firebase private-policy verification is unavailable. Offline free leases remain bounded by existing policy. No deployment or workflow configuration changed.
+
+## Runtime probe and integration regression
+
+Developer Global Features has a Check runtime action invoking only a generated fictional vector PDF. It checks actual configured text extraction, image geometry extraction and 600 DPI rasterization, and reports separately from the private bucket policy check. No real student data or production writes are involved. The mock Firebase regression exercises three categories, draft rejection, reviewed publication, school refresh, checksummed package retrieval, revision promotion, archive/restore and corrupted package rejection. It is not a real Firebase or Windows integration test. The actual runtime and production service are not configured or verified from the available connector workspace. No workflow modified.

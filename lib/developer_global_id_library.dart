@@ -29,6 +29,23 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
     }catch(e){if(mounted)setState((){storageReady=false;message='Library unavailable: $e';});}
     finally{if(mounted)setState(()=>busy=false);}
   }
+  Future<void> checkRuntime() async {
+    if(busy)return;
+    setState(()=>busy=true);
+    try{
+      final r=await ManagedDeveloperService.call('id-library/runtime-check',{});
+      if(!mounted)return;
+      final checks=Map<String,dynamic>.from(r['checks'] as Map);
+      await showDialog<void>(context:context,builder:(ctx)=>AlertDialog(
+        title:const Text('Global ID runtime checks'),
+        content:Column(mainAxisSize:MainAxisSize.min,crossAxisAlignment:CrossAxisAlignment.start,children:[
+          Text('Private storage: ${r['storageReady']==true?'PASS':'NOT VERIFIED'}'),
+          for(final key in ['text','imageGeometry','raster'])Text('$key: ${checks[key]==true?'PASS':'NOT VERIFIED'}'),
+          const Text('Synthetic PDF probe only. School upload, real template accuracy, security and physical printing still require acceptance.'),
+        ]),actions:[TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Close'))]));
+    }catch(e){if(mounted)setState(()=>message='Runtime check failed: $e');}
+    finally{if(mounted)setState(()=>busy=false);}
+  }
   Future<void> upload([Map<String,dynamic>? previous]) async {
     if(busy||!storageReady)return;
     final category=previous?['kind']?.toString()??kind;
@@ -155,6 +172,7 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
         Text('Global ID Card Library',style:Theme.of(context).textTheme.titleLarge),
         const Chip(label:Text('FREE • Payments disabled')),
         IconButton(onPressed:busy?null:refresh,tooltip:'Refresh library',icon:const Icon(Icons.refresh)),
+        TextButton.icon(onPressed:busy?null:checkRuntime,icon:const Icon(Icons.fact_check_outlined),label:const Text('Check runtime')),
         FilledButton.icon(onPressed:busy||!storageReady?null:upload,icon:const Icon(Icons.upload_file),label:const Text('Upload PDF')),
       ]),
       const SizedBox(height:12),

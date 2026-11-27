@@ -32,6 +32,19 @@ void main(){
     source.setPixelRgba(78,38,255,255,255,255);
     expect(()=>GlobalIdCardReview.cleanFlatRegions(Uint8List.fromList(img.encodePng(source)),manifest,'front',allowSmoothGradient:true),throwsFormatException);
   });
+  test('source mask can be separate from enlarged output field',(){
+    final source=img.Image(width:400,height:200,numChannels:4);
+    img.fill(source,color:img.ColorRgba8(255,255,255,255));
+    img.fillRect(source,x1:90,y1:45,x2:180,y2:70,color:img.ColorRgba8(20,30,40,255));
+    source.setPixelRgba(250,50,90,100,110,255);
+    final bytes=Uint8List.fromList(img.encodePng(source));
+    final moved=IdCardManifest.fromJson({'version':1,'id':'gid-test','canvasWidth':200,'canvasHeight':100,
+      'printWidthMm':100,'printHeightMm':50,'regions':[{'key':'name','side':'front','kind':'text','x':105,'y':20,'width':80,'height':20}]});
+    final masks=[<String,dynamic>{'side':'front','key':'name','x':40,'y':20,'width':60,'height':20}];
+    final result=img.decodePng(GlobalIdCardReview.cleanFlatRegions(bytes,moved,'front',sampleMasks:masks))!;
+    expect(result.getPixel(100,50).r,255);
+    expect(result.getPixel(250,50).r,90);
+  });
   test('flat sample region is removed without changing original or other artwork',(){
     final source=img.Image(width:400,height:200,numChannels:4);
     img.fill(source,color:img.ColorRgba8(255,255,255,255));

@@ -183,4 +183,35 @@ async function renderReviewSource(bytes,pages,executable){
   return rasters;
  }finally{await rm(dir,{recursive:true,force:true});}
 }
-module.exports={parseCandidates,parseImageCandidates,enrichCandidates,analyzePdf,renderReviewSource};
+// A tiny fictional vector PDF for a developer-triggered runtime smoke probe.
+// ASCII-only, with correct byte offsets. No school data or credentials.
+function syntheticProbePdf(){
+ const stream='BT /F1 10 Tf 20 90 Td (Name: Synthetic) Tj ET\n';
+ const objects=['<< /Type /Catalog /Pages 2 0 R >>',
+  '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+  '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 242 153] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+  '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  '<< /Length '+Buffer.byteLength(stream)+' >>\nstream\n'+stream+'endstream'];
+ let pdf='%PDF-1.4\n';const offsets=[0];
+ for(let i=0;i<objects.length;i++){offsets.push(Buffer.byteLength(pdf));pdf+=(i+1)+' 0 obj\n'+objects[i]+'\nendobj\n';}
+ const xref=Buffer.byteLength(pdf);
+ pdf+='xref\n0 '+offsets.length+'\n0000000000 65535 f \n';
+ for(const offset of offsets.slice(1))pdf+=String(offset).padStart(10,'0')+' 00000 n \n';
+ pdf+='trailer\n<< /Size '+offsets.length+' /Root 1 0 R >>\nstartxref\n'+xref+'\n%%EOF\n';
+ return Buffer.from(pdf,'ascii');
+}
+async function probeRuntime(analyzer,imageAnalyzer,rasterizer){
+ const checks={text:false,imageGeometry:false,raster:false};
+ if(!analyzer)return checks;
+ try{
+  const pdf=syntheticProbePdf(),analysis=await analyzePdf(pdf,analyzer,imageAnalyzer);
+  checks.text=analysis.pages.length===1&&analysis.pages[0].candidates.some(c=>c.key==='name');
+  checks.imageGeometry=imageAnalyzer!=null&&Array.isArray(analysis.pages[0]?.imageCandidates);
+  if(rasterizer){
+   const images=await renderReviewSource(pdf,analysis.pages,rasterizer);
+   checks.raster=typeof images.front==='string'&&images.front.length>32&&!images.back;
+  }
+ }catch(_){/* Return only safe boolean evidence, not local paths or stderr. */}
+ return checks;
+}
+module.exports={parseCandidates,parseImageCandidates,enrichCandidates,analyzePdf,renderReviewSource,syntheticProbePdf,probeRuntime};

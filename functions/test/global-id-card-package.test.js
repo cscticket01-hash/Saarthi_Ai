@@ -28,3 +28,13 @@ test('reject foreign identity, dynamic sample labels, wrong sides, invalid artwo
   p=>p.manifest.regions[0].x=-1,
  ]){const p=fixture();change(p);assert.throws(()=>validatePackage(p,id));}
 });
+
+test('original source geometry and side count cannot be changed by publication',()=>{
+ const {verifySourceGeometry}=require('../global-id-card-package');
+ const p=validatePackage(fixture(),id).clean;
+ const source=[{side:'front',printWidthMm:54,printHeightMm:54}];
+ assert.doesNotThrow(()=>verifySourceGeometry(p,source));
+ assert.throws(()=>verifySourceGeometry(p,[{...source[0],printWidthMm:55}]));
+ assert.throws(()=>verifySourceGeometry(p,[...source,{...source[0],side:'back'}]));
+ assert.throws(()=>verifySourceGeometry(p,[{...source[0],side:'back'}]));
+});
