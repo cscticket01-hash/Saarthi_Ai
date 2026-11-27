@@ -75,7 +75,7 @@ class GlobalIdCardReview {
         final pixel=source.getPixel(x,y),actual=rgb(x,y);
         return pixel.a==255&&List.generate(3,(c)=>(actual[c]-channel(x,y,c)).abs()).every((d)=>d<=3);
       }
-      // Check both outer boundary rings to reject crossing rules, shapes or
+      // Check the outer boundary ring to reject crossing rules, shapes or
       // patterns. Interior artwork remains unknowable; final visual approval
       // is mandatory, even for an apparently smooth gradient.
       for(var x=left;x<=right;x++){

@@ -24,3 +24,14 @@ test('catalog projection never exposes source path, sample or storage credential
  const result=publicEntry({id:'gid-demo',sourcePath:'private/file.pdf',sourceSha256:'x',sampleName:'do not expose'});
  assert.equal('sourcePath' in result,false);assert.equal('sampleName' in result,false);
 });
+
+test('private storage readiness rejects missing controls, public principals and unavailable IAM',async()=>{
+ const {verifyPrivateBucket}=require('../global-id-card-library');
+ const meta={iamConfiguration:{uniformBucketLevelAccess:{enabled:true},publicAccessPrevention:'enforced'}};
+ const bucket=(m,bindings)=>({getMetadata:async()=>[m],iam:{getPolicy:async()=>[{bindings}]}});
+ assert.equal((await verifyPrivateBucket(bucket(meta,[{members:['serviceAccount:synthetic@example.invalid']}]))).ready,true);
+ assert.equal((await verifyPrivateBucket(bucket(meta,[{members:['allUsers']}]))).ready,false);
+ assert.equal((await verifyPrivateBucket(bucket(meta,[{members:['allAuthenticatedUsers']}]))).ready,false);
+ assert.equal((await verifyPrivateBucket(bucket({iamConfiguration:{}},[]))).ready,false);
+ assert.equal((await verifyPrivateBucket({getMetadata:async()=>{throw Error('permission denied');}})).ready,false);
+});

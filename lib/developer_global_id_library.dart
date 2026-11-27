@@ -14,6 +14,7 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
   bool busy=false, storageReady=false, analysisReady=false, imageAnalysisReady=false, rasterReady=false;
   String kind='studentId';
   String? message;
+  String storageReason='not_configured';
   static const categories={'studentId':'Student','teacherId':'Teacher','otherStaffId':'Other Staff'};
   @override void initState(){super.initState();refresh();}
   Future<void> refresh() async {
@@ -23,9 +24,9 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
       final result=await ManagedDeveloperService.call('id-library/list',{});
       if(!mounted)return;
       setState((){rows=(result['templates'] as List).map((v)=>Map<String,dynamic>.from(v as Map)).toList();
-        storageReady=result['storageConfigured']==true;analysisReady=result['analysisConfigured']==true;
+        storageReady=result['storageReady']==true;storageReason=result['storageReason']?.toString()??'unverified';analysisReady=result['analysisConfigured']==true;
         imageAnalysisReady=result['imageAnalysisConfigured']==true;rasterReady=result['reviewRasterizerConfigured']==true;message=null;});
-    }catch(e){if(mounted)setState(()=>message='Library unavailable: $e');}
+    }catch(e){if(mounted)setState((){storageReady=false;message='Library unavailable: $e';});}
     finally{if(mounted)setState(()=>busy=false);}
   }
   Future<void> upload([Map<String,dynamic>? previous]) async {
@@ -160,7 +161,7 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
       Wrap(spacing:8,children:[for(final e in categories.entries)ChoiceChip(label:Text(e.value),
         selected:kind==e.key,onSelected:busy?null:(_)=>setState(()=>kind=e.key))]),
       if(busy)const LinearProgressIndicator(),
-      if(!storageReady&&!busy)const Text('Private Firebase template storage is not configured. Upload disabled.'),
+      if(!storageReady&&!busy)Text('Private Firebase template storage is not verified ($storageReason). Upload disabled.'),
       if(storageReady&&!analysisReady)const Text('Central PDF text analysis is not configured; uploads remain private drafts.'),
       if(storageReady&&analysisReady&&!imageAnalysisReady)const Text('Image geometry analysis is not configured; manual image-slot review required.'),
       if(storageReady&&analysisReady&&!rasterReady)const Text('Visual PDF mapper runtime not configured. Reviewed clean packages can still be submitted.'),

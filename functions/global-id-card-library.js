@@ -32,6 +32,21 @@ function publicEntry(row){
     state:row.state,mappingState:row.mappingState,accessType:row.accessType,
     pricePaise:row.pricePaise,currency:'INR',updatedAt:row.updatedAt};
 }
+// GCS checks are necessary, not sufficient: Firebase client rules and
+// inherited IAM must also be independently verified before opt-in.
+async function verifyPrivateBucket(bucket){
+ try{
+  const [meta]=await bucket.getMetadata();
+  const config=meta.iamConfiguration;
+  if(config?.uniformBucketLevelAccess?.enabled!==true||config?.publicAccessPrevention!=='enforced')
+   return {ready:false,reason:'private_bucket_controls_required'};
+  const [policy]=await bucket.iam.getPolicy({requestedPolicyVersion:3});
+  if(!Array.isArray(policy?.bindings)||policy.bindings.some(b=>
+     !Array.isArray(b.members)||b.members.some(m=>m==='allUsers'||m==='allAuthenticatedUsers')))
+   return {ready:false,reason:'public_bucket_binding_or_unverified'};
+  return {ready:true,reason:'private_controls_checked'};
+ }catch(_){return {ready:false,reason:'bucket_permission_or_metadata_unavailable'};}
+}
 // Foundation policy: payment is disabled; premium cannot accidentally unlock.
 function accessDecision(row,grant,school){
   if(row?.state!=='published'||row.mappingState!=='verified'||
@@ -41,12 +56,22 @@ function accessDecision(row,grant,school){
     grant.schoolId===school&&grant.templateId===row.id&&grant.version===row.version&&
     grant.source==='developer_grant';
 }
-function createGlobalIdCardLibrary({db,bucket,now=Date.now,analyzer=process.env.SAARTHI_GLOBAL_ID_PDFTOTEXT,imageAnalyzer=process.env.SAARTHI_GLOBAL_ID_PDFTOHTML,rasterizer=process.env.SAARTHI_GLOBAL_ID_PDFTOPPM}){
+function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=process.env.SAARTHI_GLOBAL_ID_STORAGE_POLICY_VERIFIED==='true',analyzer=process.env.SAARTHI_GLOBAL_ID_PDFTOTEXT,imageAnalyzer=process.env.SAARTHI_GLOBAL_ID_PDFTOHTML,rasterizer=process.env.SAARTHI_GLOBAL_ID_PDFTOPPM}){
   const collection='global_id_card_library';
   const refs=id=>{if(!ID.test(id||''))invalid(400,'Invalid template identity');return db.doc(collection+'/'+id);};
   const familyRef=id=>{if(!ID.test(id||''))invalid(400,'Invalid template family');return db.doc('global_id_card_families/'+id);};
-  function storage(){
-    if(!bucket)invalid(503,'Private Firebase template storage is not configured');
+  let storageProbe=null;
+  async function storageStatus(){
+    if(!bucket)return {ready:false,reason:'not_configured'};
+    if(!policyReviewed)return {ready:false,reason:'firebase_rules_review_required'};
+    const t=now();
+    if(storageProbe&&t>=storageProbe.at&&t-storageProbe.at<60000)return storageProbe.result;
+    const result=await verifyPrivateBucket(bucket);
+    storageProbe={at:now(),result};return result;
+  }
+  async function storage(){
+    const status=await storageStatus();
+    if(!status.ready)invalid(503,'Private Firebase template storage policy is not verified');
     return bucket;
   }
   async function list(){
@@ -61,7 +86,12 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,analyzer=process.env.
 
   }
   async function developerAction(action,b,actor){
-    if(action==='list')return {success:true,templates:(await list()).map(publicEntry),paymentEnabled:false,storageConfigured:!!bucket,analysisConfigured:!!analyzer,imageAnalysisConfigured:!!imageAnalyzer,reviewRasterizerConfigured:!!rasterizer};
+    if(action==='list'){
+      const status=await storageStatus();
+      return {success:true,templates:(await list()).map(publicEntry),paymentEnabled:false,
+        storageConfigured:!!bucket,storageReady:status.ready,storageReason:status.reason,
+        analysisConfigured:!!analyzer,imageAnalysisConfigured:!!imageAnalyzer,reviewRasterizerConfigured:!!rasterizer};
+    }
     if(action==='upload'){
       const {name,kind,bytes,sourceSha256}=parseSource(b);
       const id='gid-'+randomUUID().replaceAll('-','');
@@ -75,7 +105,7 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,analyzer=process.env.
       const familyId=parent?.familyId||parent?.id||id;
       const family=familyRef(familyId);
       // Never create a download token, public ACL or signed school URL for sample PDFs.
-      const object=storage().file(sourcePath);
+      const object=(await storage()).file(sourcePath);
       await object.save(bytes,{resumable:false,validation:'crc32c',
         preconditionOpts:{ifGenerationMatch:0},metadata:{contentType:'application/pdf',
           cacheControl:'private,no-store',metadata:{sha256:sourceSha256}}});
@@ -117,7 +147,7 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,analyzer=process.env.
     if(action==='analyze'){
       const ref=refs(b.id),snap=await ref.get(),row=snap.data();
       if(!snap.exists||row.state!=='draft')invalid(409,'Open a draft first');
-      const [source]=await storage().file(row.sourcePath).download();
+      const [source]=await (await storage()).file(row.sourcePath).download();
       if(source.length>MAX_PDF_BYTES||sha256(source)!==row.sourceSha256)invalid(503,'Source checksum failed');
       const analysis=await analyzePdf(source,analyzer,imageAnalyzer);
       await db.runTransaction(async tx=>{
@@ -131,7 +161,7 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,analyzer=process.env.
       const snap=await refs(b.id).get(),row=snap.data();
       if(!snap.exists||row.state!=='draft'||row.mappingState!=='review_required'||
         row.sourceSha256!==b.sourceSha256||!row.analysis?.pages)invalid(409,'Analyze the current draft first');
-      const [source]=await storage().file(row.sourcePath).download();
+      const [source]=await (await storage()).file(row.sourcePath).download();
       if(source.length>MAX_PDF_BYTES||sha256(source)!==row.sourceSha256)invalid(503,'Source checksum failed');
       const rasters=await renderReviewSource(source,row.analysis.pages,rasterizer);
       return {success:true,sourceSha256:row.sourceSha256,rasters};
@@ -143,7 +173,7 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,analyzer=process.env.
       const {bytes,sha256:packageSha256}=validatePackage(b.package,row.id);
       if(row.packageSha256&&row.packageSha256!==packageSha256)invalid(409,'Published package is immutable; upload a new version as a new design');
       const packagePath='global-id-card-library/verified/'+row.id+'/v'+row.version+'/'+packageSha256+'.json';
-      const object=storage().file(packagePath);
+      const object=(await storage()).file(packagePath);
       try{await object.save(bytes,{resumable:false,validation:'crc32c',preconditionOpts:{ifGenerationMatch:0},
         metadata:{contentType:'application/json',cacheControl:'private,no-store'}});}
       catch(e){if(Number(e.code)!==412)throw e;}
@@ -171,7 +201,7 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,analyzer=process.env.
       if(!snap.exists||!['published','archived'].includes(row.state)||row.mappingState!=='verified'||
          row.packageVerified!==true||row.accessType!=='free'||!HASH.test(row.packageSha256||''))
         invalid(409,'Only a verified free revision can be restored or made current');
-      const [bytes]=await storage().file(row.packagePath).download();
+      const [bytes]=await (await storage()).file(row.packagePath).download();
       if(bytes.length>MAX_PDF_BYTES||sha256(bytes)!==row.packageSha256)invalid(503,'Revision checksum failed');
       const family=familyRef(row.familyId||row.id);
       await db.runTransaction(async tx=>{
@@ -223,7 +253,7 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,analyzer=process.env.
       const grant=row.accessType==='premium'?(await db.doc('global_id_card_entitlements/'+member.schoolId+'/templates/'+row.id).get()).data():null;
       if(!accessDecision(row,grant,member.schoolId))invalid(403,'Template access not verified');
       if(action==='access')return {success:true,schoolId:member.schoolId,uid:member.uid,packageSha256:row.packageSha256};
-      const [bytes]=await storage().file(row.packagePath).download();
+      const [bytes]=await (await storage()).file(row.packagePath).download();
       if(bytes.length>MAX_PDF_BYTES||sha256(bytes)!==row.packageSha256)invalid(503,'Template checksum failed');
       return {success:true,schoolId:member.schoolId,template:publicEntry(row),packageSha256:row.packageSha256,packageBase64:bytes.toString('base64')};
     }
@@ -241,4 +271,4 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,analyzer=process.env.
   }
   return {developerAction,schoolAction};
 }
-module.exports={createGlobalIdCardLibrary,parseSource,accessDecision,publicEntry,MAX_PDF_BYTES};
+module.exports={createGlobalIdCardLibrary,parseSource,accessDecision,publicEntry,verifyPrivateBucket,MAX_PDF_BYTES};
