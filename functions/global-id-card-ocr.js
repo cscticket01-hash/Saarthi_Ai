@@ -28,6 +28,10 @@ async function recognize(png,mode='all'){
   const {stdout}=await run(process.execPath,['--max-old-space-size=128',join(__dirname,'../oauth-broker/id-ocr-worker.cjs'),input,mode],
    {cwd:dir,timeout:30000,maxBuffer:512*1024,env:{PATH:'/usr/bin:/bin',LANG:'C',HOME:dir,TMPDIR:dir}});
   return JSON.parse(stdout);
+ }catch(e){
+  const phase=String(e?.stderr||'').match(/OCR_SAFE_PHASE ([a-z_]+)/)?.[1]||'unknown';
+  const safe=Object.assign(Error('OCR process failed'),{phase,signal:e?.signal||null,killed:e?.killed===true,exitCode:typeof e?.code==='number'?e.code:null});
+  throw safe;
  }finally{try{if(dir)await rm(dir,{recursive:true,force:true});}finally{busy=false;}}
 }
 module.exports={recognize,toPageXml};
