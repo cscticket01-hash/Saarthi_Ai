@@ -27,7 +27,7 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
     super.initState();
     pages=(widget.analysis['pages'] as List).map((v)=>Map<String,dynamic>.from(v as Map)).toList();
     images={for(final e in widget.rasters.entries)e.key:base64Decode(e.value as String)};
-    slots.addAll(widget.manualSlots?.map((r)=>Map<String,dynamic>.from(r))??GlobalIdCardReview.detectSlots(pages,images));
+    slots.addAll(widget.manualSlots?.map((r)=>Map<String,dynamic>.from(r))??(widget.analysis['cleanTemplate']==true?GlobalIdCardReview.cleanTemplateSlots(pages):GlobalIdCardReview.detectSlots(pages,images)));
     final adjusted=GlobalIdCardReview.fitOutputRegions(pages,slots);
     slots..clear()..addAll(adjusted);
     if(slots.any((r)=>r['fitAdjusted']==true||GlobalIdCardReview.readabilityIssue(r)!=null))showAdvanced=true;
@@ -74,6 +74,7 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
       await Future<void>.delayed(Duration.zero);
       final reconstructed = <String>{};
       final result = GlobalIdCardReview.package(widget.id, pages, slots, images,
+        useSourceArtwork: widget.analysis['cleanTemplate']==true,
         allowSmoothGradient: allowSmoothGradient,
         allowApproximateRepair: allowApproximateRepair,
         reconstructedSides: reconstructed,
@@ -146,7 +147,9 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
           slots..clear()..addAll(adjusted);showAdvanced=true;
         }),icon:const Icon(Icons.fit_screen),label:const Text('Fit readable text boxes')),
         const SizedBox(height:8),
-        CheckboxListTile(value: allowApproximateRepair,
+        if(widget.analysis['cleanTemplate']==true)
+          const Text('Clean template: the original artwork is used directly. Review field positions and confirm that no sample data remains.'),
+        if(widget.analysis['cleanTemplate']!=true) CheckboxListTile(value: allowApproximateRepair,
           onChanged: busy ? null : (value) => setState(() => allowApproximateRepair = value == true),
           title: const Text('Reconstruct complex backgrounds when needed'),
           subtitle: const Text('Compare the original and reconstructed artwork before continuing.')),
