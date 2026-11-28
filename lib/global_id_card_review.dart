@@ -51,8 +51,8 @@ class GlobalIdCardReview {
     if(!textFields.contains(r['key']))return null;
     final vertical=r['rotation']==-90;
     final h=_n(r,vertical?'width':'height'),w=_n(r,vertical?'height':'width');
-    if(h<minimumTextHeight||w<_minimumTextWidth(r)){
-      return '${r['key']} (${r['side']}): output text area ${w.toStringAsFixed(1)} × ${h.toStringAsFixed(1)}; needs at least ${_minimumTextWidth(r).toStringAsFixed(1)} × 7.5 design units. Resize the output field; retain the original sample mask.';
+    if(h<minimumTextHeight||w<6){
+      return '${r['key']} (${r['side']}): output text area ${w.toStringAsFixed(1)} × ${h.toStringAsFixed(1)}; needs at least 6 × 7.5 design units. Resize the output field; retain the original sample mask.';
     }
     return null;
   }
@@ -62,7 +62,9 @@ class GlobalIdCardReview {
   static List<Map<String,dynamic>> fitOutputRegions(List<Map<String,dynamic>> pages,List<Map<String,dynamic>> input){
     final result=input.map((r)=>Map<String,dynamic>.from(r)).toList();
     for(final r in result){
-      if(readabilityIssue(r)==null)continue;
+      if(!textFields.contains(r['key']))continue;
+      final rotated=r['rotation']==-90;
+      if(readabilityIssue(r)==null&&_n(r,rotated?'height':'width')>=_minimumTextWidth(r))continue;
       final page=pages.where((p)=>p['side']==r['side']).firstOrNull;
       if(page==null)continue;
       final pw=_n(page,'canvasWidth'),ph=_n(page,'canvasHeight');

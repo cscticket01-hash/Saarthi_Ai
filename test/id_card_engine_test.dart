@@ -247,4 +247,21 @@ void main() {
     expect(result['sample_width'],4);expect(GlobalIdCardReview.readabilityIssue(result),isNull);
   });
 
+  test('real PDF renderer reports the failed field and accepts the repaired region',()async{
+    final pages=[<String,dynamic>{'side':'front','canvasWidth':240,'canvasHeight':150}];
+    final slots=[<String,dynamic>{'side':'front','key':'class','kind':'text','x':130,'y':80,'width':4,'height':5,'fontSize':6,'minFontSize':6}];
+    IdCardManifest make(List<Map<String,dynamic>> regions)=>IdCardManifest.fromJson({
+      'id':'gid-00000000000000000000000000000001','version':1,'canvasWidth':240,'canvasHeight':150,
+      'printWidthMm':84.8,'printHeightMm':53,'regions':regions,
+    });
+    final image=img.Image(width:480,height:300,numChannels:4);
+    img.fill(image,color:img.ColorRgba8(255,255,255,255));
+    final backgrounds={'front':img.encodePng(image)};
+    await expectLater(IdCardEngine.render(make(slots),{'class':'VIII'},backgrounds:backgrounds,printOnly:true),
+      throwsA(isA<FormatException>().having((e)=>e.message,'message',contains('class (front)'))));
+    final repaired=GlobalIdCardReview.fitOutputRegions(pages,slots);
+    final pdf=await IdCardEngine.render(make(repaired),{'class':'VIII'},backgrounds:backgrounds,printOnly:true);
+    expect(latin1.decode(pdf).startsWith('%PDF'),true);
+  });
+
 }

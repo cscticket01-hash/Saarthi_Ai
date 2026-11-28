@@ -5,8 +5,9 @@ import 'package:file_selector/file_selector.dart';
 import 'global_id_card_review.dart';
 
 class DeveloperGlobalIdReviewEditor extends StatefulWidget {
-  const DeveloperGlobalIdReviewEditor({super.key,required this.id,required this.analysis,required this.rasters,this.loadCleanPdf,this.manualSlots});
+  const DeveloperGlobalIdReviewEditor({super.key,required this.id,required this.analysis,required this.rasters,this.loadCleanPdf,this.manualSlots,this.validatePreview});
   final String id;
+  final Future<void> Function(Map<String,dynamic>)? validatePreview;
   final List<Map<String,dynamic>>? manualSlots;
   final Map<String,dynamic> analysis,rasters;
   final Future<Map<String,Uint8List>> Function(Uint8List)? loadCleanPdf;
@@ -71,6 +72,7 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
       // Render a frame before the bounded synchronous PNG preparation.
       await Future<void>.delayed(Duration.zero);
       final result=GlobalIdCardReview.package(widget.id,pages,slots,images,allowSmoothGradient:allowSmoothGradient,allowApproximateRepair:allowApproximateRepair,cleanArtwork:cleanArtwork,cleanCompanion:cleanCompanion);
+      if(widget.validatePreview!=null)await widget.validatePreview!(result);
       if(mounted)Navigator.pop(context,result);
     }catch(e){if(mounted)setState((){error=e.toString();showAdvanced=true;});}
     finally{if(mounted)setState(()=>busy=false);}
