@@ -202,7 +202,7 @@ def main():
         source = args[-2]
         prefix = os.path.dirname(source) + "/review"
         pages = args[3]
-        if pages not in ("1", "2") or args[5] not in ("150","300","600") or args != ["-f","1","-l",pages,"-r",args[5],"-png",source,prefix]:
+        if pages not in ("1", "2", "3") or args[5] not in ("150","300","600") or args != ["-f","1","-l",pages,"-r",args[5],"-png",source,prefix]:
             raise ValueError("invalid raster arguments")
         outputs = [prefix + "-" + str(i) + ".png" for i in range(1, int(pages)+1)]
     else:
