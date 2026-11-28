@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import '../lib/id_card_manifest.dart';
 import '../lib/id_card_engine.dart';
 import '../lib/id_card_catalog.dart';
+import '../lib/id_card_identity.dart';
 import '../lib/developer_global_id_preview.dart';
 import '../lib/global_id_card_review.dart';
 import 'package:image/image.dart' as img;
@@ -148,7 +149,7 @@ void main() {
     final images=DeveloperGlobalIdPreview.demoImages();
     expect(images.keys,unorderedEquals(['photo','logo','signature','seal']));
     final raw=manifest();
-    final m=IdCardManifest.fromJson({...raw,'id':'gid-demo'});
+    final m=IdCardManifest.fromJson({...raw,'id':'gid-00000000000000000000000000000001'});
     final pdf=await IdCardEngine.render(m,data,images:images,qr:DeveloperGlobalIdPreview.qr);
     expect(latin1.decode(pdf).startsWith('%PDF'),true);
   });
@@ -180,6 +181,13 @@ void main() {
     final slots=[<String,dynamic>{'side':'front','key':'name'},<String,dynamic>{'side':'front','key':'qr'},
       <String,dynamic>{'side':'front','key':'photo','roleConfidence':'low'}];
     expect(GlobalIdCardReview.canAutoPrepare(pages,slots),false);
+  });
+
+  test('shared identity policy preserves exact Windows catalog semantics',(){
+    for(final id in ['gid-demo','gid-00000000000000000000000000000001','student-green-blue-modern-v1']){
+      expect(IdCardIdentity.isGlobalId(id),IdCardCatalog.isGlobalId(id));
+    }
+    expect(IdCardIdentity.greenBlueSha256,IdCardCatalogEntry.greenBlueSha256);
   });
 
 }

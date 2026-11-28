@@ -16,7 +16,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'school_media_budgets.dart';
 import 'school_pdf_media.dart';
 import 'id_card_manifest.dart';
-import 'id_card_catalog.dart';
+import 'id_card_identity.dart';
 import 'package:crypto/crypto.dart';
 import 'id_card_layout.dart';
 import 'id_card_indic_text.dart';
@@ -128,7 +128,7 @@ class IdCardEngine {
   }
 
   static Map<String,dynamic> normalizedInput(IdCardManifest template,Map<String,dynamic> data) {
-    if(IdCardCatalog.isGlobalId(template.id)){
+    if(IdCardIdentity.isGlobalId(template.id)){
       String first(List<String> keys){
         for(final key in keys){
           final value=data[key]?.toString().trim()??'';
@@ -207,9 +207,9 @@ class IdCardEngine {
     pw.Font? font,
     int printMediaStage = 0,
   }) async {
-    if (template.id == IdCardCatalogEntry.greenBlueId && printMediaStage == 2 &&
+    if (template.id == IdCardIdentity.greenBlueId && printMediaStage == 2 &&
         (backgrounds['front'] == null ||
-         !IdCardCatalogEntry.isApprovedGreenBlueArtwork(backgrounds['front']!))) {
+         !IdCardIdentity.isApprovedGreenBlueArtwork(backgrounds['front']!))) {
       throw const FormatException('Original approved Green Blue Modern artwork is unavailable or changed.');
     }
     data = normalizedInput(template,data);
@@ -237,7 +237,7 @@ class IdCardEngine {
         maxLines: region.maxLines,
         align: region.align,
         color: 0xFF000000 | int.parse(region.textColor.substring(1),radix:16),
-        bold:IdCardCatalog.isGlobalId(template.id)&&region.bold,
+        bold:IdCardIdentity.isGlobalId(template.id)&&region.bold,
       );
       if (rendered != null) {
         shapedText['${region.side}:${region.key}'] = rendered;
@@ -251,7 +251,7 @@ class IdCardEngine {
       Map.unmodifiable(backgrounds),
       Map.unmodifiable(shapedText),
       font ?? await loadFont(),
-      IdCardCatalog.isGlobalId(template.id)&&template.regions.any((r)=>r.kind=='text'&&r.bold)
+      IdCardIdentity.isGlobalId(template.id)&&template.regions.any((r)=>r.kind=='text'&&r.bold)
         ? pw.Font.ttf(await rootBundle.load('assets/id_card_bold.ttf')):null,
       printMediaStage,
     );
@@ -266,7 +266,7 @@ class IdCardEngine {
   static Future<Uint8List> renderLocalDownload(IdCardManifest template, Map<String,dynamic> data, {
     Map<String,Uint8List> images=const {}, String qr='', Map<String,Uint8List> backgrounds=const {},
   }) => render(template, data, images:images, qr:qr, backgrounds:backgrounds,
-    printOnly:template.id == 'student-green-blue-modern-v1'||IdCardCatalog.isGlobalId(template.id));
+    printOnly:template.id == 'student-green-blue-modern-v1'||IdCardIdentity.isGlobalId(template.id));
 
   static Future<Uint8List> _render(
     IdCardManifest template,
@@ -282,7 +282,7 @@ class IdCardEngine {
     // Embed school-owned source backgrounds at their actual CR80 print size.
     // This is bitmap-only optimization; the original image assets, vector
     // QR, Indic text shaping and layout geometry remain unchanged.
-    final fullResolution = printOnly && (template.id == 'student-green-blue-modern-v1'||IdCardCatalog.isGlobalId(template.id));
+    final fullResolution = printOnly && (template.id == 'student-green-blue-modern-v1'||IdCardIdentity.isGlobalId(template.id));
     if (fullResolution && backgrounds['front'] == null) {
       throw const FormatException('Original full-resolution artwork is unavailable.');
     }
@@ -329,7 +329,7 @@ class IdCardEngine {
     );
     final output = await pdf.save();
     if (printOnly) return SchoolMediaBudgets.verifyPrintPdf(output);
-    if (!IdCardCatalog.isGlobalId(template.id) &&
+    if (!IdCardIdentity.isGlobalId(template.id) &&
         !useCompactVectorFont && output.length > SchoolMediaBudgets.idCard) {
       // Original catalog font wins when it fits. Only ASCII-only oversized
       // cards retry with a non-embedded vector font; no QR/text rasterization,
