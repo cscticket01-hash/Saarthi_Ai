@@ -23,6 +23,12 @@ class DeveloperGlobalIdPreview {
     'academicSession':'2026-27','bloodGroup':'A+','emergencyContact':'0000000000',
     '_greenBlueVerifiedUid':'DEMO-000001',
   };
+  static Map<String,dynamic> qualityData(String kind)=>{...demoData(kind),
+    'name':'Alex Morgan Williams','parentName':'Jordan Morgan Williams',
+    'schoolName':'Example Public School','class':'Class VIII','rollNo':'128',
+    'contact':'0000000000','address':'Example Road, Sample Town, District',
+    '_greenBlueVerifiedUid':'STU-EXAMPLE-000001',
+  };
   static Map<String,Uint8List> demoImages(){
     final result=<String,Uint8List>{};
     for(final role in ['photo','logo','signature','seal']){
@@ -70,10 +76,14 @@ class DeveloperGlobalIdPreview {
       if(actual!=qr)throw FormatException('$side demo print QR mismatch.');
     }
   }
-  static Future<Uint8List> generate(Map<String,dynamic> package,String kind) async{
+  static Future<Uint8List> generate(Map<String,dynamic> package,String kind,{bool validateQuality=false}) async{
     final m=manifest(package);
     final raw=Map<String,dynamic>.from(package['backgrounds'] as Map);
     final backgrounds={for(final e in raw.entries)e.key:base64Decode(e.value as String)};
+    if(validateQuality){
+      if(m.regions.any((r)=>r.kind=='text'&&r.overflow!='error'))throw const FormatException('All text fields must use full readable content, without ellipsis.');
+      await IdCardEngine.render(m,qualityData(kind),images:demoImages(),qr:qr,backgrounds:backgrounds,printOnly:true);
+    }
     final pdf=await IdCardEngine.render(m,demoData(kind),images:demoImages(),qr:qr,backgrounds:backgrounds,printOnly:true);
     Uint8List? result;
     await for(final page in Printing.raster(pdf,dpi:300).timeout(const Duration(seconds:45))){

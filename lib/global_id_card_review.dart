@@ -41,9 +41,11 @@ class GlobalIdCardReview {
     // Short sample values (X, 02) are not adequate output regions.
     // These are conservative geometry hints; the actual renderer is final.
     switch(r['key']){
-      case 'class':case 'rollNo':case 'section':return 13;
-      case 'confirmedUniversalStudentUid':return 30;
-      case 'name':case 'parentName':case 'contact':case 'dob':return 24;
+      case 'class':case 'rollNo':case 'section':return 24;
+      case 'confirmedUniversalStudentUid':return 88;
+      case 'name':case 'parentName':return 55;
+      case 'contact':case 'dob':return 38;
+      case 'address':return 75;
       default:return 6;
     }
   }
@@ -64,7 +66,7 @@ class GlobalIdCardReview {
     for(final r in result){
       if(!textFields.contains(r['key']))continue;
       final rotated=r['rotation']==-90;
-      if(readabilityIssue(r)==null&&_n(r,rotated?'height':'width')>=_minimumTextWidth(r))continue;
+      if(readabilityIssue(r)==null&&_n(r,rotated?'height':'width')>=_minimumTextWidth(r)&&(r['key']!='address'||_n(r,rotated?'width':'height')>=15.2))continue;
       final matchingPages=pages.where((p)=>p['side']==r['side']).toList(growable:false);
       if(matchingPages.isEmpty)continue;
       final page=matchingPages.first;
@@ -72,10 +74,11 @@ class GlobalIdCardReview {
       final x=_n(r,'x'),y=_n(r,'y'),w=_n(r,'width'),h=_n(r,'height');
       if(![pw,ph,x,y,w,h].every((v)=>v.isFinite)||x<0||y<0||w<=0||h<=0||x+w>pw||y+h>ph)continue;
       final vertical=r['rotation']==-90;
-      final targetW=math.max(w,vertical?7.6:_minimumTextWidth(r)+.1);
-      final targetH=math.max(h,vertical?_minimumTextWidth(r)+.1:7.6);
+      final lineHeight=r['key']=='address'?15.2:7.6;
+      final targetW=math.max(w,vertical?lineHeight:_minimumTextWidth(r)+.1);
+      final targetH=math.max(h,vertical?_minimumTextWidth(r)+.1:lineHeight);
       // Only modest automatic expansion; larger corrections need a person.
-      if(targetW-w>(vertical?5:24)||targetH-h>(vertical?24:5))continue;
+      if(targetW-w>(vertical?5:math.min(65,pw*.28))||targetH-h>(vertical?math.min(65,ph*.45):r['key']=='address'?12:5))continue;
       final dw=targetW-w,dh=targetH-h;
       final preferredX=vertical?x-dw/2:r['align']=='right'?x-dw:r['align']=='center'?x-dw/2:x;
       final preferredY=vertical?y+ h-targetH:y-dh/2;
@@ -516,9 +519,10 @@ class GlobalIdCardReview {
       final font=((slot['fontSize'] as num?)??math.max(6,math.min(72,((slot['height'] as num?)??12)*.8))).toDouble();
       regions.add({'key':key,'side':slot['side'],'kind':type,'x':slot['x'],'y':slot['y'],
         'width':slot['width'],'height':slot['height'],'fontSize':font,'minFontSize':6,
-        'textColor':slot['textColor']??'#000000','align':slot['align']??'left','bold':type=='text'&&slot['bold']==true,'required':key=='name'||key=='qr',
+        'textColor':slot['textColor']??'#000000','align':slot['align']??'left','bold':type=='text'&&slot['bold']==true,'required':key=='name'||key=='qr'||key=='confirmedUniversalStudentUid',
+        'overflow':'error',
         'rotation':type=='text'&&slot['rotation']==-90?-90:0,'fit':key=='photo'?'cover':'contain','shape':type=='image'&&slot['oval']==true?'oval':'rect',
-        'wrap':type=='text'&&slot['wrap']==true,'maxLines':type=='text'&&slot['wrap']==true?2:1});
+        'wrap':type=='text'&&(slot['wrap']==true||key=='address'),'maxLines':type=='text'&&(slot['wrap']==true||key=='address')?math.min(4,math.max(2,(((slot['rotation']==-90?slot['width']:slot['height']) as num)/7.5).floor())):1});
     }
     if(!regions.any((r)=>r['key']=='name'&&r['side']=='front')||!regions.any((r)=>r['key']=='qr'))
       throw const FormatException('Map the front name and authentication QR before review.');
@@ -538,8 +542,8 @@ class GlobalIdCardReview {
         try{
           backgrounds[side]=base64Encode(cleanFlatRegions(source,manifest,side,allowSmoothGradient:allowSmoothGradient,sampleMasks:masks));
         }on FormatException{
-          if(!allowApproximateRepair)rethrow;
-          backgrounds[side]=base64Encode(reconstructArtwork(source,manifest,side,masks));
+          // Approximate reconstruction cannot establish clean artwork fidelity.
+          throw FormatException('$side: complex background cannot be reliably restored automatically. Supply matching clean original PDF or PNG.');
         }
       }
     }

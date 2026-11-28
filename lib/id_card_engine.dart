@@ -142,6 +142,7 @@ class IdCardEngine {
         'parentName':first(['parentName','fatherName','guardianName']),
         'dob':first(['dateOfBirth','dob']),'class':first(['studentClass','class']),
         'rollNo':first(['rollNo','roll']),'contact':first(['parentContact','contact','contactNo','phone']),
+        'address':first(['streetAddress','address']),
         'pinCode':first(['pinCode','pin','pincode']),'session':first(['academicSession','session','academicYear']),
         'confirmedUniversalStudentUid':first(['_greenBlueVerifiedUid']).isEmpty?'':'Student ID - ${first(['_greenBlueVerifiedUid'])}',
       };
@@ -215,7 +216,7 @@ class IdCardEngine {
     data = normalizedInput(template,data);
     qr = compactQr(qr);
     for (final r in template.regions) {
-      if (r.isRequired &&
+      if ((r.isRequired || (IdCardIdentity.isGlobalId(template.id)&&r.key=='confirmedUniversalStudentUid')) &&
           (r.kind == 'image'
               ? images[r.key] == null
               : r.kind == 'qr'
@@ -460,7 +461,7 @@ class PreparedIdCard {
                           minFontSize: r.minFontSize,
                           wrap: r.wrap,
                           maxLines: r.maxLines,
-                          overflow: r.overflow,
+                          overflow: IdCardIdentity.isGlobalId(template.id)?'error':r.overflow,
                           fieldName: IdCardIdentity.isGlobalId(template.id)?'${r.key} (${r.side})':null,
                           align: r.align == 'center'
                               ? pw.TextAlign.center

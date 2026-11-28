@@ -264,4 +264,17 @@ void main() {
     expect(latin1.decode(pdf).startsWith('%PDF'),true);
   });
 
+  test('global output refuses truncated text even in an old ellipsis manifest',()async{
+    final m=IdCardManifest.fromJson({'id':'gid-00000000000000000000000000000001','version':1,'canvasWidth':240,'canvasHeight':150,
+      'printWidthMm':84.8,'printHeightMm':53,'regions':[{'side':'front','key':'name','kind':'text','x':10,'y':20,'width':18,'height':12,'fontSize':8,'minFontSize':6,'overflow':'ellipsis'}]});
+    final image=img.Image(width:480,height:300,numChannels:4);img.fill(image,color:img.ColorRgba8(255,255,255,255));
+    await expectLater(IdCardEngine.render(m,{'name':'Alex Morgan Williams'},backgrounds:{'front':img.encodePng(image)},printOnly:true),
+      throwsA(isA<FormatException>().having((e)=>e.message,'message',contains('name (front)'))));
+  });
+  test('mapped global student UID cannot be replaced with an unverified ID',()async{
+    final m=IdCardManifest.fromJson({'id':'gid-00000000000000000000000000000001','version':1,'canvasWidth':240,'canvasHeight':150,
+      'printWidthMm':84.8,'printHeightMm':53,'regions':[{'side':'front','key':'confirmedUniversalStudentUid','kind':'text','x':10,'y':20,'width':170,'height':12}]});
+    await expectLater(IdCardEngine.prepare(m,{'studentId':'unverified'}),throwsA(isA<FormatException>().having((e)=>e.message,'message',contains('confirmedUniversalStudentUid'))));
+  });
+
 }
