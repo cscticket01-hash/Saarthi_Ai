@@ -22,9 +22,12 @@ function imagePdf(encoded){
 (async()=>{
  const checks={};
  for(const [lang,kind] of [['hin','studentId'],['ben','teacherId'],['asm','otherStaffId']]){
+  let phase='fixture';
   try{
    const bytes=imagePdf(fixtures[lang]);
+   phase='native';
    const before=await analyzePdf(bytes,'/usr/bin/pdftotext','/usr/bin/pdftohtml');
+   phase='ocr';
    const after=await analyzePdf(bytes,'/usr/bin/pdftotext','/usr/bin/pdftohtml',{ocr:true,rasterizer:'/usr/bin/pdftoppm'});
    if(lang==='hin'&&!after.pages[0].candidates.some(r=>r.key==='name')){
     const rasters=await renderReviewSource(bytes,before.pages,'/usr/bin/pdftoppm',300);
@@ -32,7 +35,7 @@ function imagePdf(encoded){
     console.log('ID_SCANNED_PDF_CHECK '+JSON.stringify({syntheticHindiOnly:result.words.map(w=>({text:w.text,confidence:w.confidence,bbox:w.bbox})).slice(0,30)}));
    }
    checks[lang]={imageOnly:before.pages[0].candidates.length===0,recognized:after.pages[0].ocr?.state==='recognized',name:after.pages[0].candidates.some(r=>r.key==='name'),category:after.category.kind===kind};
-  }catch(_){checks[lang]={error:true};}
+  }catch(e){checks[lang]={error:true,phase,name:e.name,code:e.code??null,message:String(e.message).split('\n')[0].slice(0,250),diagnostic:String(e.stderr||'').slice(0,200)};}
  }
  const passed=Object.values(checks).every(c=>!c.error&&Object.values(c).every(Boolean));
  console.log('ID_SCANNED_PDF_CHECK '+JSON.stringify({passed,checks}));
