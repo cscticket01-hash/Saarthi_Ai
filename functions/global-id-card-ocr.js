@@ -34,4 +34,12 @@ async function recognize(png,mode='all'){
   throw safe;
  }finally{try{if(dir)await rm(dir,{recursive:true,force:true});}finally{busy=false;}}
 }
-module.exports={recognize,toPageXml};
+function preferredScript(words){
+ const text=words.map(w=>w.text).join(' ');
+ const count=re=>(text.match(re)||[]).length;
+ const hindi=count(/[\u0900-\u097f]/g),eastern=count(/[\u0980-\u09ff]/g);
+ if(hindi>=3&&hindi>eastern)return 'hin';
+ if(eastern>=3&&eastern>hindi)return /[ৰৱ]/u.test(text)?'asm':'ben';
+ return null;
+}
+module.exports={recognize,toPageXml,preferredScript};

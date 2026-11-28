@@ -122,3 +122,13 @@ test('OCR word geometry maps local-script labels and does not retain sample cont
   assert.equal(JSON.stringify(result).includes('SampleSecret'),false);
  }
 });
+
+test('OCR retry chooses the dominant script without storing words',()=>{
+ const {preferredScript}=require('../global-id-card-ocr');
+ assert.equal(preferredScript([{text:'छात्र पहचान पत्र'},{text:'শাম:'},{text:'उदाहरण'}]),'hin');
+ assert.equal(preferredScript([{text:'কৰ্মচাৰী পৰিচয় পত্র'}]),'asm');
+ assert.equal(preferredScript([{text:'শিক্ষক পরিচয় পত্র'}]),'ben');
+ assert.equal(preferredScript([{text:'STUDENT ID CARD'}]),null);
+ const xml='<page width="240" height="120"><word xMin="10" yMin="10" xMax="210" yMax="25">কৰ্মচাৰী পৰিচয় পত্র</word></page>';
+ assert.equal(parseCandidates(xml)[0].category.kind,'otherStaffId');
+});

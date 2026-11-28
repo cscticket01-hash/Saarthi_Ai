@@ -47,7 +47,7 @@ const categoryOf=lines=>{
   const t=normalized(line).replace(/[-–—]/g,' ');
   if(/\bstudent\s+(?:id|identity)\s+card\b/.test(t)||/(?:छात्र|विद्यार्थी)\s+पहचान\s+पत्र|(?:ছাত্র|শিক্ষার্থী)\s+পরিচয়\s+পত্র|ছাত্ৰ\s+পৰিচয়\s+পত্ৰ/u.test(t))matches.add('studentId');
   if(/\bteacher\s+(?:id|identity)\s+card\b/.test(t)||/शिक्षक\s+पहचान\s+पत्र|শিক্ষক\s+(?:পরিচয়\s+পত্র|পৰিচয়\s+পত্ৰ)/u.test(t))matches.add('teacherId');
-  if(/\b(?:other\s+staff|staff|employee|non\s+teaching\s+staff)\s+(?:id|identity)\s+card\b/.test(t)||/कर्मचारी\s+पहचान\s+पत्र|কর্মচারী\s+পরিচয়\s+পত্র|কৰ্মচাৰী\s+পৰিচয়\s+পত্ৰ/u.test(t))matches.add('otherStaffId');
+  if(/\b(?:other\s+staff|staff|employee|non\s+teaching\s+staff)\s+(?:id|identity)\s+card\b/.test(t)||/कर्मचारी\s+पहचान\s+पत्र|কর্মচারী\s+পরিচয়\s+পত্র|কৰ্মচাৰী\s+পৰিচয়\s+(?:পত্ৰ|পত্র)/u.test(t))matches.add('otherStaffId');
  }
  return matches.size===1?{kind:[...matches][0],evidence:'explicit_card_heading'}:{kind:null,evidence:matches.size>1?'conflicting_headings':'unknown'};
 };
@@ -291,12 +291,32 @@ async function analyzePdf(bytes,executable,imageExecutable,{ocr=false,rasterizer
   // or ambiguous pages. Never persist recognized sample strings.
   if(ocr&&rasterizer&&pages.some(p=>p.candidates.length<5||!p.category?.kind)){
    try{
-    const {recognize,toPageXml}=require('./global-id-card-ocr');
+    const {recognize,toPageXml,preferredScript}=require('./global-id-card-ocr');
     const rasters=await renderReviewSource(bytes,pages,rasterizer,300);
     for(const page of pages){
      if(page.candidates.length>=5&&page.category?.kind)continue;
-     const result=await recognize(Buffer.from(rasters[page.side],'base64'));
+     const png=Buffer.from(rasters[page.side],'base64');
+     const result=await recognize(png);
      const recovered=parseCandidates(toPageXml(result,page))[0];
+     const language=preferredScript(result.words);
+     // A script-specific pass resolves cross-script recognition errors when
+     // the multilingual model missed a core field or category. Never let a
+     // contradictory retry override an explicit heading.
+     let retried=false;
+     if(language&&(!recovered.category?.kind||!recovered.candidates.some(r=>r.key==='name'))){
+      try{
+       const retry=await recognize(png,language);
+       const second=parseCandidates(toPageXml(retry,page))[0];
+       retried=true;
+       for(const field of second.candidates)if(!recovered.candidates.some(r=>r.key===field.key))recovered.candidates.push(field);
+       for(const label of second.labelSlots)if(!recovered.labelSlots.some(r=>r.role===label.role))recovered.labelSlots.push(label);
+       if(recovered.category?.evidence!=='conflicting_headings'){
+        if(second.category?.evidence==='conflicting_headings'||(recovered.category?.kind&&second.category?.kind&&recovered.category.kind!==second.category.kind))
+         recovered.category={kind:null,evidence:'conflicting_headings'};
+        else if(!recovered.category?.kind&&second.category?.kind)recovered.category=second.category;
+       }
+      }catch(_){warnings.push('Script-specific OCR retry unavailable; review unresolved fields.');}
+     }
      for(const field of recovered.candidates){
       if(!page.candidates.some(r=>r.key===field.key))page.candidates.push({...field,side:page.side,evidence:'ocr_geometry'});
      }
@@ -306,9 +326,9 @@ async function analyzePdf(bytes,executable,imageExecutable,{ocr=false,rasterizer
      if(page.category?.evidence!=='conflicting_headings'){
       if(page.category?.kind&&recovered.category?.kind&&page.category.kind!==recovered.category.kind)
        page.category={kind:null,evidence:'conflicting_headings'};
-      else if(!page.category?.kind&&recovered.category?.kind)page.category=recovered.category;
+      else if(recovered.category?.evidence==='conflicting_headings'||(!page.category?.kind&&recovered.category?.kind))page.category=recovered.category;
      }
-     page.ocr={state:'recognized',languages:result.languages,wordCount:result.words.length};
+     page.ocr={state:'recognized',languages:result.languages,wordCount:result.words.length,scriptRetry:retried};
     }
    }catch(_){
     warnings.push('OCR fallback unavailable or timed out; review unresolved fields.');
