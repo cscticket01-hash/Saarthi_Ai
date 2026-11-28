@@ -433,7 +433,21 @@ class GlobalIdCardReview {
       final l=math.max(0,(x*sx).floor()-2),t=math.max(0,(y*sy).floor()-2);
       final right=math.min(w,((x+rw)*sx).ceil()+2),bottom=math.min(h,((y+rh)*sy).ceil()+2);
       if(l==0||t==0||right==w||bottom==h)throw const FormatException('Sample reaches edge; clean original artwork required.');
-      for(var yy=t;yy<bottom;yy++)masked.fillRange(yy*w+l,yy*w+right,1);
+      if (r['oval'] != true) {
+        for (var yy = t; yy < bottom; yy++) {
+          masked.fillRange(yy * w + l, yy * w + right, 1);
+        }
+      } else {
+        final cx = (l + right) / 2, cy = (t + bottom) / 2;
+        final rx = (right - l) / 2, ry = (bottom - t) / 2;
+        for (var yy = t; yy < bottom; yy++) {
+          final dy = (yy + .5 - cy) / ry;
+          final half = rx * math.sqrt(math.max(0.0, 1 - dy * dy));
+          final start = math.max(l, (cx - half).floor());
+          final end = math.min(right, (cx + half).ceil());
+          masked.fillRange(yy * w + start, yy * w + end, 1);
+        }
+      }
     }
     if(masked.where((v)=>v!=0).length>w*h*.38)
       throw const FormatException('Too much hidden artwork for reliable automatic repair; use clean original.');
@@ -462,7 +476,10 @@ class GlobalIdCardReview {
           if(t<0||bottom<0)throw const FormatException('Missing artwork boundary.');
           final c=source.getPixel(xx,t),d=source.getPixel(xx,bottom);
           final u=(xx-l)/(r-l),v=(y-t)/(bottom-t);
-          final wx=1.0/(r-l),wy=1.0/(bottom-t);
+          // Prefer boundaries across the shorter gap, especially for narrow
+          // text over an otherwise continuous line or gradient.
+          final dx = r - l, dy = bottom - t;
+          final wx = 1.0 / (dx * dx), wy = 1.0 / (dy * dy);
           int blend(num p,num q,num m,num n)=>((wx*(p+(q-p)*u)+wy*(m+(n-m)*v))/(wx+wy)).round().clamp(0,255).toInt();
           output.setPixelRgba(xx,y,blend(a.r,b.r,c.r,d.r),blend(a.g,b.g,c.g,d.g),blend(a.b,b.b,c.b,d.b),255);
         }
@@ -507,7 +524,7 @@ class GlobalIdCardReview {
     return Uint8List.fromList(img.encodePng(target));
   }
   static Map<String,dynamic> package(String id,List<Map<String,dynamic>> pages,
-      List<Map<String,dynamic>> slots,Map<String,Uint8List> rasters,{bool allowSmoothGradient=false,bool allowApproximateRepair=false,Map<String,Uint8List> cleanArtwork=const {},Map<String,Uint8List> cleanCompanion=const {}}){
+      List<Map<String,dynamic>> slots,Map<String,Uint8List> rasters,{bool allowSmoothGradient=false,bool allowApproximateRepair=false,Set<String>? reconstructedSides,Map<String,Uint8List> cleanArtwork=const {},Map<String,Uint8List> cleanCompanion=const {}}){
     if(pages.isEmpty||pages.length>2||slots.length>128)throw const FormatException('Invalid review pages or slot count.');
     final first=pages.first;
     final w=(first['canvasWidth'] as num).toDouble(),h=(first['canvasHeight'] as num).toDouble();
@@ -549,8 +566,15 @@ class GlobalIdCardReview {
         try{
           backgrounds[side]=base64Encode(cleanFlatRegions(source,manifest,side,allowSmoothGradient:allowSmoothGradient,sampleMasks:masks));
         }on FormatException catch(e){
-          // Keep the exact field/boundary diagnostic. Never publish invented artwork.
-          throw FormatException('$side: ${e.message} Supply matching clean original PDF or PNG.');
+          if (!allowApproximateRepair || reconstructedSides == null) {
+            throw FormatException('$side: ${e.message} Supply matching clean original PDF or PNG.');
+          }
+          try {
+            backgrounds[side] = base64Encode(reconstructArtwork(source, manifest, side, masks));
+            reconstructedSides.add(side);
+          } on FormatException catch (repairError) {
+            throw FormatException('$side: ${e.message} ${repairError.message}');
+          }
         }
       }
     }
