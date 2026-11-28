@@ -77,7 +77,7 @@ function parseCandidates(xml){
   const tall=words.filter(w=>w.text.length>=2&&w.bottom-w.y>1.65*(w.right-w.x));
   const vertical=words.filter(w=>tall.includes(w)||(/^(?:id|[-:–—])$/i.test(w.text)&&tall.some(t=>Math.abs((t.x+t.right-w.x-w.right)/2)<3&&Math.max(0,t.y-w.bottom,w.y-t.bottom)<8)));
   const verticalIdWords=new Set();
-  const labelSlots=[],lineTexts=[];
+  const labelSlots=[],blankTextLabels=[],lineTexts=[];
   // Preserve separate continuation lines for address values. A continuation
   // must begin near the address value and remain within one line height.
   let previousAddress=null;
@@ -170,6 +170,11 @@ function parseCandidates(xml){
     // A colon may be attached to the first word. Its bbox is conservatively
     // included so the sample cannot be partly retained.
     add(anchor.key,value,{evidence:'label_value_geometry'});
+    if(value.length===0){
+     const label=union(line.slice(anchor.start,anchor.end+1));
+     const next=anchors[i+1];
+     blankTextLabels.push({key:anchor.key,...label,rightLimit:next?line[next.start].x:width});
+    }
     if(anchor.key==='address')previousAddress=candidates.find(r=>r.key==='address')||null;
    }
    // Student ID is often a rotated label/value, which may form its own row.
@@ -177,7 +182,7 @@ function parseCandidates(xml){
    if(!anchors.some(a=>a.key==='confirmedUniversalStudentUid')&&/^student\s+id\s*[-:–—]\s*\S+/i.test(raw))
     add('confirmedUniversalStudentUid',line,{evidence:'combined_id_placeholder',rotation:line.length===1&&line[0].bottom-line[0].y>2*(line[0].right-line[0].x)?-90:0});
   }
-  return {side,canvasWidth:width,canvasHeight:height,printWidthMm:width*25.4/72,printHeightMm:height*25.4/72,candidates:candidates.slice(0,128),labelSlots,category:categoryOf(lineTexts)};
+  return {side,canvasWidth:width,canvasHeight:height,printWidthMm:width*25.4/72,printHeightMm:height*25.4/72,candidates:candidates.slice(0,128),labelSlots,...(blankTextLabels.length?{blankTextLabels:blankTextLabels.slice(0,128)}:{}),category:categoryOf(lineTexts)};
 
  });
 }
@@ -377,16 +382,16 @@ async function analyzePdf(bytes,executable,imageExecutable,{ocr=false,rasterizer
 async function renderReviewSource(bytes,pages,executable,dpi=600){
  if(![150,300,600].includes(dpi))throw Error('Unsupported review resolution');
  if(!executable)throw Object.assign(Error('Central review rasterizer is not configured'),{status:503,publicMessage:true});
- if(!Array.isArray(pages)||pages.length<1||pages.length>2)throw Error('Analyze source before review');
+ if(pages!==null&&(!Array.isArray(pages)||pages.length<1||pages.length>2))throw Error('Analyze source before review');
  const dir=await mkdtemp(join(tmpdir(),'saarthi-id-review-'));
  try{
   const input=join(dir,'source.pdf'),prefix=join(dir,'review');
   await writeFile(input,bytes,{mode:0o600});
   // Explicit configured, isolated runtime. Keep original physical size.
-  await run(executable,['-f','1','-l',String(pages.length),'-r',String(dpi),'-png',input,prefix],
+  await run(executable,['-f','1','-l',String(pages?.length??3),'-r',String(dpi),'-png',input,prefix],
     {cwd:dir,timeout:20000,maxBuffer:1024*1024,windowsHide:true});
   const names=(await readdir(dir)).filter(n=>/^review-\d+\.png$/.test(n)).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
-  if(names.length!==pages.length)throw Error('Review page count mismatch');
+  if(pages ? names.length!==pages.length : names.length<1||names.length>2)throw Error('Review page count mismatch');
   const rasters={};let total=0;
   for(let i=0;i<names.length;i++){
    const file=join(dir,names[i]);total+=(await stat(file)).size;
@@ -394,9 +399,9 @@ async function renderReviewSource(bytes,pages,executable,dpi=600){
    const b=await readFile(file);
    if(b.length<24||b.subarray(0,8).toString('hex')!=='89504e470d0a1a0a'||
       b.readUInt32BE(16)*b.readUInt32BE(20)>20000000||
-      Math.abs(b.readUInt32BE(16)/b.readUInt32BE(20)-pages[i].canvasWidth/pages[i].canvasHeight)>.01)
+      (pages&&Math.abs(b.readUInt32BE(16)/b.readUInt32BE(20)-pages[i].canvasWidth/pages[i].canvasHeight)>.01))
        throw Error('Review raster geometry mismatch');
-   rasters[pages[i].side]=b.toString('base64');
+   rasters[pages?.[i].side??(i===0?'front':'back')]=b.toString('base64');
   }
   return rasters;
  }finally{await rm(dir,{recursive:true,force:true});}
