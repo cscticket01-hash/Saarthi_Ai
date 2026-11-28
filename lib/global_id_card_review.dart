@@ -65,8 +65,9 @@ class GlobalIdCardReview {
       if(!textFields.contains(r['key']))continue;
       final rotated=r['rotation']==-90;
       if(readabilityIssue(r)==null&&_n(r,rotated?'height':'width')>=_minimumTextWidth(r))continue;
-      final page=pages.where((p)=>p['side']==r['side']).firstOrNull;
-      if(page==null)continue;
+      final matchingPages=pages.where((p)=>p['side']==r['side']).toList(growable:false);
+      if(matchingPages.isEmpty)continue;
+      final page=matchingPages.first;
       final pw=_n(page,'canvasWidth'),ph=_n(page,'canvasHeight');
       final x=_n(r,'x'),y=_n(r,'y'),w=_n(r,'width'),h=_n(r,'height');
       if(![pw,ph,x,y,w,h].every((v)=>v.isFinite)||x<0||y<0||w<=0||h<=0||x+w>pw||y+h>ph)continue;
@@ -78,7 +79,7 @@ class GlobalIdCardReview {
       final dw=targetW-w,dh=targetH-h;
       final preferredX=vertical?x-dw/2:r['align']=='right'?x-dw:r['align']=='center'?x-dw/2:x;
       final preferredY=vertical?y+ h-targetH:y-dh/2;
-      bool free(double xx,double yy){
+      bool free(num xx,num yy){
         if(xx<0||yy<0||xx+targetW>pw||yy+targetH>ph)return false;
         for(final other in result){
           if(identical(r,other)||other['side']!=r['side'])continue;
@@ -503,8 +504,8 @@ class GlobalIdCardReview {
     if(pages.any((p)=>((p['canvasWidth'] as num)-w).abs()>.01||((p['canvasHeight'] as num)-h).abs()>.01))
       throw const FormatException('Front/back page sizes differ.');
     if(slots.any((r)=>r['key']==''||r['roleConfidence']=='low'))throw const FormatException('Confirm uncertain images or explicitly mark them static artwork.');
-    final issue=slots.map(readabilityIssue).whereType<String>().firstOrNull;
-    if(issue!=null)throw FormatException(issue);
+    final issues=slots.map(readabilityIssue).whereType<String>().toList(growable:false);
+    if(issues.isNotEmpty)throw FormatException(issues.first);
     final regions=<Map<String,dynamic>>[],masks=<Map<String,dynamic>>[];
     for(final slot in slots){
       final key=slot['key']?.toString()??'';
