@@ -342,7 +342,7 @@ async function analyzePdf(bytes,executable,imageExecutable,{ocr=false,rasterizer
 }
 // Developer-only reference raster. Never distribute this filled artwork.
 async function renderReviewSource(bytes,pages,executable,dpi=600){
- if(![300,600].includes(dpi))throw Error('Unsupported review resolution');
+ if(![150,300,600].includes(dpi))throw Error('Unsupported review resolution');
  if(!executable)throw Object.assign(Error('Central review rasterizer is not configured'),{status:503,publicMessage:true});
  if(!Array.isArray(pages)||pages.length<1||pages.length>2)throw Error('Analyze source before review');
  const dir=await mkdtemp(join(tmpdir(),'saarthi-id-review-'));

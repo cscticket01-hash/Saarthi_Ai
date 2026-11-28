@@ -56,7 +56,7 @@ function accessDecision(row,grant,school){
     grant.schoolId===school&&grant.templateId===row.id&&grant.version===row.version&&
     grant.source==='developer_grant';
 }
-function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=process.env.SAARTHI_GLOBAL_ID_STORAGE_POLICY_VERIFIED==='true',analyzer=process.env.SAARTHI_GLOBAL_ID_PDFTOTEXT,imageAnalyzer=process.env.SAARTHI_GLOBAL_ID_PDFTOHTML,rasterizer=process.env.SAARTHI_GLOBAL_ID_PDFTOPPM,analyzeSource=analyzePdf,ocrEnabled=process.env.SAARTHI_GLOBAL_ID_OCR_ENABLED==='true'}){
+function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=process.env.SAARTHI_GLOBAL_ID_STORAGE_POLICY_VERIFIED==='true',analyzer=process.env.SAARTHI_GLOBAL_ID_PDFTOTEXT,imageAnalyzer=process.env.SAARTHI_GLOBAL_ID_PDFTOHTML,rasterizer=process.env.SAARTHI_GLOBAL_ID_PDFTOPPM,analyzeSource=analyzePdf,renderSource=renderReviewSource,ocrEnabled=process.env.SAARTHI_GLOBAL_ID_OCR_ENABLED==='true'}){
   const collection='global_id_card_library';
   const refs=id=>{if(!ID.test(id||''))invalid(400,'Invalid template identity');return db.doc(collection+'/'+id);};
   const familyRef=id=>{if(!ID.test(id||''))invalid(400,'Invalid template family');return db.doc('global_id_card_families/'+id);};
@@ -169,6 +169,24 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
         tx.set(ref,{mappingState:'review_required',analysis,updatedAt:now()},{merge:true});
       });
       return {success:true,analysis,sourceSha256:row.sourceSha256};
+    }
+    if(action==='preview'){
+      // Developer-only, read-only private preview; never expose source URLs.
+      const snap=await refs(b.id).get(),row=snap.data();
+      if(!snap.exists||row.state==='deleted')invalid(404,'Template not found');
+      if(row.packageVerified===true&&HASH.test(row.packageSha256||'')&&row.packagePath){
+        const [bytes]=await (await storage()).file(row.packagePath).download();
+        if(bytes.length>MAX_PDF_BYTES||sha256(bytes)!==row.packageSha256)invalid(503,'Package checksum failed');
+        const pkg=JSON.parse(bytes.toString('utf8'));
+        return {success:true,mode:'verified',rasters:pkg.backgrounds,manifest:pkg.manifest};
+      }
+      if(!['draft','archived'].includes(row.state))invalid(409,'Preview unavailable');
+      if(!rasterizer)invalid(503,'Preview rasterizer unavailable');
+      const [source]=await (await storage()).file(row.sourcePath).download();
+      if(source.length>MAX_PDF_BYTES||sha256(source)!==row.sourceSha256)invalid(503,'Source checksum failed');
+      // Explicit tracking runs the current detector, including configured OCR, on legacy drafts without persisting anything.
+      const analysis=b.trackMapping===true?await analyzeSource(source,analyzer,imageAnalyzer,{ocr:ocrEnabled,rasterizer}):row.analysis?.pages?row.analysis:await analyzeSource(source,analyzer,imageAnalyzer,{ocr:false,rasterizer});
+      return {success:true,mode:'private_reference',rasters:await renderSource(source,analysis.pages,rasterizer,b.trackMapping===true?600:150),...(b.trackMapping===true?{analysis}: {})};
     }
     if(action==='review-source'){
       const snap=await refs(b.id).get(),row=snap.data();
