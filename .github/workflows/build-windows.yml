@@ -1,3 +1,4 @@
+# Authorized PR #443 ID card output quality Windows release; existing release gates unchanged.
 # User-authorized Windows publication of merged PR #439.
 # User-authorized Windows publication of merged PRs #433 and #434; physical native crash root-cause verification remains pending.
 # Owner-authorized PR #431 Windows publication after verified PR #432 Render backend rollout; physical acceptance remains operator pending.
