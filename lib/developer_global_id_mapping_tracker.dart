@@ -14,6 +14,8 @@ class DeveloperGlobalIdMappingTracker extends StatefulWidget {
   final Future<void> Function()? publish;
   @override State<DeveloperGlobalIdMappingTracker> createState()=>_TrackerState();
 }
+enum _ResizeEdge { left, top, right, bottom }
+
 class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
   String side='front',field='logo',shape='rectangle',tool='draw',assignRole='logo';
   bool manual=false,saving=false,dirty=false,syncMask=false;
@@ -24,6 +26,7 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
   final undo=<List<Map<String,dynamic>>>[],redo=<List<Map<String,dynamic>>>[];
   int selected=-1,revision=0;
   Offset? start,point;
+  final previewKey = GlobalKey();
   Rect? original,dragRect;
   List<Map<String,dynamic>>? dragBefore;
   static const labels=<String,String>{
@@ -43,6 +46,11 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
         setState(() {
           loaded = data;
           slots = copy(data.saved ?? data.automatic);
+          if (!data.verified && widget.save != null) {
+            slots = GlobalIdCardReview.fitOutputRegions(
+              data.pages, slots, repairStudentIdOnly: true,
+            );
+          }
           revision = data.revision;
           manual = !data.verified && widget.save != null;
         });
@@ -74,7 +82,7 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
   void selectField(String key){
     setState((){
       field=key;selected=slots.indexWhere((r)=>r['side']==side&&r['key']==key);
-      shape=selection?['oval']==true?'oval':'rectangle';tool='draw';
+      shape = selectionShape(selection);
     });
   }
   Rect rect(Map<String,dynamic> r,{String prefix=''})=>Rect.fromLTWH(n(r,prefix+'x'),n(r,prefix+'y'),n(r,prefix+'width'),n(r,prefix+'height'));
@@ -87,14 +95,123 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
   void hit(Offset p){
     for(var i=slots.length-1;i>=0;i--){
       if(slots[i]['side']==side&&rect(slots[i]).contains(p)){
-        setState((){selected=i;field=slots[i]['key'].toString();shape=slots[i]['oval']==true?'oval':'rectangle';});
+        setState((){selected=i;field=slots[i]['key'].toString();shape = selectionShape(slots[i]);});
         return;
       }
     }
   }
+  String selectionShape(Map<String, dynamic>? row) {
+    if (row == null || row['oval'] != true) return 'rectangle';
+    return (n(row, 'width') - n(row, 'height')).abs() < .5 ? 'circle' : 'oval';
+  }
+
+  void beginResize(Offset position) {
+    if (!validSelection || saving) return;
+    setState(() {
+      start = position;
+      original = rect(slots[selected]);
+      dragBefore = copy(slots);
+    });
+  }
+
+  void resize(_ResizeEdge edge, Offset position, double scaleX, double scaleY,
+      double width, double height) {
+    final old = original;
+    final origin = start;
+    if (old == null || origin == null) return;
+    final delta = position - origin;
+    final dx = delta.dx / scaleX;
+    final dy = delta.dy / scaleY;
+    final horizontal = edge == _ResizeEdge.left || edge == _ResizeEdge.right;
+    final outward = switch (edge) {
+      _ResizeEdge.left => -dx,
+      _ResizeEdge.right => dx,
+      _ResizeEdge.top => -dy,
+      _ResizeEdge.bottom => dy,
+    };
+    final minWidth = math.min(.5, old.width);
+    final minHeight = math.min(.5, old.height);
+    Rect next;
+    if (shape == 'circle' || shape == 'square' || field == 'qr') {
+      final center = old.center;
+      final maxRadius = math.min(
+        math.min(center.dx, width - center.dx),
+        math.min(center.dy, height - center.dy),
+      );
+      if (maxRadius < .25) return;
+      final radius = ((horizontal ? old.width : old.height) / 2 + outward)
+          .clamp(.25, maxRadius).toDouble();
+      next = Rect.fromCircle(center: center, radius: radius);
+    } else {
+      next = switch (edge) {
+        _ResizeEdge.left => Rect.fromLTRB(
+          (old.left + dx).clamp(0.0, old.right - minWidth).toDouble(),
+          old.top, old.right, old.bottom),
+        _ResizeEdge.top => Rect.fromLTRB(old.left,
+          (old.top + dy).clamp(0.0, old.bottom - minHeight).toDouble(),
+          old.right, old.bottom),
+        _ResizeEdge.right => Rect.fromLTRB(old.left, old.top,
+          (old.right + dx).clamp(old.left + minWidth, width).toDouble(), old.bottom),
+        _ResizeEdge.bottom => Rect.fromLTRB(old.left, old.top, old.right,
+          (old.bottom + dy).clamp(old.top + minHeight, height).toDouble()),
+      };
+    }
+    setState(() => dragRect = next);
+  }
+
+  Widget resizeHandle(_ResizeEdge edge, Rect bounds, BoxConstraints constraints,
+      double width, double height) {
+    final scaleX = constraints.maxWidth / width;
+    final scaleY = constraints.maxHeight / height;
+    final anchor = switch (edge) {
+      _ResizeEdge.left => bounds.centerLeft,
+      _ResizeEdge.top => bounds.topCenter,
+      _ResizeEdge.right => bounds.centerRight,
+      _ResizeEdge.bottom => bounds.bottomCenter,
+    };
+    final horizontal = edge == _ResizeEdge.left || edge == _ResizeEdge.right;
+    final handleWidth = math.min(horizontal ? 18.0 : 30.0, constraints.maxWidth);
+    final handleHeight = math.min(horizontal ? 30.0 : 18.0, constraints.maxHeight);
+    return Positioned(
+      key: ValueKey('mapping-resize-${edge.name}'),
+      left: (anchor.dx * scaleX - handleWidth / 2)
+          .clamp(0.0, constraints.maxWidth - handleWidth).toDouble(),
+      top: (anchor.dy * scaleY - handleHeight / 2)
+          .clamp(0.0, constraints.maxHeight - handleHeight).toDouble(),
+      width: handleWidth,
+      height: handleHeight,
+      child: Semantics(
+        label: 'Resize ${label(field)} from the ${edge.name}',
+        child: MouseRegion(
+          cursor: horizontal ? SystemMouseCursors.resizeLeftRight
+              : SystemMouseCursors.resizeUpDown,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            dragStartBehavior: DragStartBehavior.down,
+            onPanStart: (event) => beginResize(event.globalPosition),
+            onPanUpdate: (event) => resize(
+              edge, event.globalPosition, scaleX, scaleY, width, height,
+            ),
+            onPanEnd: (_) => end(),
+            onPanCancel: cancelDrag,
+            child: Center(child: Container(
+              width: horizontal ? 6 : 22,
+              height: horizontal ? 22 : 6,
+              decoration: BoxDecoration(
+                color: Colors.red.shade700,
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(color: Colors.white),
+              ),
+            )),
+          ),
+        ),
+      ),
+    );
+  }
+
   void begin(Offset p){
     if(saving)return;
-    if(tool=='move'||tool=='resize'){
+    if(tool=='move'){
       if(!validSelection||!rect(slots[selected]).contains(p))hit(p);
       if(!validSelection||!rect(slots[selected]).contains(p))return;
       original=rect(slots[selected]);
@@ -111,11 +228,6 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
         final old=original!,d=p-origin;
         dragRect=Rect.fromLTWH((old.left+d.dx).clamp(0,math.max(0,w-old.width)).toDouble(),
           (old.top+d.dy).clamp(0,math.max(0,h-old.height)).toDouble(),old.width,old.height);
-      }else if(tool=='resize'&&original!=null){
-        final old=original!;
-        var rw=(old.width+p.dx-origin.dx).clamp(.1,w-old.left).toDouble(),rh=(old.height+p.dy-origin.dy).clamp(.1,h-old.top).toDouble();
-        if(shape=='square'||shape=='circle'||field=='qr'){final size=math.min(rw,rh);rw=size;rh=size;}
-        dragRect=Rect.fromLTWH(old.left,old.top,rw,rh);
       }else{
         var end=p;
         if(tool=='draw'&&(shape=='square'||shape=='circle'||field=='qr')){
@@ -170,8 +282,28 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
     if(widget.save==null||saving||loaded==null)return;
     if(publish){
       if(!slots.any((r)=>r['key']=='name'&&r['side']=='front')||!slots.any((r)=>r['key']=='qr')){setState(()=>error='Map the front name and authentication QR before publishing.');return;}
-      final issues=slots.map(GlobalIdCardReview.readabilityIssue).whereType<String>().toList();
-      if(issues.isNotEmpty||overlaps()>0||slots.any((r)=>r['key']==''||r['roleConfidence']=='low')){setState(()=>error=issues.isNotEmpty?issues.first:'Resolve overlapping or uncertain fields before publication.');return;}
+      final invalid = slots.indexWhere((r) => GlobalIdCardReview.readabilityIssue(r) != null);
+      if (invalid >= 0) {
+        final row = slots[invalid];
+        setState(() {
+          manual = true;
+          tool = 'resize';
+          selected = invalid;
+          side = row['side'] as String;
+          field = row['key'] as String;
+          shape = selectionShape(row);
+          error = '${label(field)}: ${GlobalIdCardReview.readabilityIssue(row)!.split(': ').last}';
+        });
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          final preview = previewKey.currentContext;
+          if (preview != null) Scrollable.ensureVisible(preview);
+        });
+        return;
+      }
+      if (overlaps() > 0 || slots.any((r) => r['key'] == '' || r['roleConfidence'] == 'low')) {
+        setState(() => error = 'Resolve overlapping or uncertain fields before publication.');
+        return;
+      }
     }
     setState((){saving=true;error=null;});
     try{
@@ -255,7 +387,7 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
         SizedBox(width:115,child:TextFormField(key:ValueKey('color:'+identityHashCode(row).toString()),initialValue:(row['textColor']??'#000000').toString(),
           decoration:const InputDecoration(labelText:'Text colour',isDense:true),onFieldSubmitted:(v){if(RegExp(r'^#[0-9a-fA-F]{6}$').hasMatch(v))change((){row['textColor']=v;row['manual']=true;});})),
       ]),
-      Text(tool=='draw'?'Choose a field and drag its exact area on the card.':tool=='mask'?'Draw the original sample area to erase, independently of the output field.':tool=='move'?'Select a field and drag to move it.':'Select a field and drag to change its width and height.'),
+      Text(tool=='draw'?'Choose a field and drag its exact area on the card.':tool=='mask'?'Draw the original sample area to erase, independently of the output field.':tool=='move'?'Select a field and drag to move it.':'Select a field and drag one of its four edge handles to resize.'),
     ]);
   }
   @override Widget build(BuildContext context)=>PopScope(canPop:!saving&&!dirty,child:AlertDialog(
@@ -290,20 +422,23 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
           onSelected:saving?null:(_)=>setState((){side=p['side'].toString();selected=-1;}))]),
         if(manual&&editable)controls(),
         const SizedBox(height:8),
-        if(image!=null&&w>0&&h>0)AspectRatio(aspectRatio:w/h,child:LayoutBuilder(builder:(ctx,c)=>GestureDetector(
+        if(image!=null&&w>0&&h>0)AspectRatio(key:previewKey,aspectRatio:w/h,child:LayoutBuilder(builder:(ctx,c)=>GestureDetector(
           behavior:HitTestBehavior.opaque,dragStartBehavior:DragStartBehavior.down,
           onTapUp:manual&&!saving?(e)=>hit(design(e.localPosition,c,w,h)):null,
-          onPanStart:manual&&!saving?(e)=>begin(design(e.localPosition,c,w,h)):null,
-          onPanUpdate:manual&&!saving?(e)=>update(design(e.localPosition,c,w,h),w,h):null,
-          onPanEnd:manual&&!saving?(_)=>end():null,onPanCancel:manual&&!saving?cancelDrag:null,
+          onPanStart:manual&&!saving&&tool!='resize'?(e)=>begin(design(e.localPosition,c,w,h)):null,
+          onPanUpdate:manual&&!saving&&tool!='resize'?(e)=>update(design(e.localPosition,c,w,h),w,h):null,
+          onPanEnd:manual&&!saving&&tool!='resize'?(_)=>end():null,onPanCancel:manual&&!saving&&tool!='resize'?cancelDrag:null,
           child:Stack(clipBehavior:Clip.hardEdge,fit:StackFit.expand,children:[
             Image.memory(image,fit:BoxFit.fill),
             for(final row in visible.where((r)=>n(r,'width')>0&&n(r,'height')>0))
               overlay(row,rect(row),c,w,h,data.verified),
-            if(manual&&validSelection)overlay(slots[selected],rect(slots[selected]),c,w,h,false,ghost:true),
+            if(manual&&validSelection&&dragRect==null)overlay(slots[selected],rect(slots[selected]),c,w,h,false,ghost:true),
             if(manual&&tool=='mask'&&validSelection&&slots[selected]['sample_x']!=null)
               overlay({'key':'Sample mask','oval':slots[selected]['sampleOval']==true},rect(slots[selected],prefix:'sample_'),c,w,h,false,ghost:true),
             if(dragRect!=null)overlay({'key':field,'oval':shape=='circle'||shape=='oval'},dragRect!,c,w,h,false,ghost:true),
+            if (manual && !saving && tool == 'resize' && validSelection)
+              for (final edge in _ResizeEdge.values)
+                resizeHandle(edge, dragRect ?? rect(slots[selected]), c, w, h),
           ])))),
         const SizedBox(height:12),
         Text('Field tracking',style:Theme.of(context).textTheme.titleSmall),
