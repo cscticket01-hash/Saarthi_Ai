@@ -122,6 +122,14 @@ if (require.main === module) {
           console.info('ID_MULTILINGUAL_OCR_RESULT '+JSON.stringify({passed:!error,checks:safe}));
         });
     }
+    if(process.env.SAARTHI_ID_WASM_OCR_PROBE==='20261128-scanned'){
+      execFile(process.execPath,['--max-old-space-size=160',resolve(__dirname,'id-scanned-pdf-probe.cjs')],
+        {timeout:150000,maxBuffer:32768,env:{PATH:'/usr/bin:/bin',LANG:'C',SAARTHI_GLOBAL_ID_PDF_SANDBOX:'landlock'}},
+        (error,stdout)=>{
+          const safe=stdout.split('\n').filter(l=>/^ID_SCANNED_PDF_(?:CHECK |FAILED)/.test(l));
+          console.info('ID_SCANNED_PDF_RESULT '+JSON.stringify({passed:!error,checks:safe}));
+        });
+    }
     const tests=['global-id-card-analysis.test.js','global-id-card-library.test.js','global-id-card-package.test.js','global-id-card-integration.test.js'];
     execFile(process.execPath,['--test',...tests.map(n=>resolve(__dirname,'../functions/test',n))],
       {timeout:60000,maxBuffer:512*1024,env:{PATH:'/usr/bin:/bin',LANG:'C'}},
