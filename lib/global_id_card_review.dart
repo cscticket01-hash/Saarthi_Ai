@@ -162,6 +162,62 @@ class GlobalIdCardReview {
     }
     return Uint8List.fromList(img.encodePng(output));
   }
+  /// Approximate only hidden pixels from the exterior of the union of
+  /// reviewed masks. Never reuse a pixel from any sample rectangle.
+  /// This cannot recover artwork that is absent from the original PDF.
+  static Uint8List reconstructArtwork(Uint8List bytes,IdCardManifest manifest,String side,List<Map<String,dynamic>> masks){
+    if(bytes.length>8*1024*1024)throw const FormatException('Source raster is too large.');
+    final decoded=img.decodePng(bytes);
+    if(decoded==null||decoded.width*decoded.height>6000000||
+       (decoded.width/decoded.height-manifest.width/manifest.height).abs()>.01)
+      throw const FormatException('Automatic background repair needs a bounded source raster.');
+    final source=decoded.convert(format:img.Format.uint8,numChannels:4),output=img.Image.from(source);
+    final w=source.width,h=source.height,sx=w/manifest.width,sy=h/manifest.height;
+    final masked=Uint8List(w*h);
+    for(final r in masks.where((r)=>r['side']==side)){
+      final x=(r['x'] as num).toDouble(),y=(r['y'] as num).toDouble(),rw=(r['width'] as num).toDouble(),rh=(r['height'] as num).toDouble();
+      if(![x,y,rw,rh].every((v)=>v.isFinite)||x<0||y<0||rw<=0||rh<=0||x+rw>manifest.width||y+rh>manifest.height)
+        throw const FormatException('Invalid sample removal mask.');
+      final l=math.max(0,(x*sx).floor()-2),t=math.max(0,(y*sy).floor()-2);
+      final right=math.min(w,((x+rw)*sx).ceil()+2),bottom=math.min(h,((y+rh)*sy).ceil()+2);
+      if(l==0||t==0||right==w||bottom==h)throw const FormatException('Sample reaches edge; clean original artwork required.');
+      for(var yy=t;yy<bottom;yy++)masked.fillRange(yy*w+l,yy*w+right,1);
+    }
+    if(masked.where((v)=>v!=0).length>w*h*.38)
+      throw const FormatException('Too much hidden artwork for reliable automatic repair; use clean original.');
+    // For each row, locate unmasked left/right exterior pixels. Use
+    // horizontal interpolation for short text rows and blend with the
+    // nearest vertical boundaries. All samples are outside every mask.
+    final up=Int32List(w*h),down=Int32List(w*h);
+    up.fillRange(0,up.length,-1);down.fillRange(0,down.length,-1);
+    for(var x=0;x<w;x++){
+      var last=-1;
+      for(var y=0;y<h;y++){final i=y*w+x;if(masked[i]==0){last=y;}else{up[i]=last;}}
+      last=-1;
+      for(var y=h-1;y>=0;y--){final i=y*w+x;if(masked[i]==0){last=y;}else{down[i]=last;}}
+    }
+    for(var y=0;y<h;y++){
+      var x=0;
+      while(x<w){
+        if(masked[y*w+x]==0){x++;continue;}
+        final l=x-1;
+        while(x<w&&masked[y*w+x]!=0){x++;}
+        final r=x;
+        if(l<0||r>=w)throw const FormatException('Missing artwork boundary.');
+        final a=source.getPixel(l,y),b=source.getPixel(r,y);
+        for(var xx=l+1;xx<r;xx++){
+          final i=y*w+xx,t=up[i],bottom=down[i];
+          if(t<0||bottom<0)throw const FormatException('Missing artwork boundary.');
+          final c=source.getPixel(xx,t),d=source.getPixel(xx,bottom);
+          final u=(xx-l)/(r-l),v=(y-t)/(bottom-t);
+          final wx=1.0/(r-l),wy=1.0/(bottom-t);
+          int blend(num p,num q,num m,num n)=>((wx*(p+(q-p)*u)+wy*(m+(n-m)*v))/(wx+wy)).round().clamp(0,255).toInt();
+          output.setPixelRgba(xx,y,blend(a.r,b.r,c.r,d.r),blend(a.g,b.g,c.g,d.g),blend(a.b,b.b,c.b,d.b),255);
+        }
+      }
+    }
+    return Uint8List.fromList(img.encodePng(output));
+  }
   /// A clean companion must have the same exact rendered pixel grid, and
   /// differ from the filled source only inside reviewed sample masks.
   /// This is a fidelity check, not proof all private data was removed.
@@ -196,7 +252,7 @@ class GlobalIdCardReview {
     return Uint8List.fromList(img.encodePng(target));
   }
   static Map<String,dynamic> package(String id,List<Map<String,dynamic>> pages,
-      List<Map<String,dynamic>> slots,Map<String,Uint8List> rasters,{bool allowSmoothGradient=false,Map<String,Uint8List> cleanArtwork=const {},Map<String,Uint8List> cleanCompanion=const {}}){
+      List<Map<String,dynamic>> slots,Map<String,Uint8List> rasters,{bool allowSmoothGradient=false,bool allowApproximateRepair=false,Map<String,Uint8List> cleanArtwork=const {},Map<String,Uint8List> cleanCompanion=const {}}){
     if(pages.isEmpty||pages.length>2||slots.length>128)throw const FormatException('Invalid review pages or slot count.');
     final first=pages.first;
     final w=(first['canvasWidth'] as num).toDouble(),h=(first['canvasHeight'] as num).toDouble();
@@ -232,7 +288,12 @@ class GlobalIdCardReview {
       if(cleanOriginal!=null){
         backgrounds[side]=base64Encode(verifyCleanCompanion(source,cleanOriginal,manifest,side,masks));
       }else{
-        backgrounds[side]=base64Encode(cleanFlatRegions(source,manifest,side,allowSmoothGradient:allowSmoothGradient,sampleMasks:masks));
+        try{
+          backgrounds[side]=base64Encode(cleanFlatRegions(source,manifest,side,allowSmoothGradient:allowSmoothGradient,sampleMasks:masks));
+        }on FormatException{
+          if(!allowApproximateRepair)rethrow;
+          backgrounds[side]=base64Encode(reconstructArtwork(source,manifest,side,masks));
+        }
       }
     }
     final result=<String,dynamic>{'manifest':json,'backgrounds':backgrounds};
