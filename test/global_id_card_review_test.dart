@@ -1,4 +1,7 @@
 import 'dart:typed_data';
+import 'dart:convert';
+import 'package:flutter/material.dart';
+import 'package:saarthi_ai/developer_global_id_mapping_tracker.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 import 'package:qr/qr.dart';
@@ -70,4 +73,53 @@ void main(){
     source.setPixelRgba(78,38,0,0,0,255);
     expect(()=>GlobalIdCardReview.cleanFlatRegions(Uint8List.fromList(img.encodePng(source)),manifest,'front'),throwsFormatException);
   });
+  test('automatic patterned repair overwrites the full mask and preserves exterior',(){
+    final source=img.Image(width:400,height:200,numChannels:4);
+    for(final p in source){p..r=(p.x%9)*20..g=(p.y%7)*30..b=100..a=255;}
+    img.fillRect(source,x1:90,y1:45,x2:180,y2:70,color:img.ColorRgba8(255,0,255,255));
+    final bytes=Uint8List.fromList(img.encodePng(source)),original=Uint8List.fromList(bytes);
+    final masks=[<String,dynamic>{'side':'front','key':'name','x':40,'y':20,'width':60,'height':20}];
+    final result=img.decodePng(GlobalIdCardReview.reconstructArtwork(bytes,manifest,'front',masks))!;
+    for(var y=38;y<82;y++)for(var x=78;x<202;x++)expect(result.getPixel(x,y).b,100);
+    expect(result.getPixel(5,5).r,source.getPixel(5,5).r);
+    expect(result.getPixel(5,5).g,source.getPixel(5,5).g);
+    expect(bytes,original);
+  });
+  test('automatic repair refuses masked borders and excessive coverage',(){
+    final source=img.Image(width:400,height:200,numChannels:4);
+    img.fill(source,color:img.ColorRgba8(255,255,255,255));
+    final bytes=Uint8List.fromList(img.encodePng(source));
+    expect(()=>GlobalIdCardReview.reconstructArtwork(bytes,manifest,'front',[
+      {'side':'front','key':'photo','x':0,'y':20,'width':60,'height':20}
+    ]),throwsFormatException);
+    expect(()=>GlobalIdCardReview.reconstructArtwork(bytes,manifest,'front',[
+      {'side':'front','key':'photo','x':10,'y':10,'width':180,'height':80}
+    ]),throwsFormatException);
+  });
+
+  test('shared detection tracker keeps candidate geometry and does not mutate analysis',(){
+    final pages=[<String,dynamic>{'side':'front','candidates':[{'key':'name','side':'front','x':10,'y':20,'width':30,'height':8}]}];
+    final slots=GlobalIdCardReview.detectSlots(pages,{});
+    expect(slots.single['key'],'name');
+    expect(slots.single['sample_x'],10);
+    slots.single['x']=42;
+    expect((pages.single['candidates'] as List).single['x'],10);
+  });
+
+  testWidgets('tracking an approved card shows actual manifest and only a close action',(tester)async{
+    final image=img.Image(width:200,height:100,numChannels:4);
+    img.fill(image,color:img.ColorRgba8(255,255,255,255));
+    final data=<String,dynamic>{'mode':'verified','rasters':{'front':base64Encode(img.encodePng(image))},
+      'manifest':{'canvasWidth':200,'canvasHeight':100,'regions':[{'side':'front','key':'name','x':50,'y':20,'width':80,'height':15}]}};
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:DeveloperGlobalIdMappingTracker(
+      name:'Synthetic ID',kind:'studentId',data:Future.value(data)))));
+    await tester.pumpAndSettle();
+    expect(find.text('Track Mapping Data'),findsOneWidget);
+    expect(find.text('Approved template mapping • read only'),findsOneWidget);
+    expect(find.text('Close'),findsOneWidget);
+    expect(find.text('Publish'),findsNothing);
+    expect(find.text('Delete'),findsNothing);
+    expect(find.text('1 / 14 reference fields located • 0 uncertain candidates'),findsOneWidget);
+  });
+
 }

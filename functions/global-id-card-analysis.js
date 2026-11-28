@@ -3,9 +3,54 @@ const {execFile}=require('node:child_process');
 const {promisify}=require('node:util');
 const {mkdtemp,writeFile,readFile,stat,readdir,rm}=require('node:fs/promises');
 const {tmpdir}=require('node:os');
-const {join}=require('node:path');
-const run=promisify(execFile);
-const aliases={name:'name','student name':'name','teacher name':'name','father name':'parentName','father/guardian':'parentName','father/guardain':'parentName','father/guardian name':'parentName','father':'parentName','parent name':'parentName','guardian name':'parentName','dob':'dob','d.o.b':'dob','date of birth':'dob',class:'class','roll no':'rollNo','roll number':'rollNo','ph no':'contact',phone:'contact','phone no':'contact','contact no':'contact',contact:'contact',address:'address',pin:'pinCode','pin code':'pinCode',district:'district',dist:'district',state:'state',country:'country','school name':'schoolName',designation:'designation',subject:'subject'};
+const {join,dirname}=require('node:path');
+const runRaw=promisify(execFile);
+let activeSandboxJob=false;
+async function run(executable,args,options){
+ if(process.env.SAARTHI_GLOBAL_ID_PDF_SANDBOX!=='landlock'){
+  const configured=[process.env.SAARTHI_GLOBAL_ID_PDFTOTEXT,process.env.SAARTHI_GLOBAL_ID_PDFTOHTML,process.env.SAARTHI_GLOBAL_ID_PDFTOPPM];
+  if(configured.includes(executable)&&['/usr/bin/pdftotext','/usr/bin/pdftohtml','/usr/bin/pdftoppm'].includes(executable))
+   throw Object.assign(Error('Central PDF sandbox is not configured'),{status:503,publicMessage:true});
+  return runRaw(executable,args,options);
+ }
+ if(activeSandboxJob)throw Object.assign(Error('Central PDF analysis is busy; retry shortly'),{status:503,publicMessage:true});
+ activeSandboxJob=true;
+ try{
+  return await runRaw('/usr/bin/python3',['-I','-B',join(__dirname,'id-pdf-sandbox.py'),executable,...args],{
+   ...options,cwd:dirname(args.at(-2)),env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'}
+  });
+ }finally{activeSandboxJob=false;}
+}
+async function probeSandbox(){
+ const dir=await mkdtemp(join(tmpdir(),'saarthi-id-sandbox-'));
+ try{
+  const file=join(dir,'source.pdf');await writeFile(file,syntheticProbePdf(),{mode:0o600});
+  const {stdout}=await runRaw('/usr/bin/python3',['-I','-B',join(__dirname,'id-pdf-sandbox.py'),'--self-test',file],{
+   cwd:dir,timeout:10000,maxBuffer:65536,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'}
+  });
+  return JSON.parse(stdout);
+ }finally{await rm(dir,{recursive:true,force:true});}
+}
+const aliases={name:'name','student name':'name','teacher name':'name','staff name':'name','father name':'parentName','father/guardian':'parentName','father / guardian':'parentName','father/guardain':'parentName','father/guardian name':'parentName','father':'parentName','parent name':'parentName','guardian name':'parentName','guardian':'parentName','dob':'dob','d.o.b':'dob','d.o.b.':'dob','date of birth':'dob',class:'class','roll':'rollNo','roll no':'rollNo','roll number':'rollNo','ph no':'contact',phone:'contact','phone no':'contact','contact no':'contact','contact number':'contact',contact:'contact',address:'address',pin:'pinCode','pin code':'pinCode','pincode':'pinCode',district:'district',dist:'district',state:'state',country:'country','school name':'schoolName',designation:'designation',subject:'subject','student id':'confirmedUniversalStudentUid','student uid':'confirmedUniversalStudentUid','employee id':'employeeId','teacher id':'employeeId','staff id':'employeeId'};
+Object.assign(aliases,{
+ 'नाम':'name','विद्यार्थी का नाम':'name','पिता का नाम':'parentName','अभिभावक':'parentName','जन्म तिथि':'dob','कक्षा':'class','अनुक्रमांक':'rollNo','रोल नंबर':'rollNo','संपर्क नंबर':'contact','पता':'address','विद्यालय का नाम':'schoolName','पद':'designation','विषय':'subject','कर्मचारी आईडी':'employeeId','छात्र आईडी':'confirmedUniversalStudentUid',
+ 'নাম':'name','পিতার নাম':'parentName','পিতৃৰ নাম':'parentName','অভিভাবক':'parentName','জন্ম তারিখ':'dob','জন্ম তাৰিখ':'dob','শ্রেণি':'class','শ্ৰেণী':'class','রোল নম্বর':'rollNo','ৰোল নম্বৰ':'rollNo','যোগাযোগ নম্বর':'contact','যোগাযোগ নম্বৰ':'contact','ঠিকানা':'address','বিদ্যালয়ের নাম':'schoolName','বিদ্যালয়ৰ নাম':'schoolName','পদবী':'designation','বিষয়':'subject'
+});
+const normalized=s=>s.toLowerCase().replace(/[’‘]/g,"'").replace(/\s*\/\s*/g,'/').replace(/[.:：]+$/,'').trim().replace(/\s+/g,' ');
+const union=words=>{
+ const x=Math.min(...words.map(v=>v.x)),y=Math.min(...words.map(v=>v.y)),right=Math.max(...words.map(v=>v.right)),bottom=Math.max(...words.map(v=>v.bottom));
+ return {x,y,width:right-x,height:bottom-y};
+};
+const categoryOf=lines=>{
+ const matches=new Set();
+ for(const line of lines){
+  const t=normalized(line).replace(/[-–—]/g,' ');
+  if(/\bstudent\s+(?:id|identity)\s+card\b/.test(t)||/(?:छात्र|विद्यार्थी)\s+पहचान\s+पत्र|(?:ছাত্র|শিক্ষার্থী)\s+পরিচয়\s+পত্র|ছাত্ৰ\s+পৰিচয়\s+পত্ৰ/u.test(t))matches.add('studentId');
+  if(/\bteacher\s+(?:id|identity)\s+card\b/.test(t)||/शिक्षक\s+पहचान\s+पत्र|শিক্ষক\s+(?:পরিচয়\s+পত্র|পৰিচয়\s+পত্ৰ)/u.test(t))matches.add('teacherId');
+  if(/\b(?:other\s+staff|staff|employee|non\s+teaching\s+staff)\s+(?:id|identity)\s+card\b/.test(t)||/कर्मचारी\s+पहचान\s+पत्र|কর্মচারী\s+পরিচয়\s+পত্র|কৰ্মচাৰী\s+পৰিচয়\s+(?:পত্ৰ|পত্র)/u.test(t))matches.add('otherStaffId');
+ }
+ return matches.size===1?{kind:[...matches][0],evidence:'explicit_card_heading'}:{kind:null,evidence:matches.size>1?'conflicting_headings':'unknown'};
+};
 // Optional fictional placeholder phrases are useful for label-free fields in
 // a filled reference. Only exact reserved phrases are recognized.
 const sampleMarkers=new Map([
@@ -37,32 +82,73 @@ function parseCandidates(xml){
    if(row)row.words.push(word);
    else rows.push({y:word.y,bottom:word.bottom,words:[word]});
   }
-  for(const row of rows){
-   const line=row.words.sort((a,b)=>a.x-b.x),anchors=[];
-   const reserved=sampleMarkers.get(line.map(w=>w.text).join(' ').trim().toLowerCase());
-   if(reserved){
-    const x=Math.min(...line.map(v=>v.x)),y=Math.min(...line.map(v=>v.y)),right=Math.max(...line.map(v=>v.right)),bottom=Math.max(...line.map(v=>v.bottom));
-    candidates.push({key:reserved,side:n?'back':'front',x,y,width:right-x,height:bottom-y,reviewRequired:true,evidence:'reserved_sample_phrase'});
-    continue;
+  const labelSlots=[],lineTexts=[];
+  const rowsByPosition=rows.sort((a,b)=>a.y-b.y);
+  // Preserve separate continuation lines for address values. A continuation
+  // must begin near the address value and remain within one line height.
+  let previousAddress=null;
+  const side=n?'back':'front';
+  const add=(key,value,extra={})=>{
+   if(!value.length)return;
+   const rect=union(value);
+   if(rect.x<0||rect.y<0||rect.width<=0||rect.height<=0||rect.x+rect.width>width||rect.y+rect.height>height)return;
+   if(candidates.some(r=>r.key===key))return;
+   candidates.push({key,side,...rect,reviewRequired:true,...extra});
+  };
+  for(const row of rowsByPosition){
+   const line=row.words.sort((a,b)=>a.x-b.x),raw=line.map(w=>w.text).join(' '),norm=normalized(raw);
+   lineTexts.push(raw);
+   const reserved=sampleMarkers.get(norm);
+   if(reserved){add(reserved,line,{evidence:'reserved_sample_phrase'});continue;}
+   // Explicit placeholder text is a candidate, not an invented image rectangle.
+   if(norm==='school name'){add('schoolName',line,{evidence:'explicit_placeholder'});continue;}
+   if(['logo','school logo','qr','qr code','photo','student photo','teacher photo','staff photo'].includes(norm)){
+    const role=norm.includes('logo')?'logo':norm.includes('qr')?'qr':'photo';
+    labelSlots.push({role,side,...union(line)});continue;
    }
-   for(let i=0;i<line.length;i++){
-    if(!/[:：]$/.test(line[i].text))continue;
-    // A combined label/value in the same word has no separable bbox.
-    for(let j=Math.max(0,i-4);j<=i;j++){
-     const label=line.slice(j,i+1).map(w=>w.text).join(' ').replace(/[:：]\s*$/,'').trim().toLowerCase();
+   const anchors=[];
+   for(let j=0;j<line.length;j++){
+    for(let k=Math.min(j+4,line.length-1);k>=j;k--){
+     const label=normalized(line.slice(j,k+1).map(w=>w.text).join(' '));
      if(!Object.hasOwn(aliases,label))continue;
-     anchors.push({start:j,end:i,key:aliases[label]});break;
+     const terminal=/[:：]$/.test(line[k].text);
+     const next=line[k+1];
+     // Require punctuation or a clear layout gap. Avoid guessing a sample name
+     // is a new label just because a common word appears inside its value.
+     const gap=next?next.x-line[k].right:0;
+     const separate=next&&/^[:：]+$/.test(next.text);
+     const attached=next&&/^[:：]\S/.test(next.text);
+     if(!terminal&&!separate&&!attached&&!(next&&gap>=Math.max(3,(line[k].bottom-line[k].y)*.48)))continue;
+     anchors.push({start:j,end:k+(separate?1:0),key:aliases[label]});
+     j=k+(separate?1:0);break;
     }
    }
-   for(let i=0;i<anchors.length;i++){
-    const a=anchors[i],value=line.slice(a.end+1,anchors[i+1]?.start??line.length);
-    if(!value.length||value.some(w=>w.text.endsWith(':')))continue;
-    const x=Math.min(...value.map(v=>v.x)),y=Math.min(...value.map(v=>v.y)),right=Math.max(...value.map(v=>v.right)),bottom=Math.max(...value.map(v=>v.bottom));
-    if(x<0||y<0||right>width||bottom>height||right<=x||bottom<=y)continue;
-    candidates.push({key:a.key,side:n?'back':'front',x,y,width:right-x,height:bottom-y,reviewRequired:true});
+   if(previousAddress&&anchors.length===0&&line.length&&
+      !/^(?:logo|qr|photo|principal|signature|seal|student\s+id|school\s+name)\b/i.test(norm)){
+     const rect=union(line);
+     const gap=rect.y-(previousAddress.y+previousAddress.height);
+     if(gap>=-1&&gap<=previousAddress.height*.8&&Math.abs(rect.x-previousAddress.x)<=Math.max(4,previousAddress.height*.6)){
+      const right=Math.max(rect.x+rect.width,previousAddress.x+previousAddress.width);
+      previousAddress.width=right-previousAddress.x;previousAddress.height=rect.y+rect.height-previousAddress.y;
+      previousAddress.wrap=true;
+      continue;
+     }
    }
+   previousAddress=null;
+   for(let i=0;i<anchors.length;i++){
+    const anchor=anchors[i],value=line.slice(anchor.end+1,anchors[i+1]?.start??line.length);
+    // A colon may be attached to the first word. Its bbox is conservatively
+    // included so the sample cannot be partly retained.
+    add(anchor.key,value,{evidence:'label_value_geometry'});
+    if(anchor.key==='address')previousAddress=candidates.find(r=>r.key==='address')||null;
+   }
+   // Student ID is often a rotated label/value, which may form its own row.
+   // Track the whole rectangle for review instead of inventing a value bbox.
+   if(!anchors.some(a=>a.key==='confirmedUniversalStudentUid')&&/^student\s+id\s*[-:–—]\s*\S+/i.test(raw))
+    add('confirmedUniversalStudentUid',line,{evidence:'combined_id_placeholder',rotation:line.length===1&&line[0].bottom-line[0].y>2*(line[0].right-line[0].x)?-90:0});
   }
-  return {side:n?'back':'front',canvasWidth:width,canvasHeight:height,printWidthMm:width*25.4/72,printHeightMm:height*25.4/72,candidates:candidates.slice(0,128)};
+  return {side,canvasWidth:width,canvasHeight:height,printWidthMm:width*25.4/72,printHeightMm:height*25.4/72,candidates:candidates.slice(0,128),labelSlots,category:categoryOf(lineTexts)};
+
  });
 }
 // Poppler XML geometry is only a review candidate. Embedded images can be
@@ -104,8 +190,8 @@ function suggestUnlabeledImageRoles(page,texts){
   let role;
   if(fraction>=.72)role='__static';
   else if(ratio>=2.5&&centerY>.63&&fraction>=.003&&fraction<=.10)role='signature';
-  else if(ratio>=.64&&ratio<=1.25){
-   if(fraction>=.08&&fraction<=.34&&hasNearbyName)role='photo';
+  else if(ratio>=.55&&ratio<=1.35){
+   if(fraction>=.065&&fraction<=.34&&hasNearbyName)role='photo';
    else if(fraction>=.008&&fraction<=.075&&centerY<.28&&hasHeaderText)role='logo';
    else if(fraction>=.012&&fraction<=.09&&centerY>.65)role='seal';
   }
@@ -124,7 +210,7 @@ function enrichCandidates(xml,pages){
  const attr=s=>Object.fromEntries([...s.matchAll(/([A-Za-z]+)="([^"]*)"/g)].map(x=>[x[1],x[2]]));
  const blocks=[...xml.matchAll(/<page\b([^>]*)>([\s\S]*?)<\/page>/g)];
  if(blocks.length!==pages.length)return;
- const imageLabels=new Map([['photo','photo'],['student photo','photo'],['teacher photo','photo'],['staff photo','photo'],['school logo','logo'],['logo','logo'],['signature','signature'],["principal's signature",'signature'],['principal signature','signature'],['school seal','seal'],['seal','seal'],['qr code','qr'],['qr','qr']]);
+ const imageLabels=new Map([['photo','photo'],['student photo','photo'],['teacher photo','photo'],['staff photo','photo'],['school logo','logo'],['logo','logo'],['signature','signature'],["principal's signature",'signature'],['principal signature','signature'],["principal’s signature & seal",'signature'],["principal's signature & seal",'signature'],['principal signature & seal','signature'],['school seal','seal'],['seal','seal'],['qr code','qr'],['qr','qr']]);
  for(let i=0;i<blocks.length;i++){
   const block=blocks[i],page=pages[i],a=attr(block[1]),w=Number(a.width),h=Number(a.height);
   if(!(w>0&&h>0))continue;
@@ -139,8 +225,17 @@ function enrichCandidates(xml,pages){
   for(const match of block[2].matchAll(/<text\b([^>]*)>([\s\S]*?)<\/text>/g)){
    const a=attr(match[1]),x=Number(a.left)*sx,y=Number(a.top)*sy,width=Number(a.width)*sx,height=Number(a.height)*sy;
    if(![x,y,width,height].every(Number.isFinite)||x<0||y<0||width<=0||height<=0||x+width>page.canvasWidth+.5||y+height>page.canvasHeight+.5)continue;
-   const text=decode(match[2].replace(/<[^>]*>/g,'')).trim().replace(/[:.]+$/,'').toLowerCase();
+   const text=normalized(decode(match[2].replace(/<[^>]*>/g,'')));
    const style=fonts.get(a.font);
+   // Independent XML text objects recover placeholders that share a
+   // vertical row with unrelated elements in bbox-layout.
+   if(text==='school name'&&!page.candidates.some(r=>r.key==='schoolName'))
+    page.candidates.push({key:'schoolName',side:page.side,x,y,width,height,reviewRequired:true,evidence:'explicit_placeholder'});
+   if(['logo','school logo','qr','qr code','photo','student photo','teacher photo','staff photo'].includes(text)){
+    const role=imageLabels.get(text);
+    if(role&&!(page.labelSlots||[]).some(r=>r.role===role))
+     (page.labelSlots??=[]).push({role,side:page.side,x,y,width,height});
+   }
    texts.push({x,y,width,height,role:imageLabels.get(text),style:style?{...style,bold:style.bold||/^\s*<b>[^<]*<\/b>\s*$/.test(match[2]),sourceItalic:style.sourceItalic||/<i>[^<]*<\/i>/.test(match[2])}:null});
   }
   for(const r of page.candidates){
@@ -155,14 +250,21 @@ function enrichCandidates(xml,pages){
     const dx=Math.max(0,t.x-r.x-r.width,r.x-t.x-t.width),dy=Math.max(0,t.y-r.y-r.height,r.y-t.y-t.height);
     return (horizontal>=Math.min(t.width,r.width)*.55&&dy<=10)||(vertical>=Math.min(t.height,r.height)*.55&&dx<=10);
    });
-   if(near.length===1)suggestions.push({image:near[0],role:t.role});
+   if(near.length===1){
+    const candidate=near[0];
+    // A small logo label adjacent to a tall portrait must not label the portrait.
+    const fraction=candidate.width*candidate.height/(page.canvasWidth*page.canvasHeight);
+    const ratio=candidate.width/candidate.height;
+    if(t.role==='logo'&&(fraction>.06||ratio<.78||ratio>2.2))continue;
+    suggestions.push({image:candidate,role:t.role});
+   }
   }
   for(const s of suggestions)if(suggestions.filter(x=>x.image===s.image).length===1&&suggestions.filter(x=>x.role===s.role).length===1)
     Object.assign(s.image,{suggestedRole:s.role,roleEvidence:'unique_explicit_label',roleConfidence:'medium'});
   suggestUnlabeledImageRoles(page,texts);
  }
 }
-async function analyzePdf(bytes,executable,imageExecutable){
+async function analyzePdf(bytes,executable,imageExecutable,{ocr=false,rasterizer=process.env.SAARTHI_GLOBAL_ID_PDFTOPPM}={}){
  if(!executable)throw Object.assign(Error('Central PDF analysis runtime is not configured'),{status:503,publicMessage:true});
  const dir=await mkdtemp(join(tmpdir(),'saarthi-id-analysis-'));
  try{
@@ -185,11 +287,62 @@ async function analyzePdf(bytes,executable,imageExecutable){
     warnings.push('Embedded image locations are candidates only; classify each image and check vector QR artwork.');
    }catch(_){warnings.push('Image candidate extraction unavailable; manually review every photo/logo/seal/signature/QR region.');}
   }else warnings.push('Central image candidate runtime not configured.');
-  return {pages,reviewRequired:true,warnings};
+  // Native PDF text wins. OCR adds only missing semantic fields on sparse
+  // or ambiguous pages. Never persist recognized sample strings.
+  if(ocr&&rasterizer&&pages.some(p=>p.candidates.length<5||!p.category?.kind)){
+   try{
+    const {recognize,toPageXml,preferredScript}=require('./global-id-card-ocr');
+    const rasters=await renderReviewSource(bytes,pages,rasterizer,300);
+    for(const page of pages){
+     if(page.candidates.length>=5&&page.category?.kind)continue;
+     const png=Buffer.from(rasters[page.side],'base64');
+     const result=await recognize(png);
+     const recovered=parseCandidates(toPageXml(result,page))[0];
+     const language=preferredScript(result.words);
+     // A script-specific pass resolves cross-script recognition errors when
+     // the multilingual model missed a core field or category. Never let a
+     // contradictory retry override an explicit heading.
+     let retried=false;
+     if(language&&(!recovered.category?.kind||!recovered.candidates.some(r=>r.key==='name'))){
+      try{
+       const retry=await recognize(png,language);
+       const second=parseCandidates(toPageXml(retry,page))[0];
+       retried=true;
+       for(const field of second.candidates)if(!recovered.candidates.some(r=>r.key===field.key))recovered.candidates.push(field);
+       for(const label of second.labelSlots)if(!recovered.labelSlots.some(r=>r.role===label.role))recovered.labelSlots.push(label);
+       if(recovered.category?.evidence!=='conflicting_headings'){
+        if(second.category?.evidence==='conflicting_headings'||(recovered.category?.kind&&second.category?.kind&&recovered.category.kind!==second.category.kind))
+         recovered.category={kind:null,evidence:'conflicting_headings'};
+        else if(!recovered.category?.kind&&second.category?.kind)recovered.category=second.category;
+       }
+      }catch(_){warnings.push('Script-specific OCR retry unavailable; review unresolved fields.');}
+     }
+     for(const field of recovered.candidates){
+      if(!page.candidates.some(r=>r.key===field.key))page.candidates.push({...field,side:page.side,evidence:'ocr_geometry'});
+     }
+     for(const label of recovered.labelSlots){
+      if(!page.labelSlots.some(r=>r.role===label.role))page.labelSlots.push({...label,side:page.side});
+     }
+     if(page.category?.evidence!=='conflicting_headings'){
+      if(page.category?.kind&&recovered.category?.kind&&page.category.kind!==recovered.category.kind)
+       page.category={kind:null,evidence:'conflicting_headings'};
+      else if(recovered.category?.evidence==='conflicting_headings'||(!page.category?.kind&&recovered.category?.kind))page.category=recovered.category;
+     }
+     page.ocr={state:'recognized',languages:result.languages,wordCount:result.words.length,scriptRetry:retried};
+    }
+   }catch(_){
+    warnings.push('OCR fallback unavailable or timed out; review unresolved fields.');
+    for(const page of pages)if(!page.ocr)page.ocr={state:'unavailable'};
+   }
+  }
+  const kinds=[...new Set(pages.map(p=>p.category?.kind).filter(Boolean))];
+  const category=kinds.length===1&&!pages.some(p=>p.category?.evidence==='conflicting_headings')?{kind:kinds[0],evidence:'explicit_card_heading'}:{kind:null,evidence:kinds.length>1||pages.some(p=>p.category?.evidence==='conflicting_headings')?'conflicting_headings':'unknown'};
+  return {pages,category,reviewRequired:true,warnings};
  }finally{await rm(dir,{recursive:true,force:true});}
 }
 // Developer-only reference raster. Never distribute this filled artwork.
-async function renderReviewSource(bytes,pages,executable){
+async function renderReviewSource(bytes,pages,executable,dpi=600){
+ if(![150,300,600].includes(dpi))throw Error('Unsupported review resolution');
  if(!executable)throw Object.assign(Error('Central review rasterizer is not configured'),{status:503,publicMessage:true});
  if(!Array.isArray(pages)||pages.length<1||pages.length>2)throw Error('Analyze source before review');
  const dir=await mkdtemp(join(tmpdir(),'saarthi-id-review-'));
@@ -197,7 +350,7 @@ async function renderReviewSource(bytes,pages,executable){
   const input=join(dir,'source.pdf'),prefix=join(dir,'review');
   await writeFile(input,bytes,{mode:0o600});
   // Explicit configured, isolated runtime. Keep original physical size.
-  await run(executable,['-f','1','-l',String(pages.length),'-r','600','-png',input,prefix],
+  await run(executable,['-f','1','-l',String(pages.length),'-r',String(dpi),'-png',input,prefix],
     {cwd:dir,timeout:20000,maxBuffer:1024*1024,windowsHide:true});
   const names=(await readdir(dir)).filter(n=>/^review-\d+\.png$/.test(n)).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
   if(names.length!==pages.length)throw Error('Review page count mismatch');
@@ -261,4 +414,4 @@ async function renderCleanCompanion(bytes,sourcePages,analyzer,rasterizer){
  }
  return renderReviewSource(bytes,sourcePages,rasterizer);
 }
-module.exports={parseCandidates,parseImageCandidates,enrichCandidates,analyzePdf,renderReviewSource,syntheticProbePdf,probeRuntime,renderCleanCompanion};
+module.exports={probeSandbox,parseCandidates,parseImageCandidates,enrichCandidates,analyzePdf,renderReviewSource,syntheticProbePdf,probeRuntime,renderCleanCompanion};

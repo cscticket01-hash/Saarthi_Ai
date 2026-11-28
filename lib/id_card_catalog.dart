@@ -16,6 +16,7 @@ import 'school_image_input.dart';
 import 'package:crypto/crypto.dart';
 
 import 'id_card_manifest.dart';
+import 'id_card_identity.dart';
 
 class IdCardCatalogEntry {
   IdCardCatalogEntry(Map<String, dynamic> data)
@@ -56,11 +57,11 @@ class IdCardCatalogEntry {
     return m;
   }
 
-  static const greenBlueId = 'student-green-blue-modern-v1';
+  static const greenBlueId = IdCardIdentity.greenBlueId;
   static const greenBlueAsset = 'assets/student_green_blue_modern_front.png';
-  static const greenBlueSha256 = '08912d18ce48222ac150f0b3bd3189270ad96534e7764d243d8456d8d243e2b9';
+  static const greenBlueSha256 = IdCardIdentity.greenBlueSha256;
   static bool isApprovedGreenBlueArtwork(Uint8List bytes) =>
-      bytes.length == 337769 && sha256.convert(bytes).toString() == greenBlueSha256;
+      IdCardIdentity.isApprovedGreenBlueArtwork(bytes);
 
   Future<bool> hasApprovedGreenBlueArtwork() async {
     if (id != greenBlueId) return true;
@@ -81,7 +82,7 @@ class IdCardCatalogEntry {
 
 class IdCardCatalog {
   static Future<List<IdCardCatalogEntry>>? _loaded;
-  static bool isGlobalId(String id)=>RegExp(r'^gid-[a-f0-9]{32}$').hasMatch(id);
+  static bool isGlobalId(String id)=>IdCardIdentity.isGlobalId(id);
   static Future<List<IdCardCatalogEntry>> load() async {
     final builtIn=await (_loaded ??= _load());
     final remote=await _GlobalIdCatalog.read();

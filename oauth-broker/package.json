@@ -11,6 +11,11 @@
   },
   "dependencies": {
     "aws4fetch": "1.0.20",
-    "firebase-admin": "^14.4.0"
+    "firebase-admin": "^14.4.0",
+    "tesseract.js": "6.0.1",
+    "@tesseract.js-data/eng": "1.0.0",
+    "@tesseract.js-data/hin": "1.0.0",
+    "@tesseract.js-data/ben": "1.0.0",
+    "@tesseract.js-data/asm": "1.0.0"
   }
 }

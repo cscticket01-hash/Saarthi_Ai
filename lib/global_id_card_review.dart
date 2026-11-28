@@ -5,17 +5,52 @@ import 'package:image/image.dart' as img;
 import 'package:zxing2/qrcode.dart' as zx;
 import 'id_card_manifest.dart';
 
-/// Conservative, review-only raster cleanup. It does not inpaint or invent
-/// arbitrary patterns, and never edits original source bytes. Smooth gradient
-/// interpolation is review-only and requires matching exterior boundary evidence.
+/// Review-only raster cleanup and bounded approximation. It never edits original
+/// source bytes and cannot recover original artwork hidden by opaque samples.
 class GlobalIdCardReview {
   static const imageFields={'photo','logo','signature','seal'};
   static const textFields={'schoolName','schoolAddress','schoolLocation','schoolEmail','schoolContactNo','name','parentName','dob','class','section','rollNo','designation','subject','contact','address','pinCode','district','state','country','session','employeeId','bloodGroup','emergencyContact','academicSession','confirmedUniversalStudentUid'};
   static String kind(String key)=>imageFields.contains(key)?'image':key=='qr'?'qr':'text';
+  /// Shared detection path for the read-only tracker and review editor.
+  static List<Map<String,dynamic>> detectSlots(List<Map<String,dynamic>> pages,Map<String,Uint8List> images){
+    final slots=<Map<String,dynamic>>[];
+    Map<String,dynamic> withMask(Map<String,dynamic> row)=>{...row,for(final k in ['x','y','width','height'])'sample_$k':row['sample_$k']??row[k]};
+    for(final page in pages){
+      for(final item in (page['candidates'] as List? ?? const [])){
+        final r=Map<String,dynamic>.from(item as Map);
+        if(textFields.contains(r['key']))slots.add(withMask(r));
+      }
+      for(final item in (page['imageCandidates'] as List? ?? const [])){
+        final r=Map<String,dynamic>.from(item as Map);
+        final role=r['suggestedRole'];
+        final recognized=(imageFields.contains(role)||role=='qr')&&!slots.any((s)=>s['side']==r['side']&&s['key']==role);
+        slots.add(withMask({...r,'key':recognized?role:''}));
+      }
+    }
+    suggestQr(pages,slots,images);
+    refineImageRoles(pages,slots,images);
+    suggestPlaceholderSlots(pages,slots,images);
+    return slots;
+  }
+  /// Automatically prepare a draft only when mandatory fields are present and
+  /// every explicitly detected placeholder has a matching slot. Ambiguous
+  /// candidates stay in the correction editor. Final publication still needs
+  /// independent demo rendering and human approval.
+  static bool canAutoPrepare(List<Map<String,dynamic>> pages,List<Map<String,dynamic>> slots){
+    if(pages.isEmpty||slots.isEmpty||slots.any((r)=>r['key']==''||r['key']==null||r['roleConfidence']=='low'))return false;
+    if(!slots.any((r)=>r['side']=='front'&&r['key']=='name')||!slots.any((r)=>r['key']=='qr'))return false;
+    for(final page in pages){
+      final side=page['side'];
+      for(final label in (page['labelSlots'] as List? ?? const [])){
+        final role=(label as Map)['role'];
+        if(!slots.any((r)=>r['side']==side&&r['key']==role))return false;
+      }
+    }
+    return true;
+  }
   /// Suggest a QR role only when an actual embedded raster decodes uniquely.
   /// The decoded sample string is never retained, displayed or returned.
   static void suggestQr(List<Map<String,dynamic>> pages,List<Map<String,dynamic>> slots,Map<String,Uint8List> rasters){
-    if(slots.any((r)=>r['key']=='qr'))return;
     final detected=<Map<String,dynamic>>[];
     var inspected=0;
     for(final page in pages){
@@ -24,7 +59,7 @@ class GlobalIdCardReview {
       final source=img.decodePng(bytes);
       if(source==null||source.width*source.height>20000000)continue;
       final sx=source.width/(page['canvasWidth'] as num),sy=source.height/(page['canvasHeight'] as num);
-      for(final row in slots.where((r)=>r['side']==side&&r['key']==''&&r['kind']=='image')){
+      for(final row in slots.where((r)=>r['side']==side&&r['kind']=='image'&&r['key']!='__static')){
         if(inspected>=24)return;
         final w=(row['width'] as num).toDouble(),h=(row['height'] as num).toDouble();
         if(w<=0||h<=0||w/h<.75||w/h>1.33)continue;
@@ -45,7 +80,142 @@ class GlobalIdCardReview {
         }catch(_){/* No reliable QR evidence; keep it unclassified. */}
       }
     }
-    if(detected.length==1)detected.single['key']='qr';
+    for(final page in pages){
+      final side=page['side'];
+      final matches=detected.where((r)=>r['side']==side).toList();
+      if(matches.length!=1)continue;
+      final actual=matches.single;
+      // Pixel decoding is stronger evidence than a nearby label or geometry.
+      // Preserve competing candidates as unresolved rather than discarding them.
+      for(final r in slots.where((r)=>r['side']==side&&r['key']=='qr'&&!identical(r,actual))){
+        r['key']='';r['roleEvidence']='conflicting_qr_candidate';
+      }
+      actual['key']='qr';actual['roleEvidence']='decoded_raster';actual['roleConfidence']='high';
+    }
+  }
+  /// Non-biometric visual features: distinguish sparse horizontal ink,
+  /// dense multicolour pictures and circular marks. Combine with geometry
+  /// and explicit nearby labels. This never identifies a person's face.
+  static String? pixelRole(img.Image image,double fraction,double centerY){
+    if(image.width<8||image.height<8||fraction>.65)return null;
+    final ratio=image.width/image.height;
+    final crop=img.copyResize(image,width:64,height:64);
+    var ink=0,colour=0,ring=0,core=0,ringTotal=0,coreTotal=0;
+    final tones=<int>{};
+    for(final p in crop){
+      final dx=(p.x-31.5)/31.5,dy=(p.y-31.5)/31.5,d=dx*dx+dy*dy;
+      final r=p.r.toInt(),g=p.g.toInt(),b=p.b.toInt();
+      final isInk=math.min(r,math.min(g,b))<190&&p.a>80;
+      if(isInk)ink++;
+      if(math.max(r,math.max(g,b))-math.min(r,math.min(g,b))>28)colour++;
+      tones.add(((r>>5)<<6)|((g>>5)<<3)|(b>>5));
+      if(d>.38&&d<.90){ringTotal++;if(isInk)ring++;}
+      if(d<.18){coreTotal++;if(isInk)core++;}
+    }
+    final density=ink/4096,chroma=colour/4096;
+    if(ratio>=2.2&&centerY>.56&&fraction<.12&&density>.025&&density<.36&&chroma<.25)return 'signature';
+    if(ratio>=.7&&ratio<=1.35&&centerY>.58&&fraction<.12&&ringTotal>0&&coreTotal>0&&
+       ring/ringTotal>.26&&ring/ringTotal-core/coreTotal>.18)return 'seal';
+    if(ratio>=.55&&ratio<=1.4&&fraction>=.065&&fraction<.36&&tones.length>45&&density>.35&&chroma>.15)return 'photo';
+    if(ratio>=.65&&ratio<=2.2&&centerY<.30&&fraction<.075&&density>.06&&density<.75&&tones.length<=45)return 'logo';
+    return null;
+  }
+  static void refineImageRoles(List<Map<String,dynamic>> pages,List<Map<String,dynamic>> slots,Map<String,Uint8List> rasters){
+    for(final page in pages){
+      final side=page['side'],bytes=rasters[side];
+      if(bytes==null||bytes.length>8*1024*1024)continue;
+      final source=img.decodePng(bytes);
+      if(source==null||source.width*source.height>20000000)continue;
+      final pw=(page['canvasWidth'] as num).toDouble(),ph=(page['canvasHeight'] as num).toDouble();
+      if(pw<=0||ph<=0)continue;
+      final proposals=<String,List<Map<String,dynamic>>>{};
+      for(final row in slots.where((r)=>r['side']==side&&r['kind']=='image'&&r['key']!='qr'&&r['key']!='__static').take(64)){
+        final x=(row['x'] as num).toDouble(),y=(row['y'] as num).toDouble(),w=(row['width'] as num).toDouble(),h=(row['height'] as num).toDouble();
+        if(w<=0||h<=0||x<0||y<0||x+w>pw||y+h>ph)continue;
+        final l=(x/pw*source.width).floor(),t=(y/ph*source.height).floor();
+        final right=((x+w)/pw*source.width).ceil().clamp(l+1,source.width).toInt();
+        final bottom=((y+h)/ph*source.height).ceil().clamp(t+1,source.height).toInt();
+        final role=pixelRole(img.copyCrop(source,x:l,y:t,width:right-l,height:bottom-t),w*h/(pw*ph),(y+h/2)/ph);
+        if(role==null)continue;
+        (proposals[role]??=[]).add(row);
+      }
+      for(final entry in proposals.entries){
+        if(entry.value.length!=1)continue;
+        final row=entry.value.single,role=entry.key;
+        if(slots.any((s)=>!identical(s,row)&&s['side']==side&&s['key']==role))continue;
+        final suggested=row['suggestedRole'];
+        if(suggested==role){
+          row['key']=role;row['roleEvidence']='geometry_and_pixel_features';row['roleConfidence']='medium';
+        }else if(row['key']==''){
+          row['suggestedRole']=role;row['roleEvidence']='pixel_features_only';row['roleConfidence']='low';
+        }
+      }
+    }
+  }
+  /// Find actual rectangular placeholder borders near explicit Logo/QR/Photo
+  /// labels. Work on a bounded raster; no made-up rectangle if edges are
+  /// ambiguous. The label is the removal mask and the inset box is the output.
+  static void suggestPlaceholderSlots(List<Map<String,dynamic>> pages,
+      List<Map<String,dynamic>> slots,Map<String,Uint8List> rasters){
+    for(final page in pages){
+      final side=page['side'],bytes=rasters[side];
+      if(bytes==null||bytes.length>8*1024*1024)continue;
+      final decoded=img.decodePng(bytes);
+      if(decoded==null||decoded.width*decoded.height>20000000)continue;
+      final scale=math.min(1.0,480/math.max(decoded.width,decoded.height));
+      final source=scale==1?decoded:img.copyResize(decoded,width:math.max(1,(decoded.width*scale).round()),height:math.max(1,(decoded.height*scale).round()));
+      final pw=(page['canvasWidth'] as num).toDouble(),ph=(page['canvasHeight'] as num).toDouble();
+      final sx=source.width/pw,sy=source.height/ph;
+      double edge(int x,int y,bool vertical){
+        final a=source.getPixel(x,y),b=source.getPixel(vertical?x-1:x,vertical?y:y-1);
+        return math.max((a.r-b.r).abs(),math.max((a.g-b.g).abs(),(a.b-b.b).abs())).toDouble();
+      }
+      for(final item in (page['labelSlots'] as List? ?? const [])){
+        final row=Map<String,dynamic>.from(item as Map),role=row['role'];
+        if(!['logo','qr','photo'].contains(role)||slots.any((r)=>r['side']==side&&r['key']==role))continue;
+        final x=(row['x'] as num).toDouble(),y=(row['y'] as num).toDouble();
+        final w=(row['width'] as num).toDouble(),h=(row['height'] as num).toDouble();
+        final cx=((x+w/2)*sx).round(),cy=((y+h/2)*sy).round();
+        final rx=math.min((source.width*.24).round(),math.max(12,(w*sx*3).round()));
+        final ry=math.min((source.height*.30).round(),math.max(12,(h*sy*6).round()));
+        if(cx<2||cy<2||cx>=source.width-2||cy>=source.height-2)continue;
+        final x0=math.max(2,cx-rx),x1=math.min(source.width-2,cx+rx);
+        final y0=math.max(2,cy-ry),y1=math.min(source.height-2,cy+ry);
+        double score(int fixed,int lo,int hi,bool vertical){
+          if(hi-lo<8)return 0;
+          var count=0;
+          for(var i=lo;i<=hi;i++){
+            if(edge(vertical?fixed:i,vertical?i:fixed,vertical)>38)count++;
+          }
+          return count/(hi-lo+1);
+        }
+        final left=<int>[],right=<int>[],top=<int>[],bottom=<int>[];
+        for(var i=x0;i<=x1;i++){
+          if(i<(x*sx).floor()-2&&score(i,y0,y1,true)>.23)left.add(i);
+          if(i>((x+w)*sx).ceil()+2&&score(i,y0,y1,true)>.23)right.add(i);
+        }
+        for(var i=y0;i<=y1;i++){
+          if(i<(y*sy).floor()-2&&score(i,x0,x1,false)>.23)top.add(i);
+          if(i>((y+h)*sy).ceil()+2&&score(i,x0,x1,false)>.23)bottom.add(i);
+        }
+        if(left.isEmpty||right.isEmpty||top.isEmpty||bottom.isEmpty)continue;
+        // Prefer the closest complete enclosing rectangle and verify all
+        // four borders on the same extent (including dashed borders).
+        final l=left.last,r=right.first,t=top.last,b=bottom.first;
+        if([score(l,t,b,true),score(r,t,b,true),score(t,l,r,false),score(b,l,r,false)].any((v)=>v<.42))continue;
+        final ww=(r-l-4)/sx,hh=(b-t-4)/sy;
+        if(ww<=0||hh<=0||ww/hh<.65||ww/hh>1.5)continue;
+        final rw=(page['printWidthMm'] as num)*ww/pw,rh=(page['printHeightMm'] as num)*hh/ph;
+        if(role=='qr'&&(rw<12||rh<12)||role=='photo'&&(rw<8||rh<10))continue;
+        final nx=(l+2)/sx,ny=(t+2)/sy;
+        if(slots.any((q)=>q['side']==side&&q['key']!='__static'&&
+          nx<(q['x'] as num)+(q['width'] as num)&&(q['x'] as num)<nx+ww&&
+          ny<(q['y'] as num)+(q['height'] as num)&&(q['y'] as num)<ny+hh))continue;
+        slots.add({'key':role,'side':side,'x':nx,'y':ny,'width':ww,'height':hh,
+          'sample_x':x,'sample_y':y,'sample_width':w,'sample_height':h,
+          'roleEvidence':'explicit_label_and_border','reviewRequired':true});
+      }
+    }
   }
   static Uint8List cleanFlatRegions(Uint8List bytes,IdCardManifest manifest,String side,{bool allowSmoothGradient=false,List<Map<String,dynamic>>? sampleMasks}){
     if(bytes.length>8*1024*1024)throw const FormatException('Source raster is too large.');
@@ -68,6 +238,15 @@ class GlobalIdCardReview {
       if(x0<1||y0<1||x1>=source.width-1||y1>=source.height-1)
         throw FormatException('$key: sample touches the artwork edge; use clean source artwork.');
       final left=x0-1,right=x1+1,top=y0-1,bottom=y1+1;
+      // Never sample a neighbouring field's sample pixels when repairing
+      // this field. The union-mask repair can safely handle adjacent masks.
+      for(final other in masks.where((v)=>v['side']==side&&!identical(v,r))){
+        final ox=((other['x'] as num)*sx).floor()-2,oy=((other['y'] as num)*sy).floor()-2;
+        final ex=(((other['x'] as num)+(other['width'] as num))*sx).ceil()+2;
+        final ey=(((other['y'] as num)+(other['height'] as num))*sy).ceil()+2;
+        if(left<=ex&&right>=ox&&top<=ey&&bottom>=oy)
+          throw const FormatException('Adjacent sample regions require combined artwork repair.');
+      }
       List<int> rgb(int x,int y){final p=source.getPixel(x,y);return [p.r.toInt(),p.g.toInt(),p.b.toInt()];}
       final tl=rgb(left,top),tr=rgb(right,top),bl=rgb(left,bottom),br=rgb(right,bottom);
       int channel(int x,int y,int c){
@@ -93,6 +272,62 @@ class GlobalIdCardReview {
       }else{
         for(var y=y0;y<=y1;y++)for(var x=x0;x<=x1;x++)
           output.setPixelRgba(x,y,channel(x,y,0),channel(x,y,1),channel(x,y,2),255);
+      }
+    }
+    return Uint8List.fromList(img.encodePng(output));
+  }
+  /// Approximate only hidden pixels from the exterior of the union of
+  /// reviewed masks. Never reuse a pixel from any sample rectangle.
+  /// This cannot recover artwork that is absent from the original PDF.
+  static Uint8List reconstructArtwork(Uint8List bytes,IdCardManifest manifest,String side,List<Map<String,dynamic>> masks){
+    if(bytes.length>8*1024*1024)throw const FormatException('Source raster is too large.');
+    final decoded=img.decodePng(bytes);
+    if(decoded==null||decoded.width*decoded.height>6000000||
+       (decoded.width/decoded.height-manifest.width/manifest.height).abs()>.01)
+      throw const FormatException('Automatic background repair needs a bounded source raster.');
+    final source=decoded.convert(format:img.Format.uint8,numChannels:4),output=img.Image.from(source);
+    final w=source.width,h=source.height,sx=w/manifest.width,sy=h/manifest.height;
+    final masked=Uint8List(w*h);
+    for(final r in masks.where((r)=>r['side']==side)){
+      final x=(r['x'] as num).toDouble(),y=(r['y'] as num).toDouble(),rw=(r['width'] as num).toDouble(),rh=(r['height'] as num).toDouble();
+      if(![x,y,rw,rh].every((v)=>v.isFinite)||x<0||y<0||rw<=0||rh<=0||x+rw>manifest.width||y+rh>manifest.height)
+        throw const FormatException('Invalid sample removal mask.');
+      final l=math.max(0,(x*sx).floor()-2),t=math.max(0,(y*sy).floor()-2);
+      final right=math.min(w,((x+rw)*sx).ceil()+2),bottom=math.min(h,((y+rh)*sy).ceil()+2);
+      if(l==0||t==0||right==w||bottom==h)throw const FormatException('Sample reaches edge; clean original artwork required.');
+      for(var yy=t;yy<bottom;yy++)masked.fillRange(yy*w+l,yy*w+right,1);
+    }
+    if(masked.where((v)=>v!=0).length>w*h*.38)
+      throw const FormatException('Too much hidden artwork for reliable automatic repair; use clean original.');
+    // For each row, locate unmasked left/right exterior pixels. Use
+    // horizontal interpolation for short text rows and blend with the
+    // nearest vertical boundaries. All samples are outside every mask.
+    final up=Int32List(w*h),down=Int32List(w*h);
+    up.fillRange(0,up.length,-1);down.fillRange(0,down.length,-1);
+    for(var x=0;x<w;x++){
+      var last=-1;
+      for(var y=0;y<h;y++){final i=y*w+x;if(masked[i]==0){last=y;}else{up[i]=last;}}
+      last=-1;
+      for(var y=h-1;y>=0;y--){final i=y*w+x;if(masked[i]==0){last=y;}else{down[i]=last;}}
+    }
+    for(var y=0;y<h;y++){
+      var x=0;
+      while(x<w){
+        if(masked[y*w+x]==0){x++;continue;}
+        final l=x-1;
+        while(x<w&&masked[y*w+x]!=0){x++;}
+        final r=x;
+        if(l<0||r>=w)throw const FormatException('Missing artwork boundary.');
+        final a=source.getPixel(l,y),b=source.getPixel(r,y);
+        for(var xx=l+1;xx<r;xx++){
+          final i=y*w+xx,t=up[i],bottom=down[i];
+          if(t<0||bottom<0)throw const FormatException('Missing artwork boundary.');
+          final c=source.getPixel(xx,t),d=source.getPixel(xx,bottom);
+          final u=(xx-l)/(r-l),v=(y-t)/(bottom-t);
+          final wx=1.0/(r-l),wy=1.0/(bottom-t);
+          int blend(num p,num q,num m,num n)=>((wx*(p+(q-p)*u)+wy*(m+(n-m)*v))/(wx+wy)).round().clamp(0,255).toInt();
+          output.setPixelRgba(xx,y,blend(a.r,b.r,c.r,d.r),blend(a.g,b.g,c.g,d.g),blend(a.b,b.b,c.b,d.b),255);
+        }
       }
     }
     return Uint8List.fromList(img.encodePng(output));
@@ -131,7 +366,7 @@ class GlobalIdCardReview {
     return Uint8List.fromList(img.encodePng(target));
   }
   static Map<String,dynamic> package(String id,List<Map<String,dynamic>> pages,
-      List<Map<String,dynamic>> slots,Map<String,Uint8List> rasters,{bool allowSmoothGradient=false,Map<String,Uint8List> cleanArtwork=const {},Map<String,Uint8List> cleanCompanion=const {}}){
+      List<Map<String,dynamic>> slots,Map<String,Uint8List> rasters,{bool allowSmoothGradient=false,bool allowApproximateRepair=false,Map<String,Uint8List> cleanArtwork=const {},Map<String,Uint8List> cleanCompanion=const {}}){
     if(pages.isEmpty||pages.length>2||slots.length>128)throw const FormatException('Invalid review pages or slot count.');
     final first=pages.first;
     final w=(first['canvasWidth'] as num).toDouble(),h=(first['canvasHeight'] as num).toDouble();
@@ -149,7 +384,7 @@ class GlobalIdCardReview {
       regions.add({'key':key,'side':slot['side'],'kind':type,'x':slot['x'],'y':slot['y'],
         'width':slot['width'],'height':slot['height'],'fontSize':font,'minFontSize':6,
         'textColor':slot['textColor']??'#000000','align':slot['align']??'left','bold':type=='text'&&slot['bold']==true,'required':key=='name'||key=='qr',
-        'fit':key=='photo'?'cover':'contain','shape':key=='photo'&&slot['oval']==true?'oval':'rect',
+        'rotation':type=='text'&&slot['rotation']==-90?-90:0,'fit':key=='photo'?'cover':'contain','shape':key=='photo'&&slot['oval']==true?'oval':'rect',
         'wrap':type=='text'&&slot['wrap']==true,'maxLines':type=='text'&&slot['wrap']==true?2:1});
     }
     if(!regions.any((r)=>r['key']=='name'&&r['side']=='front')||!regions.any((r)=>r['key']=='qr'))
@@ -167,7 +402,12 @@ class GlobalIdCardReview {
       if(cleanOriginal!=null){
         backgrounds[side]=base64Encode(verifyCleanCompanion(source,cleanOriginal,manifest,side,masks));
       }else{
-        backgrounds[side]=base64Encode(cleanFlatRegions(source,manifest,side,allowSmoothGradient:allowSmoothGradient,sampleMasks:masks));
+        try{
+          backgrounds[side]=base64Encode(cleanFlatRegions(source,manifest,side,allowSmoothGradient:allowSmoothGradient,sampleMasks:masks));
+        }on FormatException{
+          if(!allowApproximateRepair)rethrow;
+          backgrounds[side]=base64Encode(reconstructArtwork(source,manifest,side,masks));
+        }
       }
     }
     final result=<String,dynamic>{'manifest':json,'backgrounds':backgrounds};

@@ -7,6 +7,10 @@ import 'package:flutter_test/flutter_test.dart';
 import '../lib/id_card_manifest.dart';
 import '../lib/id_card_engine.dart';
 import '../lib/id_card_catalog.dart';
+import '../lib/id_card_identity.dart';
+import '../lib/developer_global_id_preview.dart';
+import '../lib/global_id_card_review.dart';
+import 'package:image/image.dart' as img;
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -137,4 +141,53 @@ void main() {
           .writeAsBytes(bytes);
     }
   });
+  test('developer sample preview never uses real identity or a login QR',() async {
+    final data=DeveloperGlobalIdPreview.demoData('studentId');
+    expect(data['name'],'Demo Student');
+    expect(data['contact'],'0000000000');
+    expect(DeveloperGlobalIdPreview.qr,'SAARTHI-DEMO-NOT-A-LOGIN');
+    final images=DeveloperGlobalIdPreview.demoImages();
+    expect(images.keys,unorderedEquals(['photo','logo','signature','seal']));
+    final raw=manifest();
+    final m=IdCardManifest.fromJson({...raw,'id':'gid-00000000000000000000000000000001'});
+    final pdf=await IdCardEngine.render(m,data,images:images,qr:DeveloperGlobalIdPreview.qr);
+    expect(latin1.decode(pdf).startsWith('%PDF'),true);
+  });
+
+  test('automatic preparation requires name, QR and every explicit placeholder',(){
+    final pages=[<String,dynamic>{'side':'front','labelSlots':[{'role':'logo'}]}];
+    final slots=[<String,dynamic>{'side':'front','key':'name'},
+      <String,dynamic>{'side':'front','key':'qr'}];
+    expect(GlobalIdCardReview.canAutoPrepare(pages,slots),false);
+    slots.add({'side':'front','key':'logo'});
+    expect(GlobalIdCardReview.canAutoPrepare(pages,slots),true);
+    slots.add({'side':'front','key':''});
+    expect(GlobalIdCardReview.canAutoPrepare(pages,slots),false);
+  });
+
+  test('sparse horizontal ink and circular marks are distinct from a generic full-page image',(){
+    final ink=img.ColorRgba8(20,30,40,255),white=img.ColorRgba8(255,255,255,255);
+    final sign=img.Image(width:160,height:48,numChannels:4);
+    img.fill(sign,color:white);img.fillRect(sign,x1:10,y1:22,x2:150,y2:27,color:ink);
+    expect(GlobalIdCardReview.pixelRole(sign,.03,.8),'signature');
+    final seal=img.Image(width:100,height:100,numChannels:4);
+    img.fill(seal,color:white);img.fillCircle(seal,x:50,y:50,radius:43,color:ink);
+    img.fillCircle(seal,x:50,y:50,radius:30,color:white);
+    expect(GlobalIdCardReview.pixelRole(seal,.03,.8),'seal');
+    expect(GlobalIdCardReview.pixelRole(seal,.9,.5),isNull);
+  });
+  test('uncertain image mapping blocks automatic preparation',(){
+    final pages=[<String,dynamic>{'side':'front'}];
+    final slots=[<String,dynamic>{'side':'front','key':'name'},<String,dynamic>{'side':'front','key':'qr'},
+      <String,dynamic>{'side':'front','key':'photo','roleConfidence':'low'}];
+    expect(GlobalIdCardReview.canAutoPrepare(pages,slots),false);
+  });
+
+  test('shared identity policy preserves exact Windows catalog semantics',(){
+    for(final id in ['gid-demo','gid-00000000000000000000000000000001','student-green-blue-modern-v1']){
+      expect(IdCardIdentity.isGlobalId(id),IdCardCatalog.isGlobalId(id));
+    }
+    expect(IdCardIdentity.greenBlueSha256,IdCardCatalogEntry.greenBlueSha256);
+  });
+
 }
