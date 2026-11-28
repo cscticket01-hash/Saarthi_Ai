@@ -94,7 +94,11 @@ if (require.main === module) {
         const result=await execute('python3',['-I','-c',code],{timeout:4000,maxBuffer:65536,env:{PATH:'/usr/bin:/bin:/usr/local/bin',LANG:'C'}});
         console.info('ID_PDF_SANDBOX_CAPABILITIES '+JSON.stringify(JSON.parse(result.stdout)));
       } catch (_) { console.info('ID_PDF_SANDBOX_CAPABILITIES_UNAVAILABLE'); }
-      const {probeRuntime} = require('../functions/global-id-card-analysis.js');
+      const {probeRuntime,probeSandbox} = require('../functions/global-id-card-analysis.js');
+      if(process.env.SAARTHI_GLOBAL_ID_PDF_SANDBOX==='landlock'){
+        try{console.info('ID_PDF_SANDBOX_NEGATIVE '+JSON.stringify(await probeSandbox()));}
+        catch(_){console.info('ID_PDF_SANDBOX_NEGATIVE_FAILED');}
+      }
       const checks = await probeRuntime(...executables);
       console.info('ID_PDF_HOSTED_SYNTHETIC '+JSON.stringify({executables,checks,namespaceIsolation}));
       console.info('ID_PDF_RUNTIME_INVENTORY '+JSON.stringify({
