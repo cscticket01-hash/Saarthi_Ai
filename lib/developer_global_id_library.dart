@@ -141,10 +141,12 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
           FilledButton(onPressed:()=>Navigator.pop(ctx,'file'),child:const Text('Choose reviewed package'))]));
       if(proceed==null||!mounted)return;
       Map<String,dynamic>? package;
+      Map<String,dynamic> sourceRasters={};
       if(proceed=='editor'){
         final source=await ManagedDeveloperService.call('id-library/review-source',{'id':row['id'],'sourceSha256':result['sourceSha256']});
         if(source['sourceSha256']!=result['sourceSha256'])throw StateError('Draft source changed.');
         if(!mounted)return;
+        sourceRasters=Map<String,dynamic>.from(source['rasters'] as Map);
         package=await showDialog<Map<String,dynamic>>(context:context,barrierDismissible:false,builder:(_)=>
           DeveloperGlobalIdReviewEditor(id:row['id'].toString(),analysis:analysis,rasters:Map<String,dynamic>.from(source['rasters'] as Map),
             loadCleanPdf:(Uint8List bytes) async{
@@ -175,6 +177,10 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
           const Text('Fictional sample only — not a valid school ID or login QR. Print renderer and QR check passed.'),
           Image.memory(demo,fit:BoxFit.contain),
           const SizedBox(height:12),
+          const Text('Compare the original reference and clean artwork. Automatic detection may need corrections.'),
+          for(final side in ['front','back'])if(sourceRasters[side] is String)...[
+            Text('Original $side — private reference'),Image.memory(base64Decode(sourceRasters[side] as String),height:180,fit:BoxFit.contain),
+          ],
           const Text('Clean artwork (check no sample data remains):'),
           for(final side in ['front','back'])if(backgrounds[side] is String)...[
             Text(side),Image.memory(base64Decode(backgrounds[side] as String),height:180,fit:BoxFit.contain),

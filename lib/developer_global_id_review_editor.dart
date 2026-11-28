@@ -39,6 +39,11 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
     }
     GlobalIdCardReview.suggestQr(pages,slots,images);
     GlobalIdCardReview.suggestPlaceholderSlots(pages,slots,images);
+    if(GlobalIdCardReview.canAutoPrepare(pages,slots)){
+      WidgetsBinding.instance.addPostFrameCallback((_){
+        if(mounted&&!busy)buildPackage();
+      });
+    }
   }
   Map<String,dynamic> get page=>pages.firstWhere((p)=>p['side']==side);
   double n(Map<String,dynamic> row,String key)=>(row[key] as num?)?.toDouble()??0;
@@ -118,7 +123,7 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
         TextButton.icon(onPressed:busy?null:()=>setState(()=>showAdvanced=!showAdvanced),icon:Icon(showAdvanced?Icons.expand_less:Icons.expand_more),label:Text(showAdvanced?'Hide field corrections':'Show field corrections')),
         if(showAdvanced)TextButton.icon(onPressed:busy||slots.length>=128?null:()=>setState(()=>slots.add({'side':side,'key':'','x':w*.1,'y':h*.1,'width':w*.25,'height':h*.1})),
           icon:const Icon(Icons.add),label:const Text('Add missing field / QR / image slot')),
-        for(final row in visible.where((r)=>showAdvanced||r['key']==''))Card(child:Padding(padding:const EdgeInsets.all(8),child:Column(children:[
+        for(final row in visible.where((r)=>showAdvanced||r['key']==''||r['roleConfidence']=='low'))Card(child:Padding(padding:const EdgeInsets.all(8),child:Column(children:[
           Row(children:[
             Expanded(child:DropdownButtonFormField<String>(key:ObjectKey(row),value:roles.contains(row['key'])?row['key'] as String:'',
               isExpanded:true,items:[for(final role in roles)DropdownMenuItem(value:role,child:Text(role==''?'Unclassified — select role':role=='__static'?'Static decoration (keep)':role))],

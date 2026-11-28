@@ -5,17 +5,31 @@ import 'package:image/image.dart' as img;
 import 'package:zxing2/qrcode.dart' as zx;
 import 'id_card_manifest.dart';
 
-/// Conservative, review-only raster cleanup. It does not inpaint or invent
-/// arbitrary patterns, and never edits original source bytes. Smooth gradient
-/// interpolation is review-only and requires matching exterior boundary evidence.
+/// Review-only raster cleanup and bounded approximation. It never edits original
+/// source bytes and cannot recover original artwork hidden by opaque samples.
 class GlobalIdCardReview {
   static const imageFields={'photo','logo','signature','seal'};
   static const textFields={'schoolName','schoolAddress','schoolLocation','schoolEmail','schoolContactNo','name','parentName','dob','class','section','rollNo','designation','subject','contact','address','pinCode','district','state','country','session','employeeId','bloodGroup','emergencyContact','academicSession','confirmedUniversalStudentUid'};
   static String kind(String key)=>imageFields.contains(key)?'image':key=='qr'?'qr':'text';
+  /// Automatically prepare a draft only when mandatory fields are present and
+  /// every explicitly detected placeholder has a matching slot. Ambiguous
+  /// candidates stay in the correction editor. Final publication still needs
+  /// independent demo rendering and human approval.
+  static bool canAutoPrepare(List<Map<String,dynamic>> pages,List<Map<String,dynamic>> slots){
+    if(pages.isEmpty||slots.isEmpty||slots.any((r)=>r['key']==''||r['key']==null))return false;
+    if(!slots.any((r)=>r['side']=='front'&&r['key']=='name')||!slots.any((r)=>r['key']=='qr'))return false;
+    for(final page in pages){
+      final side=page['side'];
+      for(final label in (page['labelSlots'] as List? ?? const [])){
+        final role=(label as Map)['role'];
+        if(!slots.any((r)=>r['side']==side&&r['key']==role))return false;
+      }
+    }
+    return true;
+  }
   /// Suggest a QR role only when an actual embedded raster decodes uniquely.
   /// The decoded sample string is never retained, displayed or returned.
   static void suggestQr(List<Map<String,dynamic>> pages,List<Map<String,dynamic>> slots,Map<String,Uint8List> rasters){
-    if(slots.any((r)=>r['key']=='qr'))return;
     final detected=<Map<String,dynamic>>[];
     var inspected=0;
     for(final page in pages){
@@ -24,7 +38,7 @@ class GlobalIdCardReview {
       final source=img.decodePng(bytes);
       if(source==null||source.width*source.height>20000000)continue;
       final sx=source.width/(page['canvasWidth'] as num),sy=source.height/(page['canvasHeight'] as num);
-      for(final row in slots.where((r)=>r['side']==side&&r['key']==''&&r['kind']=='image')){
+      for(final row in slots.where((r)=>r['side']==side&&r['kind']=='image'&&r['key']!='__static')){
         if(inspected>=24)return;
         final w=(row['width'] as num).toDouble(),h=(row['height'] as num).toDouble();
         if(w<=0||h<=0||w/h<.75||w/h>1.33)continue;
@@ -45,7 +59,18 @@ class GlobalIdCardReview {
         }catch(_){/* No reliable QR evidence; keep it unclassified. */}
       }
     }
-    if(detected.length==1)detected.single['key']='qr';
+    for(final page in pages){
+      final side=page['side'];
+      final matches=detected.where((r)=>r['side']==side).toList();
+      if(matches.length!=1)continue;
+      final actual=matches.single;
+      // Pixel decoding is stronger evidence than a nearby label or geometry.
+      // Preserve competing candidates as unresolved rather than discarding them.
+      for(final r in slots.where((r)=>r['side']==side&&r['key']=='qr'&&!identical(r,actual))){
+        r['key']='';r['roleEvidence']='conflicting_qr_candidate';
+      }
+      actual['key']='qr';actual['roleEvidence']='decoded_raster';actual['roleConfidence']='high';
+    }
   }
   /// Find actual rectangular placeholder borders near explicit Logo/QR/Photo
   /// labels. Work on a bounded raster; no made-up rectangle if edges are

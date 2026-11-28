@@ -8,6 +8,7 @@ import '../lib/id_card_manifest.dart';
 import '../lib/id_card_engine.dart';
 import '../lib/id_card_catalog.dart';
 import '../lib/developer_global_id_preview.dart';
+import '../lib/global_id_card_review.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -149,6 +150,17 @@ void main() {
     final m=IdCardManifest.fromJson({...raw,'id':'gid-demo'});
     final pdf=await IdCardEngine.render(m,data,images:images,qr:DeveloperGlobalIdPreview.qr);
     expect(latin1.decode(pdf).startsWith('%PDF'),true);
+  });
+
+  test('automatic preparation requires name, QR and every explicit placeholder',(){
+    final pages=[<String,dynamic>{'side':'front','labelSlots':[{'role':'logo'}]}];
+    final slots=[<String,dynamic>{'side':'front','key':'name'},
+      <String,dynamic>{'side':'front','key':'qr'}];
+    expect(GlobalIdCardReview.canAutoPrepare(pages,slots),false);
+    slots.add({'side':'front','key':'logo'});
+    expect(GlobalIdCardReview.canAutoPrepare(pages,slots),true);
+    slots.add({'side':'front','key':''});
+    expect(GlobalIdCardReview.canAutoPrepare(pages,slots),false);
   });
 
 }
