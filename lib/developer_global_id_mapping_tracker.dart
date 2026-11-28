@@ -48,7 +48,7 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
           slots = copy(data.saved ?? data.automatic);
           if (!data.verified && widget.save != null) {
             slots = GlobalIdCardReview.fitOutputRegions(
-              data.pages, slots, repairStudentIdOnly: true,
+              data.pages, slots, minimumOnly: true,
             );
           }
           revision = data.revision;
@@ -288,6 +288,14 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
     if(widget.save==null||saving||loaded==null)return;
     if(publish){
       if(!slots.any((r)=>r['key']=='name'&&r['side']=='front')||!slots.any((r)=>r['key']=='qr')){setState(()=>error='Map the front name and authentication QR before publishing.');return;}
+      final fitted = GlobalIdCardReview.fitOutputRegions(
+        loaded!.pages, slots, minimumOnly: true,
+      );
+      if (slots.asMap().entries.any((entry) =>
+          GlobalIdCardReview.readabilityIssue(entry.value) != null &&
+          GlobalIdCardReview.readabilityIssue(fitted[entry.key]) == null)) {
+        change(() => slots = fitted);
+      }
       final invalid = slots.indexWhere((r) => GlobalIdCardReview.readabilityIssue(r) != null);
       if (invalid >= 0) {
         final row = slots[invalid];
