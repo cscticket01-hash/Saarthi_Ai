@@ -128,7 +128,7 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
         if(move!=true||!mounted)return;
         await ManagedDeveloperService.call('id-library/change-category',{'id':row['id'],'kind':detected});
         if(!mounted)return;
-        setState(()=>kind=detected);
+        setState((){kind=detected;rows=rows.map((r)=>r['id']==row['id']?{...r,'kind':detected}:r).toList();});
       }
       if((analysis['category'] as Map?)?['evidence']=='conflicting_headings')throw StateError('PDF contains conflicting card categories.');
       // Prefer the visual editor directly rather than showing raw analysis JSON.
