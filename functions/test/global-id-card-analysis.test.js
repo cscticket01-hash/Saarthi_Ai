@@ -132,3 +132,18 @@ test('OCR retry chooses the dominant script without storing words',()=>{
  const xml='<page width="240" height="120"><word xMin="10" yMin="10" xMax="210" yMax="25">কৰ্মচাৰী পৰিচয় পত্র</word></page>';
  assert.equal(parseCandidates(xml)[0].category.kind,'otherStaffId');
 });
+
+test('vertical student ID is recovered independently of horizontal address rows',()=>{
+ const xml='<page width="240" height="150">'+
+ '<word xMin="9" yMin="80" xMax="16" yMax="106">Student</word>'+
+ '<word xMin="9" yMin="69" xMax="16" yMax="79">ID</word>'+
+ '<word xMin="9" yMin="63" xMax="16" yMax="68">-</word>'+
+ '<word xMin="9" yMin="35" xMax="16" yMax="62">XXXXXX</word>'+
+ '<word xMin="80" yMin="90" xMax="115" yMax="98">Address:</word>'+
+ '<word xMin="132" yMin="90" xMax="178" yMax="98">Example</word>'+
+ '<word xMin="132" yMin="108" xMax="180" yMax="116">Town</word></page>';
+ const p=parseCandidates(xml)[0],uid=p.candidates.find(r=>r.key==='confirmedUniversalStudentUid');
+ assert.equal(uid.rotation,-90);
+ assert.equal(p.candidates.find(r=>r.key==='address').wrap,true);
+ assert.equal(JSON.stringify(p).includes('XXXXXX'),false);
+});

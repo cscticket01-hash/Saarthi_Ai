@@ -73,9 +73,13 @@ function parseCandidates(xml){
   const words=[...page[3].matchAll(/<word\s+xMin="([\d.]+)"\s+yMin="([\d.]+)"\s+xMax="([\d.]+)"\s+yMax="([\d.]+)"[^>]*>([^<]*)<\/word>/g)]
     .slice(0,2048).map(w=>({x:+w[1],y:+w[2],right:+w[3],bottom:+w[4],text:decode(w[5]).trim()}))
     .filter(w=>w.text&&w.x>=0&&w.y>=0&&w.right>w.x&&w.bottom>w.y&&w.right<=width&&w.bottom<=height);
-  words.sort((a,b)=>(a.y+a.bottom)-(b.y+b.bottom)||a.x-b.x);
+  // Rotated glyphs must not contaminate ordinary horizontal line grouping.
+  const tall=words.filter(w=>w.text.length>=2&&w.bottom-w.y>1.65*(w.right-w.x));
+  const vertical=words.filter(w=>tall.includes(w)||(/^(?:id|[-:–—])$/i.test(w.text)&&tall.some(t=>Math.abs((t.x+t.right-w.x-w.right)/2)<3&&Math.max(0,t.y-w.bottom,w.y-t.bottom)<8)));
+  const horizontal=words.filter(w=>!vertical.includes(w));
+  horizontal.sort((a,b)=>(a.y+a.bottom)-(b.y+b.bottom)||a.x-b.x);
   const rows=[];
-  for(const word of words){
+  for(const word of horizontal){
    const overlap=r=>Math.min(r.bottom,word.bottom)-Math.max(r.y,word.y);
    const row=rows.find(r=>overlap(r)>=.6*Math.min(r.bottom-r.y,word.bottom-word.y)&&
     Math.abs((r.y+r.bottom-word.y-word.bottom)/2)<=.45*Math.max(r.bottom-r.y,word.bottom-word.y));
@@ -95,6 +99,29 @@ function parseCandidates(xml){
    if(candidates.some(r=>r.key===key))return;
    candidates.push({key,side,...rect,reviewRequired:true,...extra});
   };
+  // Vertical Student ID may be one text object or several rotated words.
+  // Group only narrow, aligned words and require an explicit label + value.
+  const columns=[];
+  for(const word of vertical){
+   const cx=(word.x+word.right)/2;
+   let column=columns.find(c=>Math.abs(c.cx-cx)<=Math.max(2,(word.right-word.x)*.65));
+   if(!column){column={cx,words:[]};columns.push(column);}
+   column.words.push(word);
+  }
+  for(const c of columns){
+   const list=c.words.sort((a,b)=>a.y-b.y);
+   const groups=[];
+   for(const word of list){
+    const g=groups.at(-1),previous=g?.at(-1);
+    if(previous&&word.y-previous.bottom<=Math.max(5,(word.right-word.x)*2))g.push(word);
+    else groups.push([word]);
+   }
+   for(const g of groups){
+    const phrase=g.map(w=>w.text).join(' '),reverse=[...g].reverse().map(w=>w.text).join(' ');
+    if([phrase,reverse].some(t=>/^student\s+id\s*[-:–—]\s*\S+/i.test(t)))
+     add('confirmedUniversalStudentUid',g,{evidence:'vertical_id_geometry',rotation:-90});
+   }
+  }
   for(const row of rowsByPosition){
    const line=row.words.sort((a,b)=>a.x-b.x),raw=line.map(w=>w.text).join(' '),norm=normalized(raw);
    lineTexts.push(raw);
@@ -127,7 +154,7 @@ function parseCandidates(xml){
       !/^(?:logo|qr|photo|principal|signature|seal|student\s+id|school\s+name)\b/i.test(norm)){
      const rect=union(line);
      const gap=rect.y-(previousAddress.y+previousAddress.height);
-     if(gap>=-1&&gap<=previousAddress.height*.8&&Math.abs(rect.x-previousAddress.x)<=Math.max(4,previousAddress.height*.6)){
+     if(gap>=-1&&gap<=Math.min(12,previousAddress.height*1.35)&&Math.abs(rect.x-previousAddress.x)<=Math.max(5,previousAddress.height*.85)){
       const right=Math.max(rect.x+rect.width,previousAddress.x+previousAddress.width);
       previousAddress.width=right-previousAddress.x;previousAddress.height=rect.y+rect.height-previousAddress.y;
       previousAddress.wrap=true;
@@ -225,10 +252,13 @@ function enrichCandidates(xml,pages){
   for(const match of block[2].matchAll(/<text\b([^>]*)>([\s\S]*?)<\/text>/g)){
    const a=attr(match[1]),x=Number(a.left)*sx,y=Number(a.top)*sy,width=Number(a.width)*sx,height=Number(a.height)*sy;
    if(![x,y,width,height].every(Number.isFinite)||x<0||y<0||width<=0||height<=0||x+width>page.canvasWidth+.5||y+height>page.canvasHeight+.5)continue;
-   const text=normalized(decode(match[2].replace(/<[^>]*>/g,'')));
+   const rawText=decode(match[2].replace(/<[^>]*>/g,''));
+   const text=normalized(rawText);
    const style=fonts.get(a.font);
    // Independent XML text objects recover placeholders that share a
    // vertical row with unrelated elements in bbox-layout.
+   if(/^student\s+id\s*[-:–—]\s*\S+/i.test(rawText.trim())&&height>width*1.65&&!page.candidates.some(r=>r.key==='confirmedUniversalStudentUid'))
+    page.candidates.push({key:'confirmedUniversalStudentUid',side:page.side,x,y,width,height,rotation:-90,reviewRequired:true,evidence:'vertical_text_object'});
    if(text==='school name'&&!page.candidates.some(r=>r.key==='schoolName'))
     page.candidates.push({key:'schoolName',side:page.side,x,y,width,height,reviewRequired:true,evidence:'explicit_placeholder'});
    if(['logo','school logo','qr','qr code','photo','student photo','teacher photo','staff photo'].includes(text)){

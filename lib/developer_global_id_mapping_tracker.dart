@@ -202,7 +202,7 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
       ]),
       Wrap(spacing:8,runSpacing:4,children:[
         for(final s in ['rectangle','square',if(imageRole)...['circle','oval']])ChoiceChip(label:Text(s[0].toUpperCase()+s.substring(1)),
-          selected:shape==s,onSelected:saving?null:(_)=>setState(()=>shape=s)),
+          selected:shape==s,onSelected:saving?null:(_){setState(()=>shape=s);if(row!=null&&imageRole)change((){row['oval']=s=='circle'||s=='oval';row['manual']=true;});}),
         if(row!=null)...[
           TextButton.icon(onPressed:saving?null:()=>change((){row['roleConfidence']='medium';row['manual']=true;}),icon:const Icon(Icons.check),label:const Text('Confirm selection')),
           TextButton.icon(onPressed:saving?null:()=>change((){slots.removeAt(selected);selected=-1;}),icon:const Icon(Icons.delete_outline),label:const Text('Remove selection')),
