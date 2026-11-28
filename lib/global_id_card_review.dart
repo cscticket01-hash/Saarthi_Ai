@@ -10,6 +10,27 @@ import 'id_card_manifest.dart';
 class GlobalIdCardReview {
   static const imageFields={'photo','logo','signature','seal'};
   static const textFields={'schoolName','schoolAddress','schoolLocation','schoolEmail','schoolContactNo','name','parentName','dob','class','section','rollNo','designation','subject','contact','address','pinCode','district','state','country','session','employeeId','bloodGroup','emergencyContact','academicSession','confirmedUniversalStudentUid'};
+  static List<Map<String,dynamic>> cleanTemplateSlots(List<Map<String,dynamic>> pages) {
+    final result = <Map<String,dynamic>>[];
+    for (final page in pages) {
+      final side = page['side'];
+      final width = _n(page, 'canvasWidth'), height = _n(page, 'canvasHeight');
+      for (final raw in (page['blankTextLabels'] as List? ?? const [])) {
+        final label = Map<String,dynamic>.from(raw as Map);
+        final key = label['key'];
+        if (!textFields.contains(key) || result.any((r) => r['side']==side && r['key']==key)) continue;
+        final x = _n(label, 'x') + _n(label, 'width') + 2;
+        final y = _n(label, 'y');
+        final w = math.min(_minimumTextWidth(label), math.min(width, _n(label, 'rightLimit')) - x - 1);
+        const h = 7.6;
+        if (x < 0 || y < 0 || w < 6 || y + h > height) continue;
+        if (result.any((r) => r['side']==side && x < _n(r,'x')+_n(r,'width') &&
+            x+w > _n(r,'x') && y < _n(r,'y')+_n(r,'height') && y+h > _n(r,'y'))) continue;
+        result.add({'key':key,'side':side,'kind':'text','x':x,'y':y,'width':w,'height':h,'fontSize':6});
+      }
+    }
+    return result;
+  }
   static String kind(String key)=>imageFields.contains(key)?'image':key=='qr'?'qr':'text';
   /// Shared detection path for the read-only tracker and review editor.
   static List<Map<String,dynamic>> detectSlots(List<Map<String,dynamic>> pages,Map<String,Uint8List> images){
@@ -524,7 +545,7 @@ class GlobalIdCardReview {
     return Uint8List.fromList(img.encodePng(target));
   }
   static Map<String,dynamic> package(String id,List<Map<String,dynamic>> pages,
-      List<Map<String,dynamic>> slots,Map<String,Uint8List> rasters,{bool allowSmoothGradient=false,bool allowApproximateRepair=false,Set<String>? reconstructedSides,Map<String,Uint8List> cleanArtwork=const {},Map<String,Uint8List> cleanCompanion=const {}}){
+      List<Map<String,dynamic>> slots,Map<String,Uint8List> rasters,{bool useSourceArtwork=false,bool allowSmoothGradient=false,bool allowApproximateRepair=false,Set<String>? reconstructedSides,Map<String,Uint8List> cleanArtwork=const {},Map<String,Uint8List> cleanCompanion=const {}}){
     if(pages.isEmpty||pages.length>2||slots.length>128)throw const FormatException('Invalid review pages or slot count.');
     final first=pages.first;
     final w=(first['canvasWidth'] as num).toDouble(),h=(first['canvasHeight'] as num).toDouble();
@@ -558,6 +579,10 @@ class GlobalIdCardReview {
     for(final side in ['front',if(manifest.hasBack)'back']){
       final source=rasters[side];
       if(source==null)throw const FormatException('Source page missing.');
+      if(useSourceArtwork){
+        backgrounds[side]=base64Encode(source);
+        continue;
+      }
       final companion=cleanCompanion[side],clean=cleanArtwork[side];
       final cleanOriginal=companion??clean;
       if(cleanOriginal!=null){
