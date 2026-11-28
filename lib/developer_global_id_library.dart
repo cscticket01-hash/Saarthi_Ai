@@ -4,6 +4,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'platform/managed_developer_service.dart';
 import 'developer_global_id_review_editor.dart';
+import 'developer_global_id_preview.dart';
 
 /// Source library only. Mapping review must finish before a school can use a PDF.
 class DeveloperGlobalIdLibrary extends StatefulWidget {
@@ -119,6 +120,7 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
       if(!mounted)return;
       final analysis=Map<String,dynamic>.from(result['analysis'] as Map);
       final detected=(analysis['category'] as Map?)?['kind']?.toString();
+      var reviewedKind=row['kind'].toString();
       if(detected!=null&&detected!=row['kind']){
         final move=await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(
           title:const Text('Correct the template category'),
@@ -128,6 +130,7 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
         if(move!=true||!mounted)return;
         await ManagedDeveloperService.call('id-library/change-category',{'id':row['id'],'kind':detected});
         if(!mounted)return;
+        reviewedKind=detected;
         setState((){kind=detected;rows=rows.map((r)=>r['id']==row['id']?{...r,'kind':detected}:r).toList();});
       }
       if((analysis['category'] as Map?)?['evidence']=='conflicting_headings')throw StateError('PDF contains conflicting card categories.');
@@ -161,16 +164,24 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
       final reviewedPackage=package;
       final backgrounds=Map<String,dynamic>.from(reviewedPackage['backgrounds'] as Map);
       if(!mounted)return;
+      // A real final print renderer and an independent QR decode must pass
+      // before the human artwork approval. The QR is only a demo string.
+      final demo=await DeveloperGlobalIdPreview.generate(reviewedPackage,reviewedKind);
+      if(!mounted)return;
       bool checked=false;
       final approve=await showDialog<bool>(context:context,builder:(ctx)=>StatefulBuilder(builder:(ctx,update)=>AlertDialog(
-        title:const Text('Review clean artwork before publishing'),
-        content:SizedBox(width:560,child:SingleChildScrollView(child:Column(children:[
+        title:const Text('Final ID card preview'),
+        content:SizedBox(width:760,child:SingleChildScrollView(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+          const Text('Fictional sample only — not a valid school ID or login QR. Print renderer and QR check passed.'),
+          Image.memory(demo,fit:BoxFit.contain),
+          const SizedBox(height:12),
+          const Text('Clean artwork (check no sample data remains):'),
           for(final side in ['front','back'])if(backgrounds[side] is String)...[
             Text(side),Image.memory(base64Decode(backgrounds[side] as String),height:180,fit:BoxFit.contain),
           ],
-          SelectableText(const JsonEncoder.withIndent('  ').convert(reviewedPackage['manifest'])),
+          ExpansionTile(title:const Text('Technical mapping'),children:[SelectableText(const JsonEncoder.withIndent('  ').convert(reviewedPackage['manifest']))]),
           CheckboxListTile(value:checked,onChanged:(v)=>update(()=>checked=v==true),
-            title:const Text('I verified all sample values, photo, logo, signature, seal and QR are removed; mapping, fonts and physical size are correct.')),
+            title:const Text('I verified the final card, all sample data removal, field positions, fonts and physical dimensions.')),
         ]))),
         actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),
           FilledButton(onPressed:checked?()=>Navigator.pop(ctx,true):null,child:const Text('Publish free template'))])));

@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import '../lib/id_card_manifest.dart';
 import '../lib/id_card_engine.dart';
 import '../lib/id_card_catalog.dart';
+import '../lib/developer_global_id_preview.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -137,4 +138,17 @@ void main() {
           .writeAsBytes(bytes);
     }
   });
+  test('developer sample preview never uses real identity or a login QR',() async {
+    final data=DeveloperGlobalIdPreview.demoData('studentId');
+    expect(data['name'],'Demo Student');
+    expect(data['contact'],'0000000000');
+    expect(DeveloperGlobalIdPreview.qr,'SAARTHI-DEMO-NOT-A-LOGIN');
+    final images=DeveloperGlobalIdPreview.demoImages();
+    expect(images.keys,unorderedEquals(['photo','logo','signature','seal']));
+    final raw=manifest();
+    final m=IdCardManifest.fromJson({...raw,'id':'gid-demo'});
+    final pdf=await IdCardEngine.render(m,data,images:images,qr:DeveloperGlobalIdPreview.qr);
+    expect(latin1.decode(pdf).startsWith('%PDF'),true);
+  });
+
 }
