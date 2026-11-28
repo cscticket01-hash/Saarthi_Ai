@@ -39,7 +39,14 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
   @override void initState(){
     super.initState();
     mapping=widget.data.then(_Mapping.fromData).then((data){
-      loaded=data;slots=copy(data.saved??data.automatic);revision=data.revision;manual=!data.verified&&widget.save!=null;
+      if (mounted) {
+        setState(() {
+          loaded = data;
+          slots = copy(data.saved ?? data.automatic);
+          revision = data.revision;
+          manual = !data.verified && widget.save != null;
+        });
+      }
       return data;
     });
   }
