@@ -7,10 +7,11 @@ import 'global_id_card_review.dart';
 
 /// Drafts may be corrected visually. Approved immutable versions remain read-only.
 class DeveloperGlobalIdMappingTracker extends StatefulWidget {
-  const DeveloperGlobalIdMappingTracker({super.key,required this.name,required this.kind,required this.data,this.save});
+  const DeveloperGlobalIdMappingTracker({super.key,required this.name,required this.kind,required this.data,this.save,this.publish});
   final String name,kind;
   final Future<Map<String,dynamic>> data;
   final Future<Map<String,dynamic>> Function(Map<String,dynamic>)? save;
+  final Future<void> Function()? publish;
   @override State<DeveloperGlobalIdMappingTracker> createState()=>_TrackerState();
 }
 class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
@@ -38,7 +39,14 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
   @override void initState(){
     super.initState();
     mapping=widget.data.then(_Mapping.fromData).then((data){
-      loaded=data;slots=copy(data.saved??data.automatic);revision=data.revision;
+      if (mounted) {
+        setState(() {
+          loaded = data;
+          slots = copy(data.saved ?? data.automatic);
+          revision = data.revision;
+          manual = !data.verified && widget.save != null;
+        });
+      }
       return data;
     });
   }
@@ -87,8 +95,8 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
   void begin(Offset p){
     if(saving)return;
     if(tool=='move'||tool=='resize'){
-      if(!validSelection)hit(p);
-      if(!validSelection)return;
+      if(!validSelection||!rect(slots[selected]).contains(p))hit(p);
+      if(!validSelection||!rect(slots[selected]).contains(p))return;
       original=rect(slots[selected]);
     }else if(tool=='mask'){
       if(!validSelection)return;
@@ -132,13 +140,15 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
         if(existing>=0&&existing<slots.length&&slots[existing]['side']==side){selected=existing;}
         else{slots.add({'side':side,'key':field});selected=slots.length-1;}
         final row=slots[selected];
+        final hasMask=row['sample_x']!=null&&row['sample_width']!=null;
         row['key']=field;row['kind']=GlobalIdCardReview.kind(field);row['oval']=imageRole&&(shape=='circle'||shape=='oval');
         row['manual']=true;row['roleConfidence']='medium';
+        if(!hasMask||syncMask)row['sampleOval']=imageRole&&(shape=='circle'||shape=='oval');
         if(GlobalIdCardReview.textFields.contains(field)){
           row['fontSize']??=math.max(6.0,math.min(72.0,r.height*.8));
           if(field=='address')row['wrap']=true;
         }
-        setRect(row,r);setRect(row,r,prefix:'sample_');
+        setRect(row,r);if(!hasMask||syncMask)setRect(row,r,prefix:'sample_');
       }else if(validSelection){
         final row=slots[selected];
         if(tool=='mask'){setRect(row,r,prefix:'sample_');row['sampleOval']=shape=='circle'||shape=='oval';}
@@ -156,15 +166,21 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
     }
     return count;
   }
-  Future<void> saveMapping()async{
+  Future<void> saveMapping({bool publish=false})async{
     if(widget.save==null||saving||loaded==null)return;
-    final issue=slots.map(GlobalIdCardReview.readabilityIssue).whereType<String>().firstOrNull;
-    if(issue!=null){setState(()=>error=issue);return;}
+    if(publish){
+      if(!slots.any((r)=>r['key']=='name'&&r['side']=='front')||!slots.any((r)=>r['key']=='qr')){setState(()=>error='Map the front name and authentication QR before publishing.');return;}
+      final issues=slots.map(GlobalIdCardReview.readabilityIssue).whereType<String>().toList();
+      if(issues.isNotEmpty||overlaps()>0||slots.any((r)=>r['key']==''||r['roleConfidence']=='low')){setState(()=>error=issues.isNotEmpty?issues.first:'Resolve overlapping or uncertain fields before publication.');return;}
+    }
     setState((){saving=true;error=null;});
     try{
       final result=await widget.save!({'sourceSha256':loaded!.sourceSha256,'mappingRevision':revision,'slots':copy(slots)});
       if(!mounted)return;
       setState((){revision=(result['mappingRevision'] as num).toInt();dirty=false;});
+      // Return the requested action only after durable mapping ACK. The parent
+      // opens the existing clean-artwork and final print verification pipeline.
+      if(widget.publish!=null){setState(()=>saving=false);Navigator.pop(context,publish?'publish':'draft');return;}
       ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(content:Text('Mapping saved. Publish still requires final review.')));
     }catch(e){if(mounted)setState(()=>error=e.toString());}
     finally{if(mounted)setState(()=>saving=false);}
@@ -306,7 +322,10 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
       ]));
     })),
     actions:[TextButton(onPressed:saving?null:close,child:const Text('Close')),
-      if(manual&&widget.save!=null&&loaded?.verified==false)FilledButton(onPressed:saving||!dirty?null:saveMapping,child:const Text('Save Mapping'))]));
+      if(widget.save!=null&&loaded?.verified==false)...[
+        OutlinedButton(onPressed:saving?null:()=>saveMapping(),child:Text(widget.publish!=null?'Save Draft':'Save Mapping')),
+        if(widget.publish!=null)FilledButton(onPressed:saving?null:()=>saveMapping(publish:true),child:const Text('Publish')),
+      ]]));
 }
 class _Mapping{
   _Mapping(this.verified,this.pages,this.automatic,this.images,this.category,this.saved,this.sourceSha256,this.revision);

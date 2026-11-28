@@ -324,6 +324,11 @@ function createManagedSchools({globalIdCardBucket=null,liveSyncSchools=[],atomic
   const patch=op.data?._syncFieldPatch;
   const values=patch?patch.set:op.data;
   if(!values||typeof values!=='object'||Array.isArray(values))return;
+  for(const kind of ['studentId','teacherId','otherStaffId']){
+   const selected=values[kind];
+   if(typeof selected==='string'&&selected.startsWith('manifest:gid-'))
+    await globalIdCards.protectSchoolSelection(kind,selected.slice('manifest:'.length));
+  }
   const assets=['templateAssets','templateAssetLatest'];
   const kinds=['receipt','reportCard','payslip'];
   const changes=assets.filter(k=>Object.hasOwn(values,k));

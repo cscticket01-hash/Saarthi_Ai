@@ -17,6 +17,8 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
   List<Map<String,dynamic>> rows=[];
   bool busy=false, storageReady=false, analysisReady=false, imageAnalysisReady=false, rasterReady=false;
   String kind='studentId';
+  String? uploadingName,uploadingKind;
+  final deleting=<String>{}, reviewing=<String>{};
   final _previews=<String,Future<Map<String,dynamic>>>{};
   Future<void> _previewTail=Future<void>.value();
   int _galleryPage=0;
@@ -32,7 +34,8 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
       final result=await ManagedDeveloperService.call('id-library/list',{});
       if(!mounted)return;
       setState((){rows=(result['templates'] as List).map((v)=>Map<String,dynamic>.from(v as Map)).toList();
-        _previews.clear();
+        final keys=rows.map((r)=>[r['id'],r['updatedAt'],r['state']].join(':')).toSet();
+        _previews.removeWhere((k,v)=>!keys.contains(k));
         storageReady=result['storageReady']==true;storageReason=result['storageReason']?.toString()??'unverified';analysisReady=result['analysisConfigured']==true;
         imageAnalysisReady=result['imageAnalysisConfigured']==true;rasterReady=result['reviewRasterizerConfigured']==true;message=null;});
     }catch(e){if(mounted)setState((){storageReady=false;message='Library unavailable: $e';});}
@@ -56,7 +59,7 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
     finally{if(mounted)setState(()=>busy=false);}
   }
   Future<void> upload([Map<String,dynamic>? previous]) async {
-    if(busy||!storageReady)return;
+    if(busy||uploadingName!=null||!storageReady)return;
     final category=previous?['kind']?.toString()??kind;
     final picked=await openFile(acceptedTypeGroups:[const XTypeGroup(label:'PDF',extensions:['pdf'],mimeTypes:['application/pdf'])]);
     if(picked==null||!mounted)return;
@@ -77,7 +80,8 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
     )));
     final title=name.text.trim();name.dispose();
     if(confirmed!=true||!mounted)return;
-    setState(()=>busy=true);
+    if(uploadingName!=null)return;
+    setState((){uploadingName=title;uploadingKind=category;message=null;});
     try {
       final bytes=await picked.readAsBytes();
       if(bytes.length>8*1024*1024)throw StateError('PDF exceeds size limit');
@@ -108,20 +112,19 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
       }
       final uploaded=await ManagedDeveloperService.call('id-library/upload',{...payload,'kind':destination,'categoryConfirmed':true});
       if(!mounted)return;
-      setState(()=>kind=destination);
       final draft=Map<String,dynamic>.from(uploaded['template'] as Map);
-      // Continue directly into the existing review flow after successful upload.
-      setState(()=>busy=false);
-      await refresh();
-      if(mounted&&draft['mappingState']=='review_required')await review(draft);
-
+      setState((){rows=[draft,...rows.where((r)=>r['id']!=draft['id'])];if(kind==destination)_galleryPage=0;});
+      // Upload is already durably saved. Clear only upload progress before
+      // opening the interactive mapping popup; cancellation keeps the draft.
+      setState((){uploadingName=null;uploadingKind=null;});
+      if(mounted&&draft['mappingState']=='review_required')await trackMapping(draft);
     }catch(e){if(mounted)setState(()=>message='Upload failed: $e');return;}
-    finally{if(mounted)setState(()=>busy=false);}
-    await refresh();
+    finally{if(mounted)setState((){uploadingName=null;uploadingKind=null;});}
   }
   Future<void> review(Map<String,dynamic> row) async {
-    if(busy||!storageReady||row['state']!='draft')return;
-    setState(()=>busy=true);
+    final id=row['id'].toString();
+    if(busy||reviewing.contains(id)||deleting.contains(id)||!storageReady||row['state']!='draft')return;
+    setState(()=>reviewing.add(id));
     try{
       final result=await ManagedDeveloperService.call('id-library/analyze',{'id':row['id']});
       if(!mounted)return;
@@ -204,7 +207,7 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
       await ManagedDeveloperService.call('id-library/publish',{'id':row['id'],'sourceSha256':result['sourceSha256'],
         'reviewConfirmed':true,'mappingRevision':result['mappingRevision']??0,'package':reviewedPackage});
     }catch(e){if(mounted)setState(()=>message='Mapping / publication failed: $e');return;}
-    finally{if(mounted)setState(()=>busy=false);}
+    finally{if(mounted)setState(()=>reviewing.remove(id));}
     await refresh();
   }
   Future<void> reviseMapping(Map<String,dynamic> row)async{
@@ -255,18 +258,25 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
     await refresh();
   }
   Future<void> deleteDraft(Map<String,dynamic> row) async {
-    if(busy)return;
-    final ok=await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(
-      title:const Text('Delete unpublished draft?'),
-      content:Text('${row['name']} will disappear from the library. Its private source and deletion history are retained for safe recovery. Published templates and school ID cards are not affected.'),
+    final id=row['id'].toString();
+    if(busy||reviewing.contains(id)||deleting.contains(id))return;
+    final published=row['state']=='published'||row['mappingState']=='verified';
+    bool unused=false;
+    final ok=await showDialog<bool>(context:context,builder:(ctx)=>StatefulBuilder(builder:(ctx,update)=>AlertDialog(
+      title:Text(published?'Delete published template?':'Delete draft?'),
+      content:Column(mainAxisSize:MainAxisSize.min,children:[Text(published?'Delete only unused templates. A server-observed school selection blocks deletion. Older and offline selections may not yet be registered. School records and downloaded cards are retained.':'This draft will disappear from the library. Private source and deletion history are retained.'),
+        if(published)CheckboxListTile(value:unused,onChanged:(v)=>update(()=>unused=v==true),title:const Text('I verified no school has selected this template, including older/offline devices.'))]),
       actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),
-        FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Delete draft'))]));
-    if(ok!=true||!mounted)return;
-    setState(()=>busy=true);
-    try{await ManagedDeveloperService.call('id-library/delete',{'id':row['id'],'confirmed':true});}
-    catch(e){if(mounted)setState(()=>message='Delete failed: $e');return;}
-    finally{if(mounted)setState(()=>busy=false);}
-    await refresh();
+        FilledButton(onPressed:published&&!unused?null:()=>Navigator.pop(ctx,true),child:const Text('Delete template'))])));
+    if(ok!=true||!mounted||deleting.contains(id))return;
+    setState(()=>deleting.add(id));
+    try{
+      await ManagedDeveloperService.call('id-library/delete',{'id':id,'confirmed':true,'revokePublished':published,'confirmUnused':unused});
+      if(mounted)setState((){rows=rows.where((r)=>r['id']!=id).toList();_previews.removeWhere((k,v)=>k.startsWith('$id:'));});
+    }catch(e){if(mounted)setState(()=>message='Delete failed: $e');return;}
+    finally{if(mounted)setState(()=>deleting.remove(id));}
+    // Refresh current-family flags without invalidating other thumbnails.
+    if(mounted)await refresh();
   }
 
   Future<Map<String,dynamic>> _preview(Map<String,dynamic> row){
@@ -310,18 +320,22 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
       actions:[TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Close'))]));
   }
   Future<void> trackMapping(Map<String,dynamic> row)async{
-    if(busy)return;
+    if(busy||reviewing.contains(row['id'].toString())||deleting.contains(row['id'].toString()))return;
     // Serialize with thumbnail work to avoid simultaneous PDF processes.
     final request=_previewTail.then((_)=>ManagedDeveloperService.call('id-library/preview',{'id':row['id'],'trackMapping':true}));
     _previewTail=request.then<void>((_) {},onError:(Object _,StackTrace __){});
-    await showDialog<void>(context:context,barrierDismissible:false,builder:(_)=>DeveloperGlobalIdMappingTracker(
-      name:row['name'].toString(),kind:row['kind'].toString(),data:request,save:row['state']=='draft'?(payload)=>ManagedDeveloperService.call('id-library/save-mapping',{'id':row['id'],...payload}):null));
-    if(mounted)await refresh();
+    final action=await showDialog<String>(context:context,barrierDismissible:false,builder:(_)=>DeveloperGlobalIdMappingTracker(
+      name:row['name'].toString(),kind:row['kind'].toString(),data:request,save:row['state']=='draft'?(payload)=>ManagedDeveloperService.call('id-library/save-mapping',{'id':row['id'],...payload}):null,
+      publish:row['state']=='draft'?()=>review(row):null));
+    if(!mounted)return;
+    if(action=='publish')await review(row);
+    else if(action=='draft')await refresh();
   }
   Widget _gallery(BuildContext context){
     final visible=rows.where((r)=>r['kind']==kind).toList();
-    if(visible.isEmpty)return const Padding(padding:EdgeInsets.symmetric(vertical:24),child:Center(child:Text('No templates in this category. Upload PDF to add a design.')));
-    final pageCount=(visible.length+_pageSize-1)~/_pageSize;
+    final pending=uploadingName!=null&&uploadingKind==kind;
+    if(visible.isEmpty&&!pending)return const Padding(padding:EdgeInsets.symmetric(vertical:24),child:Center(child:Text('No templates in this category. Upload PDF to add a design.')));
+    final pageCount=visible.isEmpty?1:(visible.length+_pageSize-1)~/_pageSize;
     final page=_galleryPage.clamp(0,pageCount-1).toInt();
     return Column(children:[
       LayoutBuilder(builder:(ctx,constraints){
@@ -329,6 +343,7 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
         final columns=width>=1100?5:width>=840?4:width>=610?3:width>=380?2:1;
         final itemWidth=(width-(columns-1)*16)/columns;
         return Wrap(spacing:16,runSpacing:16,children:[
+          if(pending)SizedBox(width:itemWidth,child:Card(child:Padding(padding:const EdgeInsets.all(16),child:Column(children:[const SizedBox(height:96,child:Center(child:CircularProgressIndicator())),Text(uploadingName!,maxLines:2,overflow:TextOverflow.ellipsis),const Text('Uploading / analyzing PDF'),const LinearProgressIndicator()])))),
           for(final row in visible.skip(page*_pageSize).take(_pageSize))
             SizedBox(width:itemWidth,child:_templateCard(row)),
         ]);
@@ -343,7 +358,8 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
   Widget _templateCard(Map<String,dynamic> row){
     final colors=Theme.of(context).colorScheme;
     final published=row['state']=='published',draft=row['state']=='draft';
-    final deletable=['draft','archived'].contains(row['state'])&&row['mappingState']!='verified';
+    final deletable=['draft','archived','published'].contains(row['state'])&&row['schoolSelectionObserved']!=true;
+    final removing=deleting.contains(row['id'].toString()),processing=reviewing.contains(row['id'].toString());
     return Card(margin:EdgeInsets.zero,clipBehavior:Clip.antiAlias,shape:RoundedRectangleBorder(
       borderRadius:BorderRadius.circular(14),side:BorderSide(color:colors.outlineVariant)),
       child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
@@ -359,12 +375,13 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
             decoration:BoxDecoration(color:colors.surface,borderRadius:BorderRadius.circular(8)),
             child:Text(published?'Published':draft?'Draft':'Archived',style:Theme.of(context).textTheme.labelSmall))),
           Positioned(top:1,right:2,child:Material(color:colors.surface,shape:const CircleBorder(),
-            child:PopupMenuButton<String>(enabled:!busy,tooltip:'Template actions',
-              onSelected:(v){if(v=='review'){review(row);}else if(v=='revision'){upload(row);}else if(v=='edit-mapping'){reviseMapping(row);}else if(v=='current'){makeCurrent(row);}else if(v=='track'){trackMapping(row);}else if(v=='delete'){deleteDraft(row);}else{change(row);}},
+            child:PopupMenuButton<String>(enabled:!busy&&!removing&&!processing,tooltip:'Template actions',
+              onSelected:(v){if(v=='review'){trackMapping(row);}else if(v=='revision'){upload(row);}else if(v=='edit-mapping'){reviseMapping(row);}else if(v=='current'){makeCurrent(row);}else if(v=='track'){trackMapping(row);}else if(v=='delete'){deleteDraft(row);}else{change(row);}},
               itemBuilder:(_)=>[
                 if(draft)const PopupMenuItem(value:'review',child:ListTile(dense:true,contentPadding:EdgeInsets.zero,leading:Icon(Icons.publish),title:Text('Publish'))),
                 const PopupMenuItem(value:'track',child:ListTile(dense:true,contentPadding:EdgeInsets.zero,leading:Icon(Icons.track_changes),title:Text('Track Mapping Data'))),
                 if(deletable)const PopupMenuItem(value:'delete',child:ListTile(dense:true,contentPadding:EdgeInsets.zero,leading:Icon(Icons.delete_outline),title:Text('Delete'))),
+                if(row['schoolSelectionObserved']==true)const PopupMenuItem(enabled:false,child:ListTile(dense:true,contentPadding:EdgeInsets.zero,leading:Icon(Icons.lock_outline),title:Text('Protected • school selection'))),
                 if(published)const PopupMenuItem(value:'edit-mapping',child:Text('Edit Mapping in new revision')),
                 if(published)const PopupMenuItem(value:'revision',child:Text('Upload new revision')),
                 if(['published','archived'].contains(row['state'])&&row['mappingState']=='verified'&&row['isCurrent']!=true)const PopupMenuItem(value:'current',child:Text('Restore / make current')),
@@ -377,7 +394,8 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
           style:Theme.of(context).textTheme.labelSmall)),
         const SizedBox(height:8),
         const Divider(height:1),
-        TextButton.icon(onPressed:busy?null:()=>showPreview(row),icon:const Icon(Icons.visibility_outlined,size:18),label:const Text('Preview')),
+        if(removing||processing)const LinearProgressIndicator(),
+        TextButton.icon(onPressed:busy||removing||processing?null:()=>showPreview(row),icon:const Icon(Icons.visibility_outlined,size:18),label:const Text('Preview')),
       ]));
   }
   @override Widget build(BuildContext context)=>Card(child:Padding(padding:const EdgeInsets.all(20),child:Column(
@@ -387,7 +405,7 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
         const Chip(label:Text('FREE • Payments disabled')),
         IconButton(onPressed:busy?null:refresh,tooltip:'Refresh library',icon:const Icon(Icons.refresh)),
         TextButton.icon(onPressed:busy?null:checkRuntime,icon:const Icon(Icons.fact_check_outlined),label:const Text('Check runtime')),
-        FilledButton.icon(onPressed:busy||!storageReady?null:upload,icon:const Icon(Icons.upload_file),label:const Text('Upload PDF')),
+        FilledButton.icon(onPressed:busy||uploadingName!=null||!storageReady?null:upload,icon:const Icon(Icons.upload_file),label:const Text('Upload PDF')),
       ]),
       const SizedBox(height:12),
       Wrap(spacing:8,children:[for(final e in categories.entries)ChoiceChip(label:Text(e.value),

@@ -127,7 +127,7 @@ test('category preflight and wrong-category upload create no durable data; corre
  assert.equal(docs.get('global_id_card_library/'+template.id).sourceSha256,before);
  assert.equal(objects.size,1);
 });
-test('unknown category needs explicit confirmation; delete hides only never-published drafts',async()=>{
+test('unknown category needs explicit confirmation; delete hides drafts and requires explicit published revocation',async()=>{
  const {db,bucket,docs,objects,actor,member,clock}=fixture(true);
  const library=createGlobalIdCardLibrary({db,bucket,policyReviewed:true,now:()=>clock,analyzer:'test',analyzeSource:async()=>({category:{kind:null,evidence:'unknown'},pages:[]})});
  const payload={name:'Synthetic',kind:'teacherId',syntheticSampleConfirmed:true,pdfBase64:syntheticProbePdf().toString('base64')};
@@ -143,7 +143,9 @@ test('unknown category needs explicit confirmation; delete hides only never-publ
  const {template:published}=await library.developerAction('upload',{...payload,categoryConfirmed:true},actor);
  docs.get('global_id_card_library/'+published.id).state='published';
  docs.get('global_id_card_library/'+published.id).packageVerified=true;
- await assert.rejects(library.developerAction('delete',{id:published.id,confirmed:true},actor),{status:409});
+ await assert.rejects(library.developerAction('delete',{id:published.id,confirmed:true},actor),{status:400});
+ await library.developerAction('delete',{id:published.id,confirmed:true,revokePublished:true,confirmUnused:true},actor);
+ assert.equal(docs.get('global_id_card_library/'+published.id).state,'deleted');
 });
 
 test('developer gallery preview is read-only and unavailable to schools',async()=>{
@@ -204,4 +206,45 @@ test('edit mapping creates a separate immutable revision from the private source
  assert.equal(newRow.sourceSha256,before.sourceSha256);
  assert.deepEqual(objects.get(newRow.sourcePath),source);
  await assert.rejects(library.schoolAction('create-revision',{id:template.id},member),{status:400});
+});
+
+test('published deletion revokes online school access and restores a verified prior family version',async()=>{
+ const {library,docs,objects,actor,member}=fixture(true);
+ const pdfBase64=syntheticProbePdf().toString('base64');
+ async function add(previousId){
+  const {template}=await library.developerAction('upload',{name:'Delete fixture',kind:'studentId',syntheticSampleConfirmed:true,pdfBase64,...(previousId?{previousId}:{})},actor);
+  const row=docs.get('global_id_card_library/'+template.id);
+  row.mappingState='review_required';row.analysis={pages:[{side:'front',printWidthMm:54,printHeightMm:54}]};
+  await library.developerAction('publish',{id:template.id,sourceSha256:row.sourceSha256,package:pkg(template.id),reviewConfirmed:true},actor);
+  return template;
+ }
+ const first=await add(),second=await add(first.id),third=await add(second.id);
+ await assert.rejects(library.developerAction('delete',{id:third.id,confirmed:true},actor),{status:400});
+ await library.developerAction('delete',{id:second.id,confirmed:true,revokePublished:true,confirmUnused:true},actor);
+ const before=objects.size;
+ await library.developerAction('delete',{id:third.id,confirmed:true,revokePublished:true,confirmUnused:true},actor);
+ await library.developerAction('delete',{id:third.id,confirmed:true,revokePublished:true,confirmUnused:true},actor);
+ assert.equal(objects.size,before);
+ assert.equal((await library.developerAction('list',{},actor)).templates.some(t=>t.id===third.id),false);
+ const visible=(await library.schoolAction('list',{},member)).templates;
+ assert.equal(visible.find(t=>t.id===first.id).isCurrent,true);
+ assert.equal(visible.some(t=>t.id===third.id||t.id===second.id),false);
+ await assert.rejects(library.schoolAction('package',{id:third.id,version:3},member),{status:403});
+ await assert.rejects(library.schoolAction('access',{id:third.id,version:3},member),{status:403});
+ await assert.rejects(library.schoolAction('delete',{id:first.id},member),{status:400});
+ const draft=(await library.developerAction('create-revision',{id:first.id},actor)).template;
+ await library.developerAction('delete',{id:draft.id,confirmed:true},actor);
+ assert.equal((await library.schoolAction('list',{},member)).templates.find(t=>t.id===first.id).isCurrent,true);
+});
+
+test('school selection protection prevents developer deletion and is race-safe with deletion',async()=>{
+ const {library,docs,actor,member}=fixture(true);
+ const {template}=await library.developerAction('upload',{name:'Protected selection',kind:'studentId',syntheticSampleConfirmed:true,pdfBase64:syntheticProbePdf().toString('base64')},actor);
+ const row=docs.get('global_id_card_library/'+template.id);
+ row.mappingState='review_required';row.analysis={pages:[{side:'front',printWidthMm:54,printHeightMm:54}]};
+ await library.developerAction('publish',{id:template.id,sourceSha256:row.sourceSha256,package:pkg(template.id),reviewConfirmed:true},actor);
+ await assert.rejects(library.developerAction('delete',{id:template.id,confirmed:true,revokePublished:true},actor),{status:400});
+ await library.protectSchoolSelection('studentId',template.id);
+ await assert.rejects(library.developerAction('delete',{id:template.id,confirmed:true,revokePublished:true,confirmUnused:true},actor),{status:409});
+ assert.equal((await library.schoolAction('list',{},member)).templates.some(t=>t.id===template.id),true);
 });

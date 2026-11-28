@@ -19,6 +19,7 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
   final slots=<Map<String,dynamic>>[];
   String side='front';
   String? error;
+  bool failedField(Map<String,dynamic> r)=>error?.contains('${r['key']}:')==true||error?.contains('${r['key']} (${r['side']})')==true;
   bool busy=false,allowSmoothGradient=true,allowApproximateRepair=false,showAdvanced=false;
   final cleanArtwork=<String,Uint8List>{};
   final cleanCompanion=<String,Uint8List>{};
@@ -78,7 +79,7 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
     finally{if(mounted)setState(()=>busy=false);}
   }
   Widget number(Map<String,dynamic> row,String key)=>SizedBox(width:85,child:TextFormField(
-    key:ValueKey('${identityHashCode(row)}:$key'),initialValue:row[key]?.toString()??'',
+    key:ValueKey('${identityHashCode(row)}:$key'),initialValue:(row[key] as num?)?.toStringAsFixed(2)??'',
     keyboardType:const TextInputType.numberWithOptions(decimal:true),
     decoration:InputDecoration(labelText:key,isDense:true),
     onChanged:(v)=>setState(()=>row[key]=double.tryParse(v))));
@@ -100,7 +101,7 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
           for(final r in visible.where((r)=>r['key']!='__static'&&n(r,'width')>0&&n(r,'height')>0))
             Positioned(left:n(r,'x')/w*c.maxWidth,top:n(r,'y')/h*c.maxHeight,
               width:n(r,'width')/w*c.maxWidth,height:n(r,'height')/h*c.maxHeight,
-              child:IgnorePointer(child:Container(decoration:BoxDecoration(border:Border.all(color:r['key']==''?Colors.orange:r['fitAdjusted']==true?Colors.blue:Colors.red,width:2)),child:Align(alignment:Alignment.topLeft,child:Text(r['key']==''?'?':r['key'].toString(),style:const TextStyle(fontSize:10,color:Colors.red,backgroundColor:Colors.white)))))),
+              child:IgnorePointer(child:Container(decoration:BoxDecoration(border:Border.all(color:failedField(r)?Colors.deepOrange:r['key']==''?Colors.orange:r['fitAdjusted']==true?Colors.blue:Colors.red,width:failedField(r)?4:2)),child:Align(alignment:Alignment.topLeft,child:Text(r['key']==''?'?':r['key']=='confirmedUniversalStudentUid'?'UID':r['key'].toString(),maxLines:1,softWrap:false,overflow:TextOverflow.clip,style:const TextStyle(fontSize:10,color:Colors.red,backgroundColor:Colors.white)))))),
         ]))),
         if(slots.any((r)=>r['fitAdjusted']==true))const Text('Output boxes enlarged for readable text. Original removal masks unchanged. Verify the adjusted positions before generating preview.'),
         for(final r in slots.where((r)=>GlobalIdCardReview.readabilityIssue(r)!=null))
@@ -161,7 +162,8 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
             if(row['key']=='photo')FilterChip(label:const Text('Oval'),selected:row['oval']==true,onSelected:busy?null:(v)=>setState(()=>row['oval']=v)),
           ]),
         ]))),
-        if(error!=null)Text(error!,style:TextStyle(color:Theme.of(context).colorScheme.error)),
+        if(error!=null)...[Text(error!,style:TextStyle(color:Theme.of(context).colorScheme.error)),
+          const Text('Correct the highlighted output or sample mask. If original artwork is hidden, use the matching clean PDF or PNG. No need to upload the filled PDF again.')],
         if(busy)const LinearProgressIndicator(),
       ]))),
       actions:[TextButton(onPressed:busy?null:()=>Navigator.pop(context),child:const Text('Cancel')),
