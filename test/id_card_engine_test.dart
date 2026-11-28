@@ -1,6 +1,8 @@
 import '../lib/school_qr_link.dart';
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/material.dart';
+import '../lib/developer_global_id_mapping_tracker.dart';
 
 import 'package:flutter_test/flutter_test.dart';
 
@@ -188,6 +190,35 @@ void main() {
       expect(IdCardIdentity.isGlobalId(id),IdCardCatalog.isGlobalId(id));
     }
     expect(IdCardIdentity.greenBlueSha256,IdCardCatalogEntry.greenBlueSha256);
+  });
+
+  testWidgets('manual mapping draws a missing logo and saves its shape and geometry',(tester)async{
+    await tester.binding.setSurfaceSize(const Size(1200,900));
+    addTearDown(()=>tester.binding.setSurfaceSize(null));
+    final image=img.Image(width:240,height:150,numChannels:4);
+    img.fill(image,color:img.ColorRgba8(255,255,255,255));
+    final raw=<String,dynamic>{'mode':'private_reference','sourceSha256':'synthetic-hash','mappingRevision':0,
+      'rasters':{'front':base64Encode(img.encodePng(image))},
+      'analysis':{'pages':[{'side':'front','canvasWidth':240,'canvasHeight':150,
+        'printWidthMm':84.67,'printHeightMm':52.92,'candidates':[]}]}};
+    Map<String,dynamic>? saved;
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:DeveloperGlobalIdMappingTracker(
+      name:'Synthetic',kind:'studentId',data:Future.value(raw),save:(payload)async{saved=payload;return {'mappingRevision':1};}))));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Manual Mapping'));await tester.pumpAndSettle();
+    await tester.tap(find.text('Circle'));await tester.pumpAndSettle();
+    final imageFinder=find.byType(Image).first;
+    await tester.ensureVisible(imageFinder);await tester.pumpAndSettle();
+    final bounds=tester.getRect(imageFinder);
+    final start=bounds.topLeft+Offset(bounds.width*.10,bounds.height*.10);
+    final delta=Offset(bounds.width*.18,bounds.height*.30);
+    await tester.dragFrom(start,delta);await tester.pumpAndSettle();
+    await tester.tap(find.text('Save Mapping'));await tester.pumpAndSettle();
+    expect(saved,isNotNull);
+    final row=(saved!['slots'] as List).single as Map;
+    expect(row['key'],'logo');expect(row['oval'],true);
+    expect(row['manual'],true);expect(row['width'],closeTo(row['height'] as num,0.01));
+    expect(saved!['mappingRevision'],0);
   });
 
 }

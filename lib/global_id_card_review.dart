@@ -253,8 +253,9 @@ class GlobalIdCardReview {
           return result;
         }
         var l=0,r=0,t=0,b=0;double best=0;
-        for(final ll in strongest(left,y0,y1,true))for(final rr in strongest(right,y0,y1,true))
-          for(final tt in strongest(top,x0,x1,false))for(final bb in strongest(bottom,x0,x1,false)){
+        final ls=strongest(left,y0,y1,true),rs=strongest(right,y0,y1,true),ts=strongest(top,x0,x1,false),bs=strongest(bottom,x0,x1,false);
+        for(final ll in ls)for(final rr in rs)
+          for(final tt in ts)for(final bb in bs){
             final ww=rr-ll,hh=bb-tt;
             if(ww<12||hh<12||ww/hh<.65||ww/hh>1.7)continue;
             final edges=[score(ll,tt,bb,true),score(rr,tt,bb,true),score(tt,ll,rr,false),score(bb,ll,rr,false)];

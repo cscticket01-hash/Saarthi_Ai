@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'global_id_card_review.dart';
 
 /// Drafts may be corrected visually. Approved immutable versions remain read-only.
@@ -13,7 +14,7 @@ class DeveloperGlobalIdMappingTracker extends StatefulWidget {
   @override State<DeveloperGlobalIdMappingTracker> createState()=>_TrackerState();
 }
 class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
-  String side='front',field='logo',shape='rectangle',tool='draw';
+  String side='front',field='logo',shape='rectangle',tool='draw',assignRole='logo';
   bool manual=false,saving=false,dirty=false,syncMask=true;
   String? error;
   late final Future<_Mapping> mapping;
@@ -61,7 +62,7 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
     if(from.isEmpty)return;
     setState((){to.add(copy(slots));slots=from.removeLast();selected=-1;dirty=true;});
   }
-  void change(void Function() action){setState((){checkpoint();action();error=null;});}
+  void change(void Function() action){setState((){checkpoint();error=null;action();});}
   void selectField(String key){
     setState((){
       field=key;selected=slots.indexWhere((r)=>r['side']==side&&r['key']==key);
@@ -104,8 +105,9 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
           (old.top+d.dy).clamp(0,math.max(0,h-old.height)).toDouble(),old.width,old.height);
       }else if(tool=='resize'&&original!=null){
         final old=original!;
-        dragRect=Rect.fromLTWH(old.left,old.top,(old.width+p.dx-origin.dx).clamp(.1,w-old.left).toDouble(),
-          (old.height+p.dy-origin.dy).clamp(.1,h-old.top).toDouble());
+        var rw=(old.width+p.dx-origin.dx).clamp(.1,w-old.left).toDouble(),rh=(old.height+p.dy-origin.dy).clamp(.1,h-old.top).toDouble();
+        if(shape=='square'||shape=='circle'||field=='qr'){final size=math.min(rw,rh);rw=size;rh=size;}
+        dragRect=Rect.fromLTWH(old.left,old.top,rw,rh);
       }else{
         var end=p;
         if(tool=='draw'&&(shape=='square'||shape=='circle'||field=='qr')){
@@ -206,6 +208,14 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
         if(row!=null)...[
           TextButton.icon(onPressed:saving?null:()=>change((){row['roleConfidence']='medium';row['manual']=true;}),icon:const Icon(Icons.check),label:const Text('Confirm selection')),
           TextButton.icon(onPressed:saving?null:()=>change((){slots.removeAt(selected);selected=-1;}),icon:const Icon(Icons.delete_outline),label:const Text('Remove selection')),
+          if(row['key']=='')...[
+            DropdownButton<String>(value:assignRole,items:[for(final role in roles.where((v)=>v.isNotEmpty&&v!='__static'))DropdownMenuItem(value:role,child:Text(label(role)))],
+              onChanged:saving?null:(v)=>setState(()=>assignRole=v!)),
+            TextButton(onPressed:saving?null:()=>change((){
+              if(slots.any((s)=>!identical(s,row)&&s['side']==side&&s['key']==assignRole)){error='That field already exists. Remove or redraw it.';return;}
+              row['key']=assignRole;row['kind']=GlobalIdCardReview.kind(assignRole);row['roleConfidence']='medium';row['manual']=true;field=assignRole;
+            }),child:const Text('Assign role')),
+          ],
           if(row['key']=='')TextButton(onPressed:saving?null:()=>change((){row['key']='__static';row['roleConfidence']='medium';row['manual']=true;}),child:const Text('Keep as decoration')),
         ],
       ]),
@@ -258,7 +268,7 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
         if(manual&&editable)controls(),
         const SizedBox(height:8),
         if(image!=null&&w>0&&h>0)AspectRatio(aspectRatio:w/h,child:LayoutBuilder(builder:(ctx,c)=>GestureDetector(
-          behavior:HitTestBehavior.opaque,
+          behavior:HitTestBehavior.opaque,dragStartBehavior:DragStartBehavior.down,
           onTapUp:manual&&!saving?(e)=>hit(design(e.localPosition,c,w,h)):null,
           onPanStart:manual&&!saving?(e)=>begin(design(e.localPosition,c,w,h)):null,
           onPanUpdate:manual&&!saving?(e)=>update(design(e.localPosition,c,w,h),w,h):null,
