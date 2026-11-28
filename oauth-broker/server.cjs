@@ -64,6 +64,28 @@ if (require.main === module) {
       }
       const configured = ['SAARTHI_GLOBAL_ID_PDFTOTEXT','SAARTHI_GLOBAL_ID_PDFTOHTML','SAARTHI_GLOBAL_ID_PDFTOPPM']
         .map(name => Boolean(process.env[name]));
+      // Probe only the fixed, generated fixture; do not enable uploaded PDF analysis.
+      const {access} = require('node:fs/promises');
+      const {constants} = require('node:fs');
+      const executables = [];
+      for (const binary of ['pdftotext','pdftohtml','pdftoppm']) {
+        let resolved = null;
+        for (const dir of ['/usr/bin','/bin','/usr/local/bin']) {
+          const candidate = dir+'/'+binary;
+          try { await access(candidate,constants.X_OK); resolved=candidate; break; } catch (_) {}
+        }
+        executables.push(resolved);
+      }
+      let namespaceIsolation = false;
+      try {
+        await execute('/usr/bin/unshare',['--user','--map-root-user','--mount','--net','--fork','/bin/true'],{
+          timeout:3000,maxBuffer:65536,env:{PATH:'/usr/bin:/bin',LANG:'C'}
+        });
+        namespaceIsolation = true;
+      } catch (_) {}
+      const {probeRuntime} = require('../functions/global-id-card-analysis.js');
+      const checks = await probeRuntime(...executables);
+      console.info('ID_PDF_HOSTED_SYNTHETIC '+JSON.stringify({executables,checks,namespaceIsolation}));
       console.info('ID_PDF_RUNTIME_INVENTORY '+JSON.stringify({
         available, configured, nonRoot: typeof process.getuid === 'function' && process.getuid() !== 0
       }));
