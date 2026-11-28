@@ -226,6 +226,13 @@ function fromEnvironment(env) {
     if(staging)throw Object.assign(Error('Legacy school operations are disabled in ID library staging'),{status:404});
     return legacyHandle(req);
   };
+  // Explicit one-shot synthetic acceptance; never enabled on production.
+  if(staging&&globalIdCardBucket&&env.SAARTHI_ID_LIBRARY_E2E_PROBE==='20261128-a'&&
+     env.RENDER_SERVICE_ID==='srv-dc4skhlg1s2s73flu6q0'){
+    setTimeout(()=>require('./id-library-e2e-probe.cjs').run({
+      app,auth,db,bucket:globalIdCardBucket,env
+    }).catch(()=>console.info('ID_LIBRARY_E2E_START_FAILED')),1500).unref();
+  }
   return createHandler({handle,projectId,testSchoolId,runtimeCommit:env.RENDER_GIT_COMMIT,adminCredentialFingerprint,...(wrapping||{}),allowedOrigins:(env.SAARTHI_SCHOOL_WEB_ORIGINS || '').split(',').filter(Boolean),health:async()=>{
     await verifyTest();
     await db.doc('_central_staging_health/runtime').get();
