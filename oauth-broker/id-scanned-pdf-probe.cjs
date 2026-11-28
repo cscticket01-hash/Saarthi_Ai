@@ -1,7 +1,8 @@
 'use strict';
 // Generated one-bit fictional reference artwork, no identities or school data.
 // Each fixture is an image-only PDF; no text layer exists.
-const {analyzePdf}=require('../functions/global-id-card-analysis');
+const {analyzePdf,renderReviewSource}=require('../functions/global-id-card-analysis');
+const {recognize}=require('../functions/global-id-card-ocr');
 const {deflateSync}=require('node:zlib');
 const fixtures={
  hin:'eNrt2sFq2zAcx3GZDHQZ83WHgV6hD1CmFwuVoQMf9Qh5lDn44NdQ8aFXmV40EP7vLyfNPHBGLMwo4fehlyrhS2r/7QYsIgAAAAAAWMOJiYxihqpp7R57RANZioZsIOr4pyf+fSCV1j5CT27bi7vGWHfqNXLWc3m9sKu0rR6nnpBVcemltZye+aKs+JZ641+9tJbTI6Xs4fPU0zTrpbW8nrU/f5x7UXe9F2XqpbXcHjXvPdP17tRLa1nHz3LPTb0HHWY9lzcvxfOpV/P5LQPPi9eWfHZvLI6lpcpQ63heAtVTL+xVWstRDMrSJ0ONGFUbjexD6gmV1nI+n+ITEnnWnBh1H7/LPhq+/oSKefM36lFbz9dC+Bp1zyM9zR/tlH/M7EU9Xb8UoulJnOaZsq/fkWfEHi+950vvmNlTjuzrude+31+495p5/xPF6f5HfH3IWS/3flrJPz27Qc/pS08dNujNlBv/b6837rUb91427r3h6xwAAAAAAAAAAAAAwF067xcwCy818y0EoryPXnoCNepu+aWSumio47eEQKt6y2+3516/uufNf+lFGU0jt+t57omc3pXj52R84t7687H4yqiOFJ80vdS394KQV3te1VPPydt7nnt+eSvOW3rSP/XKdT233Ou9Sr0H7fSKv1d11z7fMKaeEaUzL35Vb/n4DVTatzQvnobh1l7kXljuBaqti0+qDcYXt/b43P6jV3NP99GE3ar5M4u9aLrW7fea52ks1/SmjU0LPd05EfemTw/CN+iNuvanXr26t/j2sh4L7rXpQfjK3uL9pSpp4PMh04PwLXqNosC9tF1nkx4vck8d6Nea3nnWroy72XaXQ8QuBwAAAAAAAAAAAAAAAAAAAAAAAAAAAACAj+03yaX5Rg==',
@@ -25,6 +26,12 @@ function imagePdf(encoded){
    const bytes=imagePdf(fixtures[lang]);
    const before=await analyzePdf(bytes,'/usr/bin/pdftotext','/usr/bin/pdftohtml');
    const after=await analyzePdf(bytes,'/usr/bin/pdftotext','/usr/bin/pdftohtml',{ocr:true,rasterizer:'/usr/bin/pdftoppm'});
+   // Only these embedded fictional fixtures may emit recognized words.
+   if(lang!=='ben'){
+    const rasters=await renderReviewSource(bytes,before.pages,'/usr/bin/pdftoppm',300);
+    const result=await recognize(Buffer.from(rasters.front,'base64'));
+    console.log('ID_SCANNED_PDF_CHECK '+JSON.stringify({syntheticDiagnostic:lang,words:result.words.map(w=>({text:w.text,bbox:w.bbox,confidence:w.confidence})).slice(0,30)}));
+   }
    checks[lang]={imageOnly:before.pages[0].candidates.length===0,recognized:after.pages[0].ocr?.state==='recognized',name:after.pages[0].candidates.some(r=>r.key==='name'),category:after.category.kind===kind};
   }catch(_){checks[lang]={error:true};}
  }
