@@ -159,7 +159,8 @@ async function run({app,auth,db,bucket,env}){
       if(devUid)cleanup.push(auth.deleteUser(devUid).catch(e=>{if(e.code!=='auth/user-not-found')throw e;}));
       if(schoolUid)cleanup.push(auth.deleteUser(schoolUid).catch(e=>{if(e.code!=='auth/user-not-found')throw e;}),db.doc('school_memberships/'+schoolUid).delete());
       if(schoolId)cleanup.push(db.doc('school_entitlements/'+schoolId).delete());
-      checks.cleanup=checks.archiveCleanupFailed!==true&&(await Promise.allSettled(cleanup)).every(r=>r.status==='fulfilled');
+      const cleaned=(await Promise.allSettled(cleanup)).every(r=>r.status==='fulfilled');
+      checks.cleanup=checks.archiveCleanupFailed!==true&&cleaned;
       const passed=checks.archive===true&&checks.cleanup===true;
       await mark.set({state:passed?'passed':'failed',checks,at:Date.now()},{merge:true}).catch(()=>{});
       console.info('ID_LIBRARY_E2E_RESULT '+JSON.stringify({passed,checks}));
