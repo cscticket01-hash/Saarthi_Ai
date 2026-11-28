@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'platform/managed_developer_service.dart';
 import 'developer_global_id_review_editor.dart';
 import 'developer_global_id_preview.dart';
+import 'developer_global_id_mapping_tracker.dart';
 
 /// Source library only. Mapping review must finish before a school can use a PDF.
 class DeveloperGlobalIdLibrary extends StatefulWidget {
@@ -288,6 +289,14 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
       })),
       actions:[TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Close'))]));
   }
+  Future<void> trackMapping(Map<String,dynamic> row)async{
+    if(busy)return;
+    // Serialize with thumbnail work to avoid simultaneous PDF processes.
+    final request=_previewTail.then((_)=>ManagedDeveloperService.call('id-library/preview',{'id':row['id'],'trackMapping':true}));
+    _previewTail=request.then<void>((_) {},onError:(Object _,StackTrace __){});
+    await showDialog<void>(context:context,builder:(_)=>DeveloperGlobalIdMappingTracker(
+      name:row['name'].toString(),kind:row['kind'].toString(),data:request));
+  }
   Widget _gallery(BuildContext context){
     final visible=rows.where((r)=>r['kind']==kind).toList();
     if(visible.isEmpty)return const Padding(padding:EdgeInsets.symmetric(vertical:24),child:Center(child:Text('No templates in this category. Upload PDF to add a design.')));
@@ -330,9 +339,10 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
             child:Text(published?'Published':draft?'Draft':'Archived',style:Theme.of(context).textTheme.labelSmall))),
           Positioned(top:1,right:2,child:Material(color:colors.surface,shape:const CircleBorder(),
             child:PopupMenuButton<String>(enabled:!busy,tooltip:'Template actions',
-              onSelected:(v){if(v=='review'){review(row);}else if(v=='revision'){upload(row);}else if(v=='current'){makeCurrent(row);}else if(v=='delete'){deleteDraft(row);}else{change(row);}},
+              onSelected:(v){if(v=='review'){review(row);}else if(v=='revision'){upload(row);}else if(v=='current'){makeCurrent(row);}else if(v=='track'){trackMapping(row);}else if(v=='delete'){deleteDraft(row);}else{change(row);}},
               itemBuilder:(_)=>[
                 if(draft)const PopupMenuItem(value:'review',child:ListTile(dense:true,contentPadding:EdgeInsets.zero,leading:Icon(Icons.publish),title:Text('Publish'))),
+                const PopupMenuItem(value:'track',child:ListTile(dense:true,contentPadding:EdgeInsets.zero,leading:Icon(Icons.track_changes),title:Text('Track Mapping Data'))),
                 if(deletable)const PopupMenuItem(value:'delete',child:ListTile(dense:true,contentPadding:EdgeInsets.zero,leading:Icon(Icons.delete_outline),title:Text('Delete'))),
                 if(published)const PopupMenuItem(value:'revision',child:Text('Upload new revision')),
                 if(['published','archived'].contains(row['state'])&&row['mappingState']=='verified'&&row['isCurrent']!=true)const PopupMenuItem(value:'current',child:Text('Restore / make current')),

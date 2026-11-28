@@ -149,7 +149,7 @@ test('unknown category needs explicit confirmation; delete hides only never-publ
 test('developer gallery preview is read-only and unavailable to schools',async()=>{
  const {db,bucket,docs,objects,actor,member,clock}=fixture(true);
  const library=createGlobalIdCardLibrary({db,bucket,policyReviewed:true,now:()=>clock,analyzer:null,rasterizer:'test',renderSource:async(bytes,pages,executable,dpi)=>{
-  assert.equal(dpi,150);return {front};
+  assert.ok([150,600].includes(dpi));return {front};
  }});
  const {template}=await library.developerAction('upload',{name:'Synthetic preview',kind:'studentId',syntheticSampleConfirmed:true,pdfBase64:syntheticProbePdf().toString('base64')},actor);
  const row=docs.get('global_id_card_library/'+template.id);
@@ -157,7 +157,9 @@ test('developer gallery preview is read-only and unavailable to schools',async()
  row.mappingState='review_required';
  const before=structuredClone(row);
  const preview=await library.developerAction('preview',{id:template.id},actor);
- assert.equal(preview.mode,'private_reference');assert.equal(preview.rasters.front,front);
+ assert.equal(preview.mode,'private_reference');assert.equal(preview.rasters.front,front);assert.equal(preview.analysis,undefined);
+ const tracked=await library.developerAction('preview',{id:template.id,trackMapping:true},actor);
+ assert.deepEqual(tracked.analysis,before.analysis);assert.equal(tracked.rasters.front,front);
  assert.deepEqual(docs.get('global_id_card_library/'+template.id),before);
  assert.equal(objects.size,1);
  await assert.rejects(library.schoolAction('preview',{id:template.id},member),{status:400});

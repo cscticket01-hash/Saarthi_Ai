@@ -94,4 +94,13 @@ void main(){
     ]),throwsFormatException);
   });
 
+  test('shared detection tracker keeps candidate geometry and does not mutate analysis',(){
+    final pages=[<String,dynamic>{'side':'front','candidates':[{'key':'name','side':'front','x':10,'y':20,'width':30,'height':8}]}];
+    final slots=GlobalIdCardReview.detectSlots(pages,{});
+    expect(slots.single['key'],'name');
+    expect(slots.single['sample_x'],10);
+    slots.single['x']=42;
+    expect((pages.single['candidates'] as List).single['x'],10);
+  });
+
 }

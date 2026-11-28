@@ -11,6 +11,27 @@ class GlobalIdCardReview {
   static const imageFields={'photo','logo','signature','seal'};
   static const textFields={'schoolName','schoolAddress','schoolLocation','schoolEmail','schoolContactNo','name','parentName','dob','class','section','rollNo','designation','subject','contact','address','pinCode','district','state','country','session','employeeId','bloodGroup','emergencyContact','academicSession','confirmedUniversalStudentUid'};
   static String kind(String key)=>imageFields.contains(key)?'image':key=='qr'?'qr':'text';
+  /// Shared detection path for the read-only tracker and review editor.
+  static List<Map<String,dynamic>> detectSlots(List<Map<String,dynamic>> pages,Map<String,Uint8List> images){
+    final slots=<Map<String,dynamic>>[];
+    Map<String,dynamic> withMask(Map<String,dynamic> row)=>{...row,for(final k in ['x','y','width','height'])'sample_$k':row['sample_$k']??row[k]};
+    for(final page in pages){
+      for(final item in (page['candidates'] as List? ?? const [])){
+        final r=Map<String,dynamic>.from(item as Map);
+        if(textFields.contains(r['key']))slots.add(withMask(r));
+      }
+      for(final item in (page['imageCandidates'] as List? ?? const [])){
+        final r=Map<String,dynamic>.from(item as Map);
+        final role=r['suggestedRole'];
+        final recognized=(imageFields.contains(role)||role=='qr')&&!slots.any((s)=>s['side']==r['side']&&s['key']==role);
+        slots.add(withMask({...r,'key':recognized?role:''}));
+      }
+    }
+    suggestQr(pages,slots,images);
+    refineImageRoles(pages,slots,images);
+    suggestPlaceholderSlots(pages,slots,images);
+    return slots;
+  }
   /// Automatically prepare a draft only when mandatory fields are present and
   /// every explicitly detected placeholder has a matching slot. Ambiguous
   /// candidates stay in the correction editor. Final publication still needs

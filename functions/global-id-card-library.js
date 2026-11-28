@@ -184,8 +184,8 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
       if(!rasterizer)invalid(503,'Preview rasterizer unavailable');
       const [source]=await (await storage()).file(row.sourcePath).download();
       if(source.length>MAX_PDF_BYTES||sha256(source)!==row.sourceSha256)invalid(503,'Source checksum failed');
-      const pages=row.analysis?.pages||(await analyzeSource(source,analyzer,imageAnalyzer,{ocr:false,rasterizer})).pages;
-      return {success:true,mode:'private_reference',rasters:await renderSource(source,pages,rasterizer,150)};
+      const analysis=row.analysis?.pages?row.analysis:await analyzeSource(source,analyzer,imageAnalyzer,{ocr:false,rasterizer});
+      return {success:true,mode:'private_reference',rasters:await renderSource(source,analysis.pages,rasterizer,b.trackMapping===true?600:150),...(b.trackMapping===true?{analysis}: {})};
     }
     if(action==='review-source'){
       const snap=await refs(b.id).get(),row=snap.data();

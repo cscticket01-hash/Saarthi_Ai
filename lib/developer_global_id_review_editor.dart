@@ -20,26 +20,11 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
   bool busy=false,allowSmoothGradient=true,allowApproximateRepair=true,showAdvanced=false;
   final cleanArtwork=<String,Uint8List>{};
   final cleanCompanion=<String,Uint8List>{};
-  Map<String,dynamic> withMask(Map<String,dynamic> row)=>{...row,for(final k in ['x','y','width','height'])'sample_$k':row['sample_$k']??row[k]};
   @override void initState(){
     super.initState();
     pages=(widget.analysis['pages'] as List).map((v)=>Map<String,dynamic>.from(v as Map)).toList();
     images={for(final e in widget.rasters.entries)e.key:base64Decode(e.value as String)};
-    for(final page in pages){
-      for(final item in (page['candidates'] as List? ?? const [])){
-        final r=Map<String,dynamic>.from(item as Map);
-        if(GlobalIdCardReview.textFields.contains(r['key']))slots.add(withMask(r));
-      }
-      for(final item in (page['imageCandidates'] as List? ?? const [])){
-        final r=Map<String,dynamic>.from(item as Map);
-        final role=r['suggestedRole'];
-        final recognized=(GlobalIdCardReview.imageFields.contains(role)||role=='qr')&&!slots.any((s)=>s['side']==r['side']&&s['key']==role);
-        slots.add(withMask({...r,'key':recognized?role:''}));
-      }
-    }
-    GlobalIdCardReview.suggestQr(pages,slots,images);
-    GlobalIdCardReview.refineImageRoles(pages,slots,images);
-    GlobalIdCardReview.suggestPlaceholderSlots(pages,slots,images);
+    slots.addAll(GlobalIdCardReview.detectSlots(pages,images));
     if(GlobalIdCardReview.canAutoPrepare(pages,slots)){
       WidgetsBinding.instance.addPostFrameCallback((_){
         if(mounted&&!busy)buildPackage();
