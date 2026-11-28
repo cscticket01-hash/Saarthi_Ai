@@ -5,8 +5,9 @@ import 'package:file_selector/file_selector.dart';
 import 'global_id_card_review.dart';
 
 class DeveloperGlobalIdReviewEditor extends StatefulWidget {
-  const DeveloperGlobalIdReviewEditor({super.key,required this.id,required this.analysis,required this.rasters,this.loadCleanPdf});
+  const DeveloperGlobalIdReviewEditor({super.key,required this.id,required this.analysis,required this.rasters,this.loadCleanPdf,this.manualSlots});
   final String id;
+  final List<Map<String,dynamic>>? manualSlots;
   final Map<String,dynamic> analysis,rasters;
   final Future<Map<String,Uint8List>> Function(Uint8List)? loadCleanPdf;
   @override State<DeveloperGlobalIdReviewEditor> createState()=>_ReviewState();
@@ -24,7 +25,7 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
     super.initState();
     pages=(widget.analysis['pages'] as List).map((v)=>Map<String,dynamic>.from(v as Map)).toList();
     images={for(final e in widget.rasters.entries)e.key:base64Decode(e.value as String)};
-    slots.addAll(GlobalIdCardReview.detectSlots(pages,images));
+    slots.addAll(widget.manualSlots?.map((r)=>Map<String,dynamic>.from(r))??GlobalIdCardReview.detectSlots(pages,images));
     if(GlobalIdCardReview.canAutoPrepare(pages,slots)){
       WidgetsBinding.instance.addPostFrameCallback((_){
         if(mounted&&!busy)buildPackage();
@@ -113,7 +114,7 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
           Row(children:[
             Expanded(child:DropdownButtonFormField<String>(key:ObjectKey(row),value:roles.contains(row['key'])?row['key'] as String:'',
               isExpanded:true,items:[for(final role in roles)DropdownMenuItem(value:role,child:Text(role==''?'Unclassified — select role':role=='__static'?'Static decoration (keep)':role))],
-              onChanged:busy?null:(v)=>setState(()=>row['key']=v??''))),
+              onChanged:busy?null:(v)=>setState((){row['key']=v??'';row['roleConfidence']='medium';row['manual']=true;}))),
             IconButton(tooltip:'Remove incorrect candidate',onPressed:busy?null:()=>setState(()=>slots.remove(row)),icon:const Icon(Icons.close)),
           ]),
           if(row['roleConfidence']=='low')

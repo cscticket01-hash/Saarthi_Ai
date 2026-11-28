@@ -1,5 +1,6 @@
 'use strict';
 const {createHash,randomUUID}=require('node:crypto');
+const {sanitizeMapping}=require('./global-id-card-mapping');
 const {validatePackage,verifySourceGeometry}=require('./global-id-card-package');
 const {analyzePdf,renderReviewSource,probeRuntime,renderCleanCompanion}=require('./global-id-card-analysis');
 const MAX_PDF_BYTES=8*1024*1024;
@@ -168,7 +169,23 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
         if(latest.data()?.state!=='draft'||latest.data()?.sourceSha256!==row.sourceSha256)invalid(409,'Draft changed');
         tx.set(ref,{mappingState:'review_required',analysis,updatedAt:now()},{merge:true});
       });
-      return {success:true,analysis,sourceSha256:row.sourceSha256};
+      return {success:true,analysis,sourceSha256:row.sourceSha256,mappingRevision:row.mappingRevision||0,manualSlots:row.manualSlots??null};
+    }
+    if(action==='save-mapping'){
+      const ref=refs(b.id),snap=await ref.get(),row=snap.data();
+      if(!snap.exists||row.state!=='draft'||row.packageVerified===true||row.sourceSha256!==b.sourceSha256||
+        !Number.isInteger(b.mappingRevision)||b.mappingRevision!==(row.mappingRevision||0))invalid(409,'Draft or mapping changed. Reopen it.');
+      const [source]=await (await storage()).file(row.sourcePath).download();
+      if(source.length>MAX_PDF_BYTES||sha256(source)!==row.sourceSha256)invalid(503,'Source checksum failed');
+      const analysis=await analyzeSource(source,analyzer,imageAnalyzer,{ocr:ocrEnabled,rasterizer});
+      const manualSlots=sanitizeMapping(b.slots,analysis.pages),mappingRevision=b.mappingRevision+1;
+      await db.runTransaction(async tx=>{
+        const latest=await tx.get(ref),current=latest.data();
+        if(current?.state!=='draft'||current.packageVerified===true||current.sourceSha256!==row.sourceSha256||
+          current.kind!==row.kind||(current.mappingRevision||0)!==b.mappingRevision)invalid(409,'Draft or mapping changed. Reopen it.');
+        tx.set(ref,{manualSlots,mappingRevision,analysis,mappingState:'review_required',updatedAt:now(),mappingSavedBy:actor.uid},{merge:true});
+      });
+      return {success:true,mappingRevision};
     }
     if(action==='preview'){
       // Developer-only, read-only private preview; never expose source URLs.
@@ -186,7 +203,7 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
       if(source.length>MAX_PDF_BYTES||sha256(source)!==row.sourceSha256)invalid(503,'Source checksum failed');
       // Explicit tracking runs the current detector, including configured OCR, on legacy drafts without persisting anything.
       const analysis=b.trackMapping===true?await analyzeSource(source,analyzer,imageAnalyzer,{ocr:ocrEnabled,rasterizer}):row.analysis?.pages?row.analysis:await analyzeSource(source,analyzer,imageAnalyzer,{ocr:false,rasterizer});
-      return {success:true,mode:'private_reference',rasters:await renderSource(source,analysis.pages,rasterizer,b.trackMapping===true?600:150),...(b.trackMapping===true?{analysis}: {})};
+      return {success:true,mode:'private_reference',rasters:await renderSource(source,analysis.pages,rasterizer,b.trackMapping===true?600:150),...(b.trackMapping===true?{analysis,sourceSha256:row.sourceSha256,mappingRevision:row.mappingRevision||0,manualSlots:row.manualSlots??null}: {})};
     }
     if(action==='review-source'){
       const snap=await refs(b.id).get(),row=snap.data();
@@ -214,6 +231,7 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
       if(b.reviewConfirmed!==true)invalid(400,'Confirm sample removal, geometry, fonts and real QR replacement');
       const ref=refs(b.id),snap=await ref.get(),row=snap.data();
       if(!snap.exists||row.state!=='draft'||row.mappingState!=='review_required'||b.sourceSha256!==row.sourceSha256)invalid(409,'Analyze the current draft and review its clean package first');
+      if((row.mappingRevision||0)!==(b.mappingRevision??0))invalid(409,'Saved mapping changed. Regenerate final preview.');
       if(row.analysis?.category?.kind&&row.analysis.category.kind!==row.kind)
         invalid(400,'PDF category mismatch. Correct the draft category before publishing.');
       if(row.analysis?.category?.evidence==='conflicting_headings')invalid(400,'Conflicting card categories');
@@ -231,7 +249,7 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
         const latest=await tx.get(ref),current=latest.data();
         const family=familyRef(row.familyId||row.id),fs=await tx.get(family),familyState=fs.data();
         if(current?.state!=='draft'||current.sourceSha256!==row.sourceSha256||
-           current.kind!==row.kind||current.mappingState!=='review_required'||JSON.stringify(current.analysis?.category)!==JSON.stringify(row.analysis?.category)||JSON.stringify(current.analysis?.pages)!==JSON.stringify(row.analysis?.pages)||
+           current.kind!==row.kind||(current.mappingRevision||0)!==(row.mappingRevision||0)||current.mappingState!=='review_required'||JSON.stringify(current.analysis?.category)!==JSON.stringify(row.analysis?.category)||JSON.stringify(current.analysis?.pages)!==JSON.stringify(row.analysis?.pages)||
            (current.packageSha256&&current.packageSha256!==packageSha256))invalid(409,'Draft changed');
         const next={state:'published',mappingState:'verified',packageVerified:true,packageSha256,packagePath,
           reviewedBy:actor.uid,reviewedAt:now(),updatedAt:now()};

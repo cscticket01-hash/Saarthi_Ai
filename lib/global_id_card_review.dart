@@ -372,7 +372,7 @@ class GlobalIdCardReview {
     final w=(first['canvasWidth'] as num).toDouble(),h=(first['canvasHeight'] as num).toDouble();
     if(pages.any((p)=>((p['canvasWidth'] as num)-w).abs()>.01||((p['canvasHeight'] as num)-h).abs()>.01))
       throw const FormatException('Front/back page sizes differ.');
-    if(slots.any((r)=>r['key']==''))throw const FormatException('Classify each detected image, or explicitly mark it static artwork.');
+    if(slots.any((r)=>r['key']==''||r['roleConfidence']=='low'))throw const FormatException('Confirm uncertain images or explicitly mark them static artwork.');
     final regions=<Map<String,dynamic>>[],masks=<Map<String,dynamic>>[];
     for(final slot in slots){
       final key=slot['key']?.toString()??'';
@@ -384,7 +384,7 @@ class GlobalIdCardReview {
       regions.add({'key':key,'side':slot['side'],'kind':type,'x':slot['x'],'y':slot['y'],
         'width':slot['width'],'height':slot['height'],'fontSize':font,'minFontSize':6,
         'textColor':slot['textColor']??'#000000','align':slot['align']??'left','bold':type=='text'&&slot['bold']==true,'required':key=='name'||key=='qr',
-        'rotation':type=='text'&&slot['rotation']==-90?-90:0,'fit':key=='photo'?'cover':'contain','shape':key=='photo'&&slot['oval']==true?'oval':'rect',
+        'rotation':type=='text'&&slot['rotation']==-90?-90:0,'fit':key=='photo'?'cover':'contain','shape':type=='image'&&slot['oval']==true?'oval':'rect',
         'wrap':type=='text'&&slot['wrap']==true,'maxLines':type=='text'&&slot['wrap']==true?2:1});
     }
     if(!regions.any((r)=>r['key']=='name'&&r['side']=='front')||!regions.any((r)=>r['key']=='qr'))

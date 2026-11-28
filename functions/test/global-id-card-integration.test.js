@@ -167,3 +167,24 @@ test('developer gallery preview is read-only and unavailable to schools',async()
  const published=await library.developerAction('preview',{id:template.id},actor);
  assert.equal(published.mode,'verified');assert.equal(published.rasters.front,front);assert.equal(published.manifest.id,template.id);
 });
+
+test('manual mapping persists geometry only, survives analysis, and rejects stale revisions',async()=>{
+ const {db,bucket,docs,objects,actor,member,clock}=fixture(true);
+ const page={side:'front',canvasWidth:300,canvasHeight:300,printWidthMm:54,printHeightMm:54,candidates:[]};
+ const library=createGlobalIdCardLibrary({db,bucket,policyReviewed:true,now:()=>clock,analyzer:'test',rasterizer:'test',
+  analyzeSource:async()=>({pages:[page],category:{kind:'studentId'}}),renderSource:async()=>({front})});
+ const {template}=await library.developerAction('upload',{name:'Mapping fixture',kind:'studentId',syntheticSampleConfirmed:true,pdfBase64:syntheticProbePdf().toString('base64')},actor);
+ const row=docs.get('global_id_card_library/'+template.id);
+ const body={id:template.id,sourceSha256:row.sourceSha256,mappingRevision:0,slots:[{side:'front',key:'logo',x:10,y:10,width:30,height:30,oval:true,manual:true,sampleText:'Never store'}]};
+ await assert.rejects(library.developerAction('save-mapping',{...body,slots:[{...body.slots[0],width:500}]},actor),{status:400});
+ const saved=await library.developerAction('save-mapping',body,actor);assert.equal(saved.mappingRevision,1);
+ await assert.rejects(library.developerAction('save-mapping',body,actor),{status:409});
+ const analyzed=await library.developerAction('analyze',{id:template.id},actor);
+ assert.equal(analyzed.manualSlots[0].oval,true);assert.equal(analyzed.manualSlots[0].sampleText,undefined);
+ assert.equal(analyzed.mappingRevision,1);
+ const tracked=await library.developerAction('preview',{id:template.id,trackMapping:true},actor);
+ assert.deepEqual(tracked.manualSlots,analyzed.manualSlots);
+ assert.equal(objects.size,1);
+ await assert.rejects(library.schoolAction('save-mapping',body,member),{status:400});
+ await assert.rejects(library.developerAction('publish',{id:template.id,sourceSha256:row.sourceSha256,reviewConfirmed:true,package:pkg(template.id)},actor),{status:409});
+});
