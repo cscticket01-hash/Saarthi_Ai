@@ -49,7 +49,10 @@ class _BulkState extends State<IdCardBulkScreen> {
   Future<void> showExport(IdCardBulkResult result) async {
     widget.source.ensureActive();
     if (!mounted || !active()) return;
-    if (result.manifest['templateId'] == IdCardCatalogEntry.greenBlueId) {
+    final id=result.manifest['templateId']?.toString()??'';
+    await IdCardCatalog.requireGlobalAccess(id);
+    widget.source.ensureActive();
+    if (id == IdCardCatalogEntry.greenBlueId || IdCardCatalog.isGlobalId(id)) {
       await WindowsSavePdf.save(result.pdf, 'student-id-cards.pdf');
     } else {
       await preview(result.pdf);
@@ -61,6 +64,8 @@ class _BulkState extends State<IdCardBulkScreen> {
     if(!mounted||!active())return;
     setState((){busy=true;cancel=false;error=null;findings=[];phase='Checking saved school data and photos';completed=0;total=selected.length;});
     try{
+      await IdCardCatalog.requireGlobalAccess(widget.template.id);
+      widget.source.ensureActive();
       final check=await widget.source.preflight(classId!,Set.from(selected),widget.template,backgrounds:widget.backgrounds,onProgress:progress,isCancelled:()=>cancel);
       if(mounted)setState(()=>findings=check.findings);
       if(check.blocked||(!allowMissingPhotos&&check.findings.any((f)=>f['code']=='MISSING_PHOTO')))throw StateError('Resolve listed input errors, or explicitly allow missing optional photos. No partial selection is exported.');

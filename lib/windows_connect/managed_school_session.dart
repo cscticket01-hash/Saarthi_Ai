@@ -60,7 +60,7 @@ class ManagedSchoolSession {
               ...await WindowsNetworkConnection.reportedMetadata()}
           : const <String,dynamic>{};
       final token=await CentralSchoolCloud.firebaseToken();
-      final visibleTransfer=!backgroundHealthCheck && !action.startsWith('managed/support/') && action!='managed/events' && action!='managed/theme/state' && action!='managed/theme/unlock' && action!='managed/repair-knowledge/pull' && action!='managed/live/operationReceipt' && action!='managed/live/backupHistory' && action!='managed/cloudflare/operation'; // Quiet receipt/event polls are not foreground transfers.
+      final visibleTransfer=!backgroundHealthCheck && !action.startsWith('managed/id-library/') && !action.startsWith('managed/support/') && action!='managed/events' && action!='managed/theme/state' && action!='managed/theme/unlock' && action!='managed/repair-knowledge/pull' && action!='managed/live/operationReceipt' && action!='managed/live/backupHistory' && action!='managed/cloudflare/operation'; // Quiet receipt/event polls are not foreground transfers.
       if(visibleTransfer)activeTransfers.value++;
       final dataTransfer=WindowsSyncEvidence.dataAction(action);
       final dataSchool=saved['schoolId'].toString();

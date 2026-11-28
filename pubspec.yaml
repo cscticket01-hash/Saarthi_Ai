@@ -73,6 +73,11 @@ flutter:
     - assets/
 
   fonts:
+    - family: VidyaIdCardSans
+      fonts:
+        - asset: assets/id_card_regular.ttf
+        - asset: assets/id_card_bold.ttf
+          weight: 700
     - family: VidyaNotoBengali
       fonts:
         - asset: "assets/fonts/NotoSansBengali[wdth,wght].ttf"

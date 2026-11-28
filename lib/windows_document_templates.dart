@@ -106,6 +106,7 @@ class WindowsDocumentTemplates {
     bool printOnly=false,
   }) async {
     final entry = await IdCardCatalog.find(templateId);
+    await IdCardCatalog.requireGlobalAccess(templateId);
     final manifest = reviewedManifest ?? await entry.manifest();
     final cardData = manifest.id == greenBlueStudentTemplateId
         ? await greenBlueStudentData(data) : data;
@@ -113,7 +114,7 @@ class WindowsDocumentTemplates {
       manifest,
       cardData,
       qr: qr,
-      printOnly:printOnly,
+      printOnly:printOnly||IdCardCatalog.isGlobalId(templateId),
       backgrounds: await entry.backgrounds(),
       images: {
         if (photo != null) 'photo': photo,
@@ -171,8 +172,9 @@ class WindowsDocumentTemplates {
       throw StateError('Selected template is not for this person category.');
     final manifest = reviewed ?? await entry.manifest();
     final backgrounds = await entry.backgrounds();
-    final cardData = manifest.id == greenBlueStudentTemplateId
+    final cardData = manifest.id == greenBlueStudentTemplateId || (kind=='studentId'&&IdCardCatalog.isGlobalId(manifest.id))
         ? await greenBlueStudentData(data) : data;
+    if(IdCardCatalog.isGlobalId(manifest.id))await IdCardCatalog.requireGlobalAccess(manifest.id);
     checkSchool();
     // School Data is authoritative; load only branding used by this manifest.
     String? source(String slot, String prefix) =>
@@ -197,6 +199,12 @@ class WindowsDocumentTemplates {
     return (
       template: manifest,
       data: <String,dynamic>{...profile,...cardData,'schoolName':schoolName,
+        if(IdCardCatalog.isGlobalId(manifest.id))...{
+          'address':data['address']??data['streetAddress']??'',
+          'district':data['district']??'','state':data['state']??'', 'country':data['country']??'',
+          'pinCode':data['pinCode']??data['pin']??'',
+          if(kind!='studentId')'_greenBlueVerifiedUid':'',
+        },
         'schoolAddress':profile['address'] ?? profile['schoolAddress'] ?? '',
         'schoolLocation':profile['address'] ?? profile['schoolAddress'] ?? '',
         'designation':data['designation'] ?? data['role'] ?? (kind == 'studentId' ? 'Student' : 'Teacher'),
@@ -240,6 +248,8 @@ class WindowsDocumentTemplates {
         actionsEnabled:hasPhoto || card.template.id == greenBlueStudentTemplateId,
         onPrintDocument:(frontOnly) async {
           checkSchool();
+          await IdCardCatalog.requireGlobalAccess(card.template.id);
+          checkSchool();
           final bytes = await IdCardEngine.render(card.template,card.data,
             images:card.images,backgrounds:card.backgrounds,qr:compact,frontOnly:frontOnly,printOnly:true);
           checkSchool();
@@ -251,6 +261,8 @@ class WindowsDocumentTemplates {
             preserveActualSize:true,isCurrent:(){try{checkSchool();return true;}catch(_){return false;}});
         },
         onDownload:() async {
+          checkSchool();
+          await IdCardCatalog.requireGlobalAccess(card.template.id);
           checkSchool();
           final bytes = await IdCardEngine.renderLocalDownload(card.template, card.data,
             images: card.images, backgrounds: card.backgrounds, qr: compact);
@@ -1231,7 +1243,7 @@ class WindowsDocumentTemplates {
           .where((e) => e.kinds.contains(kind))
           .toList();
       final entry = choices[index - legacyCount];
-      if (entry.id == greenBlueStudentTemplateId) {
+      if (entry.id == greenBlueStudentTemplateId || IdCardCatalog.isGlobalId(entry.id)) {
         // Gallery and selection must use native preview, not the PDF renderer.
         return null;
       }
@@ -1467,6 +1479,7 @@ class _SchoolDocumentTemplatesScreenState
     unawaited(_refreshFeature());
     _featureTimer=Timer.periodic(const Duration(seconds:15),(_){
       if(WindowsDocumentTemplates.financialKind(_kind))unawaited(_refreshFeature());
+      else if(mounted&&!_loading&&!_openingDesigner)unawaited(_initializeCatalog());
     });
     final db=FirebaseFirestore.instance,origin=db.activeProfileId;
     _templateChanges=db.collection('school_settings').doc('document_templates')
@@ -1746,7 +1759,19 @@ class _SchoolDocumentTemplatesScreenState
     final ref = db.collection('school_settings').doc('document_templates');
     // Validate the exact selected financial renderer before changing selection.
     // The approved manifest cannot silently become a different version.
-    if (kind == 'studentId' && value == 'manifest:$greenBlueStudentTemplateId') {
+    if(value is String&&value.startsWith('manifest:')&&IdCardCatalog.isGlobalId(value.substring(9))){
+      final entry=await IdCardCatalog.find(value.substring(9));
+      if(!entry.kinds.contains(kind))throw StateError('Global template category changed');
+      await IdCardCatalog.requireGlobalAccess(entry.id);
+      await entry.manifest();await entry.backgrounds();
+      if(!mounted)return;
+      final confirmed=await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(
+        title:const Text('Use global ID card template?'),
+        content:const Text('Use the current Windows app on all school PCs. The existing school selection changes only after confirmation.'),
+        actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),
+          FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('All PCs updated'))]));
+      if(confirmed!=true||!mounted)return;
+    } else if (kind == 'studentId' && value == 'manifest:$greenBlueStudentTemplateId') {
       // Selecting the bundled approved layout must not generate a PDF.
       final entry = await IdCardCatalog.find(greenBlueStudentTemplateId);
       if (!await entry.hasApprovedGreenBlueArtwork()) {
@@ -1964,6 +1989,8 @@ class _SchoolDocumentTemplatesScreenState
                             child: Center(
                               child: entry?.frontAsset != null
                                   ? Image.asset(entry!.frontAsset!, fit: BoxFit.contain)
+                                  : entry != null && IdCardCatalog.isGlobalId(entry.id)
+                                  ? const Column(mainAxisSize:MainAxisSize.min,children:[Icon(Icons.badge_outlined,size:54),Text('Global • Free • Use Preview')])
                                   : entry != null
                                   ? const Icon(Icons.badge_outlined, size: 54)
                                   : FutureBuilder<Uint8List?>(
@@ -1993,6 +2020,8 @@ class _SchoolDocumentTemplatesScreenState
                         Text(
                           i < 0
                               ? 'No decorative template'
+                              : entry != null && IdCardCatalog.isGlobalId(entry.id)
+                              ? 'Global library • Verified layout'
                               : entry?.id == greenBlueStudentTemplateId
                               ? 'Front only • 85.6 × 54.1 mm'
                               : portrait

@@ -67,7 +67,11 @@ class _NativeIdCardPreviewState extends State<NativeIdCardPreview> {
     final color = Color(0xff000000 | int.parse(r.textColor.substring(1), radix: 16));
     final availableWidth = r.contentWidth;
     final availableHeight = r.contentHeight;
-    TextStyle style(double size) => TextStyle(color: color, fontSize: size);
+    final global=widget.template.id.startsWith('gid-');
+    TextStyle style(double size) => TextStyle(color: color,fontSize:size,
+      fontFamily:global?'VidyaIdCardSans':null,
+      fontWeight:global&&r.bold?FontWeight.bold:null,
+      fontFamilyFallback:global?const ['VidyaNotoBengali','VidyaNotoDevanagari']:null);
     var size = r.fontSize;
     // Bounded fitting: do not grow beyond the reviewed manifest geometry.
     for (var i = 0; i < 150; i++) {

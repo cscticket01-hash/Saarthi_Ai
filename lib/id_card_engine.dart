@@ -128,6 +128,24 @@ class IdCardEngine {
   }
 
   static Map<String,dynamic> normalizedInput(IdCardManifest template,Map<String,dynamic> data) {
+    if(IdCardCatalog.isGlobalId(template.id)){
+      String first(List<String> keys){
+        for(final key in keys){
+          final value=data[key]?.toString().trim()??'';
+          if(value.isNotEmpty&&!['null','n/a'].contains(value.toLowerCase()))return value;
+        }
+        return '';
+      }
+      return {...data,'name':first(['name','studentName','teacherName']),
+        'schoolName':first(['schoolName','nameOfSchool']),
+        'schoolLocation':first(['schoolLocation','schoolAddress']),
+        'parentName':first(['parentName','fatherName','guardianName']),
+        'dob':first(['dateOfBirth','dob']),'class':first(['studentClass','class']),
+        'rollNo':first(['rollNo','roll']),'contact':first(['parentContact','contact','contactNo','phone']),
+        'pinCode':first(['pinCode','pin','pincode']),'session':first(['academicSession','session','academicYear']),
+        'confirmedUniversalStudentUid':first(['_greenBlueVerifiedUid']).isEmpty?'':'Student ID - ${first(['_greenBlueVerifiedUid'])}',
+      };
+    }
     if (template.id == 'student-svn-navy-green-v1' ||
         template.id == 'student-green-blue-modern-v1') {
       String first(List<String> keys) {
@@ -219,6 +237,7 @@ class IdCardEngine {
         maxLines: region.maxLines,
         align: region.align,
         color: 0xFF000000 | int.parse(region.textColor.substring(1),radix:16),
+        bold:IdCardCatalog.isGlobalId(template.id)&&region.bold,
       );
       if (rendered != null) {
         shapedText['${region.side}:${region.key}'] = rendered;
@@ -232,6 +251,8 @@ class IdCardEngine {
       Map.unmodifiable(backgrounds),
       Map.unmodifiable(shapedText),
       font ?? await loadFont(),
+      IdCardCatalog.isGlobalId(template.id)&&template.regions.any((r)=>r.kind=='text'&&r.bold)
+        ? pw.Font.ttf(await rootBundle.load('assets/id_card_bold.ttf')):null,
       printMediaStage,
     );
   }
@@ -245,7 +266,7 @@ class IdCardEngine {
   static Future<Uint8List> renderLocalDownload(IdCardManifest template, Map<String,dynamic> data, {
     Map<String,Uint8List> images=const {}, String qr='', Map<String,Uint8List> backgrounds=const {},
   }) => render(template, data, images:images, qr:qr, backgrounds:backgrounds,
-    printOnly:template.id == 'student-green-blue-modern-v1');
+    printOnly:template.id == 'student-green-blue-modern-v1'||IdCardCatalog.isGlobalId(template.id));
 
   static Future<Uint8List> _render(
     IdCardManifest template,
@@ -261,9 +282,9 @@ class IdCardEngine {
     // Embed school-owned source backgrounds at their actual CR80 print size.
     // This is bitmap-only optimization; the original image assets, vector
     // QR, Indic text shaping and layout geometry remain unchanged.
-    final fullResolution = printOnly && template.id == 'student-green-blue-modern-v1';
+    final fullResolution = printOnly && (template.id == 'student-green-blue-modern-v1'||IdCardCatalog.isGlobalId(template.id));
     if (fullResolution && backgrounds['front'] == null) {
-      throw const FormatException('Original Green Blue Modern artwork is unavailable.');
+      throw const FormatException('Original full-resolution artwork is unavailable.');
     }
     final optimizedBackgrounds = fullResolution ? backgrounds : <String, Uint8List>{
       for (final entry in backgrounds.entries)
@@ -308,7 +329,8 @@ class IdCardEngine {
     );
     final output = await pdf.save();
     if (printOnly) return SchoolMediaBudgets.verifyPrintPdf(output);
-    if (!useCompactVectorFont && output.length > SchoolMediaBudgets.idCard) {
+    if (!IdCardCatalog.isGlobalId(template.id) &&
+        !useCompactVectorFont && output.length > SchoolMediaBudgets.idCard) {
       // Original catalog font wins when it fits. Only ASCII-only oversized
       // cards retry with a non-embedded vector font; no QR/text rasterization,
       // geometry shift or loss of Indic glyphs.
@@ -348,6 +370,7 @@ class PreparedIdCard {
     this.backgrounds,
     this.shapedText,
     this.font,
+    this.boldFont,
     this.printMediaStage,
   );
   final IdCardManifest template;
@@ -359,6 +382,7 @@ class PreparedIdCard {
   final Map<String, pw.MemoryImage> _printImageCache = {};
   final String qr;
   final pw.Font font;
+  final pw.Font? boldFont;
   final int printMediaStage;
   pw.Widget _regionGeometry(IdCardRegion r, pw.Widget child) {
     if (r.shape == 'oval') return pw.ClipOval(child: child);
@@ -424,7 +448,7 @@ class PreparedIdCard {
                         )
                       : IdCardLayout.text(
                           '${r.label}${data[r.key] ?? ''}',
-                          font: font,
+                          font: r.bold ? (boldFont??font) : font,
                           color: PdfColor.fromHex(r.textColor),
                           fontSize: r.fontSize,
                           minFontSize: r.minFontSize,

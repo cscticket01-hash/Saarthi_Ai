@@ -10,6 +10,7 @@
     "test": "node --test test/*.test.cjs"
   },
   "dependencies": {
+    "aws4fetch": "1.0.20",
     "firebase-admin": "^14.4.0"
   }
 }

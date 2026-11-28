@@ -1,4 +1,5 @@
 import 'managed_school_live_view.dart';
+import 'developer_global_id_library.dart';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -239,6 +240,8 @@ class DeveloperGlobalFeatures extends StatelessWidget {
   children:[
    _GlobalFeatureCard(title:'Custom TemplateForge',route:'features/global',
     field:'uploadEnabled',switchLabel:'New template uploads',inactiveLabel:'Maintenance'),
+   SizedBox(height:16),
+   DeveloperGlobalIdLibrary(),
   ],
  );
 }

@@ -80,6 +80,7 @@ class WindowsIdCardDesignerEntry {
       }
     }
 
+    if(IdCardCatalog.isGlobalId(entry.id))throw StateError('Global template geometry is developer-reviewed; local editing is disabled.');
     if (!entry.kinds.contains('studentId')) {
       throw StateError('This designer route requires a student ID template.');
     }
