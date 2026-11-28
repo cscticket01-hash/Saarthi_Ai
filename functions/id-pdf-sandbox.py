@@ -220,7 +220,11 @@ def main():
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except Exception:
+    except Exception as exc:
+        # Staging-only diagnostic: class, errno and fixed phase from our code.
+        import traceback
+        frame=traceback.extract_tb(exc.__traceback__)[-1]
+        print("sandbox stage="+frame.name+" line="+str(frame.lineno)+" type="+type(exc).__name__+" errno="+str(getattr(exc,"errno",None)),file=sys.stderr,flush=True)
         # Never log the uploaded PDF, host paths, stderr or credentials.
         print("PDF sandbox rejected operation", file=sys.stderr, flush=True)
         sys.exit(1)
