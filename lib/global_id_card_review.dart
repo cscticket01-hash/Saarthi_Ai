@@ -33,6 +33,76 @@ class GlobalIdCardReview {
     suggestPlaceholderSlots(pages,slots,images);
     return slots;
   }
+  // Geometry is expressed in the same design units used by IdCardLayout.
+  // Do not lower the 6-unit font minimum or change the sample-removal mask.
+  static const double minimumTextHeight=7.5;
+  static double _n(Map<String,dynamic> r,String k)=>(r[k] as num?)?.toDouble()??0;
+  static double _minimumTextWidth(Map<String,dynamic> r){
+    // Short sample values (X, 02) are not adequate output regions.
+    // These are conservative geometry hints; the actual renderer is final.
+    switch(r['key']){
+      case 'class':case 'rollNo':case 'section':return 13;
+      case 'confirmedUniversalStudentUid':return 30;
+      case 'name':case 'parentName':case 'contact':case 'dob':return 24;
+      default:return 6;
+    }
+  }
+  static String? readabilityIssue(Map<String,dynamic> r){
+    if(!textFields.contains(r['key']))return null;
+    final vertical=r['rotation']==-90;
+    final h=_n(r,vertical?'width':'height'),w=_n(r,vertical?'height':'width');
+    if(h<minimumTextHeight||w<6){
+      return '${r['key']} (${r['side']}): output text area ${w.toStringAsFixed(1)} × ${h.toStringAsFixed(1)}; needs at least 6 × 7.5 design units. Resize the output field; retain the original sample mask.';
+    }
+    return null;
+  }
+  /// Suggest a small bounded expansion around the existing text area.
+  /// Other dynamic/static candidate regions and page edges are obstacles.
+  /// No source pixels are changed; any expansion must be visually reviewed.
+  static List<Map<String,dynamic>> fitOutputRegions(List<Map<String,dynamic>> pages,List<Map<String,dynamic>> input){
+    final result=input.map((r)=>Map<String,dynamic>.from(r)).toList();
+    for(final r in result){
+      if(!textFields.contains(r['key']))continue;
+      final rotated=r['rotation']==-90;
+      if(readabilityIssue(r)==null&&_n(r,rotated?'height':'width')>=_minimumTextWidth(r))continue;
+      final matchingPages=pages.where((p)=>p['side']==r['side']).toList(growable:false);
+      if(matchingPages.isEmpty)continue;
+      final page=matchingPages.first;
+      final pw=_n(page,'canvasWidth'),ph=_n(page,'canvasHeight');
+      final x=_n(r,'x'),y=_n(r,'y'),w=_n(r,'width'),h=_n(r,'height');
+      if(![pw,ph,x,y,w,h].every((v)=>v.isFinite)||x<0||y<0||w<=0||h<=0||x+w>pw||y+h>ph)continue;
+      final vertical=r['rotation']==-90;
+      final targetW=math.max(w,vertical?7.6:_minimumTextWidth(r)+.1);
+      final targetH=math.max(h,vertical?_minimumTextWidth(r)+.1:7.6);
+      // Only modest automatic expansion; larger corrections need a person.
+      if(targetW-w>(vertical?5:24)||targetH-h>(vertical?24:5))continue;
+      final dw=targetW-w,dh=targetH-h;
+      final preferredX=vertical?x-dw/2:r['align']=='right'?x-dw:r['align']=='center'?x-dw/2:x;
+      final preferredY=vertical?y+ h-targetH:y-dh/2;
+      bool free(num xx,num yy){
+        if(xx<0||yy<0||xx+targetW>pw||yy+targetH>ph)return false;
+        for(final other in result){
+          if(identical(r,other)||other['side']!=r['side'])continue;
+          final ox=_n(other,'x'),oy=_n(other,'y'),ow=_n(other,'width'),oh=_n(other,'height');
+          if(xx<ox+ow&&xx+targetW>ox&&yy<oy+oh&&yy+targetH>oy)return false;
+        }
+        return true;
+      }
+      final xs=[preferredX,if(vertical)x,if(vertical)x-dw];
+      final ys=[preferredY,if(!vertical)y,if(!vertical)y-dh,if(vertical)y];
+      bool done=false;
+      for(final xx in xs){
+        for(final yy in ys){
+          if(!free(xx,yy))continue;
+          for(final k in ['x','y','width','height'])r['sample_'+k]??=r[k];
+          r.addAll({'x':xx,'y':yy,'width':targetW,'height':targetH,'fitAdjusted':true});
+          done=true;break;
+        }
+        if(done)break;
+      }
+    }
+    return result;
+  }
   /// Automatically prepare a draft only when mandatory fields are present and
   /// every explicitly detected placeholder has a matching slot. Ambiguous
   /// candidates stay in the correction editor. Final publication still needs
@@ -434,6 +504,8 @@ class GlobalIdCardReview {
     if(pages.any((p)=>((p['canvasWidth'] as num)-w).abs()>.01||((p['canvasHeight'] as num)-h).abs()>.01))
       throw const FormatException('Front/back page sizes differ.');
     if(slots.any((r)=>r['key']==''||r['roleConfidence']=='low'))throw const FormatException('Confirm uncertain images or explicitly mark them static artwork.');
+    final issues=slots.map(readabilityIssue).whereType<String>().toList(growable:false);
+    if(issues.isNotEmpty)throw FormatException(issues.first);
     final regions=<Map<String,dynamic>>[],masks=<Map<String,dynamic>>[];
     for(final slot in slots){
       final key=slot['key']?.toString()??'';

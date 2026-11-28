@@ -148,6 +148,7 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
           FilledButton(onPressed:()=>Navigator.pop(ctx,'file'),child:const Text('Choose reviewed package'))]));
       if(proceed==null||!mounted)return;
       Map<String,dynamic>? package;
+      Uint8List? validatedDemo;
       Map<String,dynamic> sourceRasters={};
       if(proceed=='editor'){
         final source=await ManagedDeveloperService.call('id-library/review-source',{'id':row['id'],'sourceSha256':result['sourceSha256']});
@@ -156,6 +157,7 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
         sourceRasters=Map<String,dynamic>.from(source['rasters'] as Map);
         package=await showDialog<Map<String,dynamic>>(context:context,barrierDismissible:false,builder:(_)=>
           DeveloperGlobalIdReviewEditor(id:row['id'].toString(),analysis:analysis,manualSlots:(result['manualSlots'] as List?)?.map((r)=>Map<String,dynamic>.from(r as Map)).toList(),rasters:Map<String,dynamic>.from(source['rasters'] as Map),
+            validatePreview:(candidate)async{validatedDemo=await DeveloperGlobalIdPreview.generate(candidate,reviewedKind);},
             loadCleanPdf:(Uint8List bytes) async{
               final reply=await ManagedDeveloperService.call('id-library/review-clean-pdf',{'id':row['id'],'sourceSha256':result['sourceSha256'],
                 'syntheticSampleConfirmed':true,'pdfBase64':base64Encode(bytes)});
@@ -175,7 +177,7 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
       if(!mounted)return;
       // A real final print renderer and an independent QR decode must pass
       // before the human artwork approval. The QR is only a demo string.
-      final demo=await DeveloperGlobalIdPreview.generate(reviewedPackage,reviewedKind);
+      final demo=validatedDemo??await DeveloperGlobalIdPreview.generate(reviewedPackage,reviewedKind);
       if(!mounted)return;
       bool checked=false;
       final approve=await showDialog<bool>(context:context,builder:(ctx)=>StatefulBuilder(builder:(ctx,update)=>AlertDialog(

@@ -5,8 +5,9 @@ import 'package:file_selector/file_selector.dart';
 import 'global_id_card_review.dart';
 
 class DeveloperGlobalIdReviewEditor extends StatefulWidget {
-  const DeveloperGlobalIdReviewEditor({super.key,required this.id,required this.analysis,required this.rasters,this.loadCleanPdf,this.manualSlots});
+  const DeveloperGlobalIdReviewEditor({super.key,required this.id,required this.analysis,required this.rasters,this.loadCleanPdf,this.manualSlots,this.validatePreview});
   final String id;
+  final Future<void> Function(Map<String,dynamic>)? validatePreview;
   final List<Map<String,dynamic>>? manualSlots;
   final Map<String,dynamic> analysis,rasters;
   final Future<Map<String,Uint8List>> Function(Uint8List)? loadCleanPdf;
@@ -26,7 +27,10 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
     pages=(widget.analysis['pages'] as List).map((v)=>Map<String,dynamic>.from(v as Map)).toList();
     images={for(final e in widget.rasters.entries)e.key:base64Decode(e.value as String)};
     slots.addAll(widget.manualSlots?.map((r)=>Map<String,dynamic>.from(r))??GlobalIdCardReview.detectSlots(pages,images));
-    if(GlobalIdCardReview.canAutoPrepare(pages,slots)){
+    final adjusted=GlobalIdCardReview.fitOutputRegions(pages,slots);
+    slots..clear()..addAll(adjusted);
+    if(slots.any((r)=>r['fitAdjusted']==true||GlobalIdCardReview.readabilityIssue(r)!=null))showAdvanced=true;
+    if(!showAdvanced&&GlobalIdCardReview.canAutoPrepare(pages,slots)){
       WidgetsBinding.instance.addPostFrameCallback((_){
         if(mounted&&!busy)buildPackage();
       });
@@ -68,8 +72,9 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
       // Render a frame before the bounded synchronous PNG preparation.
       await Future<void>.delayed(Duration.zero);
       final result=GlobalIdCardReview.package(widget.id,pages,slots,images,allowSmoothGradient:allowSmoothGradient,allowApproximateRepair:allowApproximateRepair,cleanArtwork:cleanArtwork,cleanCompanion:cleanCompanion);
+      if(widget.validatePreview!=null)await widget.validatePreview!(result);
       if(mounted)Navigator.pop(context,result);
-    }catch(e){if(mounted)setState(()=>error=e.toString());}
+    }catch(e){if(mounted)setState((){error=e.toString();showAdvanced=true;});}
     finally{if(mounted)setState(()=>busy=false);}
   }
   Widget number(Map<String,dynamic> row,String key)=>SizedBox(width:85,child:TextFormField(
@@ -95,8 +100,15 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
           for(final r in visible.where((r)=>r['key']!='__static'&&n(r,'width')>0&&n(r,'height')>0))
             Positioned(left:n(r,'x')/w*c.maxWidth,top:n(r,'y')/h*c.maxHeight,
               width:n(r,'width')/w*c.maxWidth,height:n(r,'height')/h*c.maxHeight,
-              child:IgnorePointer(child:Container(decoration:BoxDecoration(border:Border.all(color:r['key']==''?Colors.orange:Colors.red,width:2)),child:Align(alignment:Alignment.topLeft,child:Text(r['key']==''?'?':r['key'].toString(),style:const TextStyle(fontSize:10,color:Colors.red,backgroundColor:Colors.white)))))),
+              child:IgnorePointer(child:Container(decoration:BoxDecoration(border:Border.all(color:r['key']==''?Colors.orange:r['fitAdjusted']==true?Colors.blue:Colors.red,width:2)),child:Align(alignment:Alignment.topLeft,child:Text(r['key']==''?'?':r['key'].toString(),style:const TextStyle(fontSize:10,color:Colors.red,backgroundColor:Colors.white)))))),
         ]))),
+        if(slots.any((r)=>r['fitAdjusted']==true))const Text('Output boxes enlarged for readable text. Original removal masks unchanged. Verify the adjusted positions before generating preview.'),
+        for(final r in slots.where((r)=>GlobalIdCardReview.readabilityIssue(r)!=null))
+          Text(GlobalIdCardReview.readabilityIssue(r)!,style:TextStyle(color:Theme.of(context).colorScheme.error)),
+        TextButton.icon(onPressed:busy?null:()=>setState((){
+          final adjusted=GlobalIdCardReview.fitOutputRegions(pages,slots);
+          slots..clear()..addAll(adjusted);showAdvanced=true;
+        }),icon:const Icon(Icons.fit_screen),label:const Text('Fit readable text boxes')),
         const SizedBox(height:8),
         CheckboxListTile(value:allowApproximateRepair,onChanged:busy?null:(v)=>setState(()=>allowApproximateRepair=v==true),
           title:const Text('Automatic background repair'),
@@ -117,6 +129,7 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
               onChanged:busy?null:(v)=>setState((){row['key']=v??'';row['roleConfidence']='medium';row['manual']=true;}))),
             IconButton(tooltip:'Remove incorrect candidate',onPressed:busy?null:()=>setState(()=>slots.remove(row)),icon:const Icon(Icons.close)),
           ]),
+          if(GlobalIdCardReview.readabilityIssue(row)!=null)Text(GlobalIdCardReview.readabilityIssue(row)!,style:TextStyle(color:Theme.of(context).colorScheme.error)),
           if(row['roleConfidence']=='low')
             Text('Possible role from layout: ${row['suggestedRole']=='__static'?'static decoration':row['suggestedRole']}. Confirm the role before continuing.'),
           if(row['key']!='__static')Wrap(spacing:8,runSpacing:8,children:[

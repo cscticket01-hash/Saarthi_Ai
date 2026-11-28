@@ -228,7 +228,9 @@ class IdCardEngine {
     final shapedText = <String, Uint8List>{};
     for (final region in template.regions.where((r) => r.kind == 'text')) {
       final value = '${region.label}${data[region.key] ?? ''}';
-      final rendered = await IdCardIndicText.rasterize(
+      Uint8List? rendered;
+      try {
+      rendered = await IdCardIndicText.rasterize(
         value,
         width: region.contentWidth,
         height: region.contentHeight,
@@ -239,6 +241,10 @@ class IdCardEngine {
         color: 0xFF000000 | int.parse(region.textColor.substring(1),radix:16),
         bold:IdCardIdentity.isGlobalId(template.id)&&region.bold,
       );
+      } on FormatException catch(e) {
+        if(!IdCardIdentity.isGlobalId(template.id))rethrow;
+        throw FormatException('${region.key} (${region.side}): ${e.message}');
+      }
       if (rendered != null) {
         shapedText['${region.side}:${region.key}'] = rendered;
       }
@@ -455,6 +461,7 @@ class PreparedIdCard {
                           wrap: r.wrap,
                           maxLines: r.maxLines,
                           overflow: r.overflow,
+                          fieldName: IdCardIdentity.isGlobalId(template.id)?'${r.key} (${r.side})':null,
                           align: r.align == 'center'
                               ? pw.TextAlign.center
                               : r.align == 'right'

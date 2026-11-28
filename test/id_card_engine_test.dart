@@ -223,4 +223,45 @@ void main() {
     expect(saved!['mappingRevision'],0);
   });
 
+  test('readable region repair expands a tiny class without changing sample mask',(){
+    final pages=[<String,dynamic>{'side':'front','canvasWidth':240,'canvasHeight':150}];
+    final slots=[<String,dynamic>{'side':'front','key':'class','x':130,'y':80,'width':4,'height':5}];
+    final result=GlobalIdCardReview.fitOutputRegions(pages,slots).single;
+    expect(result['sample_width'],4);expect(result['sample_height'],5);
+    expect(result['width'],greaterThanOrEqualTo(13));expect(result['height'],greaterThanOrEqualTo(7.5));
+    expect(GlobalIdCardReview.readabilityIssue(result),isNull);
+    expect(slots.single['width'],4);
+  });
+  test('safe fit refuses overlap and identifies the exact field',(){
+    final pages=[<String,dynamic>{'side':'front','canvasWidth':240,'canvasHeight':150}];
+    final slots=[<String,dynamic>{'side':'front','key':'rollNo','x':130,'y':80,'width':4,'height':5},
+      <String,dynamic>{'side':'front','key':'photo','x':135,'y':60,'width':30,'height':50}];
+    final result=GlobalIdCardReview.fitOutputRegions(pages,slots).first;
+    expect(result['width'],4);expect(GlobalIdCardReview.readabilityIssue(result),contains('rollNo (front)'));
+  });
+  test('vertical ID uses width as readable line height',(){
+    final pages=[<String,dynamic>{'side':'front','canvasWidth':240,'canvasHeight':150}];
+    final slots=[<String,dynamic>{'side':'front','key':'confirmedUniversalStudentUid','rotation':-90,'x':12,'y':60,'width':4,'height':50}];
+    final result=GlobalIdCardReview.fitOutputRegions(pages,slots).single;
+    expect(result['rotation'],-90);expect(result['width'],greaterThanOrEqualTo(7.5));
+    expect(result['sample_width'],4);expect(GlobalIdCardReview.readabilityIssue(result),isNull);
+  });
+
+  test('real PDF renderer reports the failed field and accepts the repaired region',()async{
+    final pages=[<String,dynamic>{'side':'front','canvasWidth':240,'canvasHeight':150}];
+    final slots=[<String,dynamic>{'side':'front','key':'class','kind':'text','x':130,'y':80,'width':4,'height':5,'fontSize':6,'minFontSize':6}];
+    IdCardManifest make(List<Map<String,dynamic>> regions)=>IdCardManifest.fromJson({
+      'id':'gid-00000000000000000000000000000001','version':1,'canvasWidth':240,'canvasHeight':150,
+      'printWidthMm':84.8,'printHeightMm':53,'regions':regions,
+    });
+    final image=img.Image(width:480,height:300,numChannels:4);
+    img.fill(image,color:img.ColorRgba8(255,255,255,255));
+    final backgrounds={'front':img.encodePng(image)};
+    await expectLater(IdCardEngine.render(make(slots),{'class':'VIII'},backgrounds:backgrounds,printOnly:true),
+      throwsA(isA<FormatException>().having((e)=>e.message,'message',contains('class (front)'))));
+    final repaired=GlobalIdCardReview.fitOutputRegions(pages,slots);
+    final pdf=await IdCardEngine.render(make(repaired),{'class':'VIII'},backgrounds:backgrounds,printOnly:true);
+    expect(latin1.decode(pdf).startsWith('%PDF'),true);
+  });
+
 }
