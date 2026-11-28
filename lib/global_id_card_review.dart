@@ -133,6 +133,15 @@ class GlobalIdCardReview {
       if(x0<1||y0<1||x1>=source.width-1||y1>=source.height-1)
         throw FormatException('$key: sample touches the artwork edge; use clean source artwork.');
       final left=x0-1,right=x1+1,top=y0-1,bottom=y1+1;
+      // Never sample a neighbouring field's sample pixels when repairing
+      // this field. The union-mask repair can safely handle adjacent masks.
+      for(final other in masks.where((v)=>v['side']==side&&!identical(v,r))){
+        final ox=((other['x'] as num)*sx).floor()-2,oy=((other['y'] as num)*sy).floor()-2;
+        final ex=(((other['x'] as num)+(other['width'] as num))*sx).ceil()+2;
+        final ey=(((other['y'] as num)+(other['height'] as num))*sy).ceil()+2;
+        if(left<=ex&&right>=ox&&top<=ey&&bottom>=oy)
+          throw const FormatException('Adjacent sample regions require combined artwork repair.');
+      }
       List<int> rgb(int x,int y){final p=source.getPixel(x,y);return [p.r.toInt(),p.g.toInt(),p.b.toInt()];}
       final tl=rgb(left,top),tr=rgb(right,top),bl=rgb(left,bottom),br=rgb(right,bottom);
       int channel(int x,int y,int c){
