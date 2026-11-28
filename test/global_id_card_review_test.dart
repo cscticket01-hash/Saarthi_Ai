@@ -209,12 +209,12 @@ void main(){
     for (final edge in ['top', 'bottom', 'left', 'right']) {
       expect(handle(edge), findsOneWidget);
     }
-    await tester.drag(handle('left'), const Offset(-30, 0));
+    await tester.drag(handle('left'), const Offset(-60, 0));
     await tester.pumpAndSettle();
 
     await tester.tapAt(onCard(115, 45));
     await tester.pumpAndSettle();
-    await tester.drag(handle('bottom'), const Offset(0, 30));
+    await tester.drag(handle('bottom'), const Offset(0, 60));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Save Mapping'));
     await tester.pumpAndSettle();

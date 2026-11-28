@@ -172,6 +172,10 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
     final horizontal = edge == _ResizeEdge.left || edge == _ResizeEdge.right;
     final handleWidth = math.min(horizontal ? 18.0 : 30.0, constraints.maxWidth);
     final handleHeight = math.min(horizontal ? 30.0 : 18.0, constraints.maxHeight);
+    void onStart(DragStartDetails event) => beginResize(event.globalPosition);
+    void onUpdate(DragUpdateDetails event) =>
+        resize(edge, event.globalPosition, scaleX, scaleY, width, height);
+    void onEnd(DragEndDetails event) => end();
     return Positioned(
       key: ValueKey('mapping-resize-${edge.name}'),
       left: (anchor.dx * scaleX - handleWidth / 2)
@@ -188,12 +192,14 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             dragStartBehavior: DragStartBehavior.down,
-            onPanStart: (event) => beginResize(event.globalPosition),
-            onPanUpdate: (event) => resize(
-              edge, event.globalPosition, scaleX, scaleY, width, height,
-            ),
-            onPanEnd: (_) => end(),
-            onPanCancel: cancelDrag,
+            onHorizontalDragStart: horizontal ? onStart : null,
+            onHorizontalDragUpdate: horizontal ? onUpdate : null,
+            onHorizontalDragEnd: horizontal ? onEnd : null,
+            onHorizontalDragCancel: horizontal ? cancelDrag : null,
+            onVerticalDragStart: horizontal ? null : onStart,
+            onVerticalDragUpdate: horizontal ? null : onUpdate,
+            onVerticalDragEnd: horizontal ? null : onEnd,
+            onVerticalDragCancel: horizontal ? null : cancelDrag,
             child: Center(child: Container(
               width: horizontal ? 6 : 22,
               height: horizontal ? 22 : 6,
