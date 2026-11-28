@@ -47,8 +47,8 @@ async function run({app,auth,db,bucket,env}){
   if(app.options.projectId!==project||env.SAARTHI_ID_LIBRARY_STAGING!=='true'||
      env.SAARTHI_GLOBAL_ID_R2_BUCKET!==bucketName||
      env.RENDER_SERVICE_ID!=='srv-dc4skhlg1s2s73flu6q0'||
-     env.SAARTHI_ID_LIBRARY_E2E_PROBE!=='20261128-a')return;
-  const checks={},mark=db.doc('_id_library_staging_probe/20261128-a');
+     env.SAARTHI_ID_LIBRARY_E2E_PROBE!=='20261128-b')return;
+  const checks={},mark=db.doc('_id_library_staging_probe/20261128-b');
   let devUid,schoolUid,schoolId,devToken,id,claimed=false,step='probe-lock';
   const port=Number(env.PORT||8080),base='http://127.0.0.1:'+port+'/school-cloud';
   const call=async(action,body,token,expected=200)=>{
@@ -87,6 +87,7 @@ async function run({app,auth,db,bucket,env}){
     checks.realFirebaseAuth=true;
     step='runtime-check';
     const runtime=await dev('runtime-check');
+    console.info('ID_LIBRARY_E2E_RUNTIME '+JSON.stringify({ready:runtime.ready===true,storageReady:runtime.storageReady===true,storageReason:runtime.storageReason,checks:runtime.checks}));
     requireCheck(runtime.ready&&runtime.storageReady&&runtime.checks.text&&runtime.checks.imageGeometry&&runtime.checks.raster,'authenticated-runtime');
     checks.runtime=true;checks.r2Ready=true;
     step='upload';
