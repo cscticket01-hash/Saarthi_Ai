@@ -47,8 +47,8 @@ async function run({app,auth,db,bucket,env}){
   if(app.options.projectId!==project||env.SAARTHI_ID_LIBRARY_STAGING!=='true'||
      env.SAARTHI_GLOBAL_ID_R2_BUCKET!==bucketName||
      env.RENDER_SERVICE_ID!=='srv-dc4skhlg1s2s73flu6q0'||
-     env.SAARTHI_ID_LIBRARY_E2E_PROBE!=='20261128-c')return;
-  const checks={},mark=db.doc('_id_library_staging_probe/20261128-c');
+     env.SAARTHI_ID_LIBRARY_E2E_PROBE!=='20261128-d')return;
+  const checks={},mark=db.doc('_id_library_staging_probe/20261128-d');
   let devUid,schoolUid,schoolId,devToken,id,claimed=false,step='probe-lock';
   const port=Number(env.PORT||8080),base='http://127.0.0.1:'+port+'/school-cloud';
   const call=async(action,body,token,expected=200)=>{
@@ -92,10 +92,17 @@ async function run({app,auth,db,bucket,env}){
     checks.runtime=true;checks.r2Ready=true;
     step='upload';
     const source=syntheticProbePdf(),sourceSha256=hash(source);
-    const uploaded=await dev('upload',{name:safeName,kind:'studentId',syntheticSampleConfirmed:true,pdfBase64:source.toString('base64')});
-    id=uploaded.template?.id;
-    requireCheck(/^gid-[a-f0-9]{32}$/.test(id||'')&&uploaded.template.state==='draft','private-draft');
-    checks.upload=true;
+    // Reuse only the exact archived synthetic fixture from the earlier
+    // staging acceptance attempt. Do not create another source object.
+    const prior=await db.collection('global_id_card_library').where('name','==',safeName).limit(10).get();
+    const candidates=prior.docs.map(s=>s.data()).filter(t=>t.kind==='studentId'&&t.state==='archived'&&
+      t.sourceSha256===sourceSha256&&t.packageVerified!==true&&/^id-probe-dev-[a-f0-9]{32}$/.test(t.createdBy||''));
+    requireCheck(candidates.length===1,'unique-archived-synthetic-fixture');
+    id=candidates[0].id;
+    requireCheck(/^gid-[a-f0-9]{32}$/.test(id||''),'synthetic-draft-identity');
+    const uploaded=await dev('restore',{id});
+    requireCheck(uploaded.template.state==='draft','private-draft');
+    checks.reusedUpload=true;
     const ref=db.doc('global_id_card_library/'+id),row=(await ref.get()).data();
     requireCheck(row.sourceSha256===sourceSha256&&row.sourcePath==='global-id-card-library/private/'+id+'/source.pdf','source-registration');
     const [readback]=await bucket.file(row.sourcePath).download();
@@ -105,8 +112,15 @@ async function run({app,auth,db,bucket,env}){
     const unsigned=await fetch('https://'+account+'.r2.cloudflarestorage.com/'+bucketName+'/'+row.sourcePath,{
       method:'GET',signal:AbortSignal.timeout(10000),redirect:'error'
     });
-    await unsigned.body?.cancel();
-    requireCheck([401,403,404].includes(unsigned.status),'unsigned-r2-source-denial');
+    let errorCode=null,authError=false;
+    if(unsigned.status===400){
+      const reader=unsigned.body?.getReader();let raw='',n=0;
+      if(reader){try{while(n<4096){const {done,value}=await reader.read();if(done)break;n+=value.byteLength;raw+=Buffer.from(value).toString('utf8');}await reader.cancel();}finally{reader.releaseLock();}}
+      errorCode=raw.match(/<Code>([A-Za-z]{1,80})<\/Code>/)?.[1]||null;
+      authError=['InvalidArgument','InvalidRequest','MissingAuthenticationToken','AuthorizationHeaderMalformed','AccessDenied'].includes(errorCode)&&/authorization|authentication|signature|credential/i.test(raw);
+    }else await unsigned.body?.cancel();
+    console.info('ID_LIBRARY_E2E_UNSIGNED_R2 '+JSON.stringify({status:unsigned.status,errorCode,authError}));
+    requireCheck([401,403,404].includes(unsigned.status)||(unsigned.status===400&&authError),'unsigned-r2-source-denial');
     checks.privateSourceDenied=true;
     step='draft-access-denial';
     requireCheck(!(await school('list')).templates.some(t=>t.id===id),'draft-hidden');
