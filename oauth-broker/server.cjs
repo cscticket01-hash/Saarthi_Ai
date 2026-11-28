@@ -114,6 +114,14 @@ if (require.main === module) {
     const {resolve}=require('node:path');
     execFile('/usr/bin/tesseract',['--list-langs'],{timeout:5000,maxBuffer:8192,env:{PATH:'/usr/bin:/bin',LANG:'C'}},
       (error,stdout)=>console.info('ID_OCR_CAPABILITY '+JSON.stringify({available:!error,english:!error&&stdout.split('\n').includes('eng')})));
+    if(process.env.SAARTHI_ID_WASM_OCR_PROBE==='20261128'){
+      execFile(process.execPath,['--max-old-space-size=128',resolve(__dirname,'id-wasm-ocr-probe.cjs')],
+        {timeout:60000,maxBuffer:32768,env:{PATH:'/usr/bin:/bin',LANG:'C',SAARTHI_GLOBAL_ID_PDF_SANDBOX:'landlock'}},
+        (error,stdout)=>{
+          const safe=stdout.split('\n').filter(l=>/^ID_WASM_OCR_SYNTHETIC(?:_FAILED| \{)/.test(l));
+          console.info('ID_WASM_OCR_RESULT '+JSON.stringify({passed:!error,checks:safe}));
+        });
+    }
     const tests=['global-id-card-analysis.test.js','global-id-card-library.test.js','global-id-card-package.test.js','global-id-card-integration.test.js'];
     execFile(process.execPath,['--test',...tests.map(n=>resolve(__dirname,'../functions/test',n))],
       {timeout:60000,maxBuffer:512*1024,env:{PATH:'/usr/bin:/bin',LANG:'C'}},
