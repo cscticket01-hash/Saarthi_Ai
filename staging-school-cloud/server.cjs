@@ -65,7 +65,7 @@ function createHandler({handle,health,projectId=PROJECT,allowedOrigins=[],testSc
       // Native parts carry up to 512 KiB binary as <=700000 base64 bytes.
       // Keep ordinary JSON at 256 KiB and the existing full-upload cap unchanged.
       const nativePart=['managed/file/upload/resumable','managed/document/stage/resumable','managed/record/media/stage/resumable'].includes(body?.action)&&body.operation==='part';
-      const globalIdUpload=['developer/managed/id-library/upload','developer/managed/id-library/publish','developer/managed/id-library/review-clean-pdf'].includes(body?.action);
+      const globalIdUpload=['developer/managed/id-library/preflight','developer/managed/id-library/upload','developer/managed/id-library/publish','developer/managed/id-library/review-clean-pdf'].includes(body?.action);
       const bodyLimit=globalIdUpload?12*1024*1024:['managed/file/upload','managed/document/stage'].includes(body?.action)?28*1024*1024:nativePart?(body.action==='managed/record/media/stage/resumable'?900000:body.action==='managed/document/stage/resumable'?700000+32768:700000+4096):256*1024;
       if(bytes>bodyLimit||nativePart&&(typeof body.base64!=='string'||body.base64.length>700000))
         return send(413,{success:false,code:'REQUEST_TOO_LARGE',message:'Request is too large'});

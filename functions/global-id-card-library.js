@@ -56,7 +56,7 @@ function accessDecision(row,grant,school){
     grant.schoolId===school&&grant.templateId===row.id&&grant.version===row.version&&
     grant.source==='developer_grant';
 }
-function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=process.env.SAARTHI_GLOBAL_ID_STORAGE_POLICY_VERIFIED==='true',analyzer=process.env.SAARTHI_GLOBAL_ID_PDFTOTEXT,imageAnalyzer=process.env.SAARTHI_GLOBAL_ID_PDFTOHTML,rasterizer=process.env.SAARTHI_GLOBAL_ID_PDFTOPPM}){
+function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=process.env.SAARTHI_GLOBAL_ID_STORAGE_POLICY_VERIFIED==='true',analyzer=process.env.SAARTHI_GLOBAL_ID_PDFTOTEXT,imageAnalyzer=process.env.SAARTHI_GLOBAL_ID_PDFTOHTML,rasterizer=process.env.SAARTHI_GLOBAL_ID_PDFTOPPM,analyzeSource=analyzePdf}){
   const collection='global_id_card_library';
   const refs=id=>{if(!ID.test(id||''))invalid(400,'Invalid template identity');return db.doc(collection+'/'+id);};
   const familyRef=id=>{if(!ID.test(id||''))invalid(400,'Invalid template family');return db.doc('global_id_card_families/'+id);};
@@ -88,7 +88,7 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
   async function developerAction(action,b,actor){
     if(action==='list'){
       const status=await storageStatus();
-      return {success:true,templates:(await list()).map(publicEntry),paymentEnabled:false,
+      return {success:true,templates:(await list()).filter(row=>row.state!=='deleted').map(row=>({...publicEntry(row),detectedKind:row.analysis?.category?.kind||null,categoryEvidence:row.analysis?.category?.evidence||'unknown'})),paymentEnabled:false,
         storageConfigured:!!bucket,storageReady:status.ready,storageReason:status.reason,
         analysisConfigured:!!analyzer,imageAnalysisConfigured:!!imageAnalyzer,reviewRasterizerConfigured:!!rasterizer};
     }
@@ -98,8 +98,28 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
       return {success:true,storageReady:status.ready,storageReason:status.reason,checks,
         ready:status.ready&&checks.text&&checks.imageGeometry&&checks.raster};
     }
+    if(action==='preflight'){
+      const {bytes}=parseSource(b);
+      const analysis=await analyzeSource(bytes,analyzer,imageAnalyzer);
+      return {success:true,category:analysis.category,fields:[...new Set(analysis.pages.flatMap(p=>[
+        ...p.candidates.map(r=>r.key),...(p.imageCandidates||[]).map(r=>r.suggestedRole).filter(Boolean),
+        ...(p.labelSlots||[]).map(r=>r.role)
+      ]))]};
+    }
     if(action==='upload'){
       const {name,kind,bytes,sourceSha256}=parseSource(b);
+      // Analyze before creating any durable object. Explicit heading mismatch
+      // never creates a draft or consumes storage. Unknown heading requires
+      // a human category confirmation on the new upload client.
+      let analysis=null;
+      if(analyzer){
+        analysis=await analyzeSource(bytes,analyzer,imageAnalyzer);
+        if(analysis.category?.evidence==='conflicting_headings')invalid(400,'PDF contains conflicting card categories. Correct the original PDF.');
+        if(analysis.category?.kind&&analysis.category.kind!==kind)
+          invalid(400,'PDF category is '+analysis.category.kind+'. Select the matching category before uploading.');
+        if(!analysis.category?.kind&&b.categoryConfirmed!==true)
+          invalid(400,'PDF category could not be detected. Confirm the correct card category before uploading.');
+      }
       const id='gid-'+randomUUID().replaceAll('-','');
       const ref=refs(id),sourcePath='global-id-card-library/private/'+id+'/source.pdf';
       let parent=null;
@@ -119,6 +139,7 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
       if(sha256(readback)!==sourceSha256)invalid(503,'Source storage readback failed; not registered');
       const row={id,name,kind,familyId,previousId:parent?.id||null,version:1,state:'draft',mappingState:'awaiting_analysis',
         packageVerified:false,sourcePath,sourceSha256,sourceBytes:bytes.length,
+        ...(analysis?{mappingState:'review_required',analysis}:{}),
         accessType:'free',pricePaise:0,currency:'INR',createdBy:actor.uid,
         createdAt:now(),updatedAt:now()};
       await db.runTransaction(async tx=>{
@@ -134,20 +155,6 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
         tx.create(ref,row);
         tx.set(family,{familyId,lastVersion:row.version,currentId:fs.exists?(old.currentId??null):(parent?.id||null),updatedAt:now()},{merge:true});
       });
-      // Upload is durable before analysis begins. Failure keeps the source
-      // retryable and private rather than reporting a false publication.
-      if(analyzer){
-        try{
-          const analysis=await analyzePdf(readback,analyzer,imageAnalyzer);
-          const next={mappingState:'review_required',analysis,updatedAt:now()};
-          await db.runTransaction(async tx=>{
-            const latest=await tx.get(ref);
-            if(latest.data()?.state!=='draft'||latest.data()?.sourceSha256!==sourceSha256)invalid(409,'Draft changed');
-            tx.set(ref,next,{merge:true});
-          });
-          return {success:true,template:publicEntry({...row,...next})};
-        }catch(_){/* Source remains stored; Analyze may retry explicitly. */}
-      }
       return {success:true,template:publicEntry(row)};
     }
     if(action==='analyze'){
@@ -155,7 +162,7 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
       if(!snap.exists||row.state!=='draft')invalid(409,'Open a draft first');
       const [source]=await (await storage()).file(row.sourcePath).download();
       if(source.length>MAX_PDF_BYTES||sha256(source)!==row.sourceSha256)invalid(503,'Source checksum failed');
-      const analysis=await analyzePdf(source,analyzer,imageAnalyzer);
+      const analysis=await analyzeSource(source,analyzer,imageAnalyzer);
       await db.runTransaction(async tx=>{
         const latest=await tx.get(ref);
         if(latest.data()?.state!=='draft'||latest.data()?.sourceSha256!==row.sourceSha256)invalid(409,'Draft changed');
@@ -189,6 +196,9 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
       if(b.reviewConfirmed!==true)invalid(400,'Confirm sample removal, geometry, fonts and real QR replacement');
       const ref=refs(b.id),snap=await ref.get(),row=snap.data();
       if(!snap.exists||row.state!=='draft'||row.mappingState!=='review_required'||b.sourceSha256!==row.sourceSha256)invalid(409,'Analyze the current draft and review its clean package first');
+      if(row.analysis?.category?.kind&&row.analysis.category.kind!==row.kind)
+        invalid(400,'PDF category mismatch. Correct the draft category before publishing.');
+      if(row.analysis?.category?.evidence==='conflicting_headings')invalid(400,'Conflicting card categories');
       const {bytes,sha256:packageSha256,clean}=validatePackage(b.package,row.id);
       verifySourceGeometry(clean,row.analysis?.pages);
       if(row.packageSha256&&row.packageSha256!==packageSha256)invalid(409,'Published package is immutable; upload a new version as a new design');
@@ -203,7 +213,7 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
         const latest=await tx.get(ref),current=latest.data();
         const family=familyRef(row.familyId||row.id),fs=await tx.get(family),familyState=fs.data();
         if(current?.state!=='draft'||current.sourceSha256!==row.sourceSha256||
-           current.mappingState!=='review_required'||JSON.stringify(current.analysis?.pages)!==JSON.stringify(row.analysis?.pages)||
+           current.kind!==row.kind||current.mappingState!=='review_required'||JSON.stringify(current.analysis?.category)!==JSON.stringify(row.analysis?.category)||JSON.stringify(current.analysis?.pages)!==JSON.stringify(row.analysis?.pages)||
            (current.packageSha256&&current.packageSha256!==packageSha256))invalid(409,'Draft changed');
         const next={state:'published',mappingState:'verified',packageVerified:true,packageSha256,packagePath,
           reviewedBy:actor.uid,reviewedAt:now(),updatedAt:now()};
@@ -235,11 +245,41 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
       });
       return {success:true};
     }
+    if(action==='change-category'){
+      if(!KINDS.has(b.kind))invalid(400,'Invalid category');
+      const ref=refs(b.id),snap=await ref.get(),row=snap.data();
+      if(!snap.exists||row.state!=='draft'||row.packageVerified===true||row.previousId||row.version!==1)
+        invalid(409,'Only an unpublished original draft can change category');
+      const [bytes]=await (await storage()).file(row.sourcePath).download();
+      if(bytes.length>MAX_PDF_BYTES||sha256(bytes)!==row.sourceSha256)invalid(503,'Source checksum failed');
+      const analysis=await analyzeSource(bytes,analyzer,imageAnalyzer);
+      if(analysis.category?.kind!==b.kind)invalid(400,'PDF does not explicitly match the requested category');
+      await db.runTransaction(async tx=>{
+        const latest=await tx.get(ref),current=latest.data();
+        if(current?.state!=='draft'||current.packageVerified===true||current.previousId||current.version!==1||
+           current.sourceSha256!==row.sourceSha256||current.kind!==row.kind)invalid(409,'Draft changed');
+        tx.set(ref,{kind:b.kind,analysis,mappingState:'review_required',updatedAt:now(),updatedBy:actor.uid},{merge:true});
+      });
+      return {success:true};
+    }
+    if(action==='delete'){
+      if(b.confirmed!==true)invalid(400,'Confirm deletion of the unpublished draft');
+      const ref=refs(b.id);
+      await db.runTransaction(async tx=>{
+        const snap=await tx.get(ref),row=snap.data();
+        if(!snap.exists||!['draft','archived'].includes(row.state)||row.packageVerified===true||row.packagePath)
+          invalid(409,'Only never-published drafts can be deleted. Archive published revisions instead.');
+        const family=await tx.get(familyRef(row.familyId||row.id));
+        if(family.data()?.currentId===row.id)invalid(409,'Current revision cannot be deleted');
+        tx.set(ref,{state:'deleted',deletedAt:now(),deletedBy:actor.uid,updatedAt:now()},{merge:true});
+      });
+      return {success:true};
+    }
     if(action==='archive'||action==='restore'){
       const ref=refs(b.id);
       const row=await db.runTransaction(async tx=>{
         const snap=await tx.get(ref),old=snap.data();
-        if(!snap.exists)invalid(404,'Template not found');
+        if(!snap.exists||old.state==='deleted')invalid(404,'Template not found');
         const family=familyRef(old.familyId||old.id),fs=await tx.get(family);
         // Restore to draft, never accidentally publish an unreviewed source.
         const next={state:action==='archive'?'archived':'draft',updatedAt:now(),updatedBy:actor.uid};
