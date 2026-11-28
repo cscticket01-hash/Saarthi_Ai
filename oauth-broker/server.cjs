@@ -83,6 +83,17 @@ if (require.main === module) {
         });
         namespaceIsolation = true;
       } catch (_) {}
+      // Query Linux sandbox primitives without processing any uploaded PDF.
+      try {
+        const code = [
+          'import ctypes, ctypes.util, json, platform, os',
+          'libc=ctypes.CDLL(None,use_errno=True)',
+          'abi=libc.syscall(444,0,0,1) if platform.machine() in ("x86_64","aarch64") else -1',
+          'print(json.dumps({"landlockAbi":abi,"seccompLibrary":bool(ctypes.util.find_library("seccomp")),"nonRoot":os.getuid()!=0}))'
+        ].join('\n');
+        const result=await execute('python3',['-I','-c',code],{timeout:4000,maxBuffer:65536,env:{PATH:'/usr/bin:/bin:/usr/local/bin',LANG:'C'}});
+        console.info('ID_PDF_SANDBOX_CAPABILITIES '+JSON.stringify(JSON.parse(result.stdout)));
+      } catch (_) { console.info('ID_PDF_SANDBOX_CAPABILITIES_UNAVAILABLE'); }
       const {probeRuntime} = require('../functions/global-id-card-analysis.js');
       const checks = await probeRuntime(...executables);
       console.info('ID_PDF_HOSTED_SYNTHETIC '+JSON.stringify({executables,checks,namespaceIsolation}));
