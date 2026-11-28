@@ -545,9 +545,9 @@ class GlobalIdCardReview {
       }else{
         try{
           backgrounds[side]=base64Encode(cleanFlatRegions(source,manifest,side,allowSmoothGradient:allowSmoothGradient,sampleMasks:masks));
-        }on FormatException{
-          // Approximate reconstruction cannot establish clean artwork fidelity.
-          throw FormatException('$side: complex background cannot be reliably restored automatically. Supply matching clean original PDF or PNG.');
+        }on FormatException catch(e){
+          // Keep the exact field/boundary diagnostic. Never publish invented artwork.
+          throw FormatException('$side: ${e.message} Supply matching clean original PDF or PNG.');
         }
       }
     }

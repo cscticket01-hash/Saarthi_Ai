@@ -308,16 +308,35 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
       return {success:true};
     }
     if(action==='delete'){
-      if(b.confirmed!==true)invalid(400,'Confirm deletion of the unpublished draft');
+      if(b.confirmed!==true)invalid(400,'Confirm template deletion');
       const ref=refs(b.id);
       await db.runTransaction(async tx=>{
         const snap=await tx.get(ref),row=snap.data();
-        if(!snap.exists||!['draft','archived'].includes(row.state)||row.packageVerified===true||row.packagePath)
-          invalid(409,'Only never-published drafts can be deleted. Archive published revisions instead.');
-        const family=await tx.get(familyRef(row.familyId||row.id));
-        if(family.data()?.currentId===row.id)invalid(409,'Current revision cannot be deleted');
+        if(!snap.exists)invalid(404,'Template not found');
+        if(row.state==='deleted')return;
+        if(!['draft','archived','published'].includes(row.state))invalid(409,'Template cannot be deleted');
+        const published=row.state==='published'||row.packageVerified===true||!!row.packagePath;
+        if(published&&b.revokePublished!==true)invalid(400,'Confirm removal of this published template from all schools');
+        const familyId=row.familyId||row.id,family=familyRef(familyId),fs=await tx.get(family);
+        let replacement=null;
+        if(fs.data()?.currentId===row.id){
+          let previousId=row.previousId;
+          const seen=new Set([row.id]);
+          // Only follow verified ancestors in this family. Never select drafts,
+          // deleted or archived versions, or another category's template.
+          while(ID.test(previousId||'')&&!seen.has(previousId)&&seen.size<=200){
+            seen.add(previousId);
+            const prev=(await tx.get(refs(previousId))).data();
+            if(!prev||(prev.familyId||prev.id)!==familyId||prev.kind!==row.kind)break;
+            if(accessDecision(prev,null,null)&&prev.accessType==='free'){replacement=prev;break;}
+            previousId=prev.previousId;
+          }
+        }
         tx.set(ref,{state:'deleted',deletedAt:now(),deletedBy:actor.uid,updatedAt:now()},{merge:true});
+        if(fs.data()?.currentId===row.id)tx.set(family,{currentId:replacement?.id||null,currentVersion:replacement?.version||0,updatedAt:now()},{merge:true});
       });
+      // Keep private source/package and audit trail; school list and access
+      // checks reject deleted state without deleting school-owned records.
       return {success:true};
     }
     if(action==='archive'||action==='restore'){
