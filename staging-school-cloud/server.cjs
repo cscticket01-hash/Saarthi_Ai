@@ -226,6 +226,14 @@ function fromEnvironment(env) {
     if(staging)throw Object.assign(Error('Legacy school operations are disabled in ID library staging'),{status:404});
     return legacyHandle(req);
   };
+  // Scoped startup maintenance only; does not add an HTTP route or grant
+  // any user permissions. The exact existing PDF draft remains unpublished.
+  if(!staging&&!testSchoolId&&globalIdCardBucket&&r2BucketName==='saarthi-id-library-prod'&&
+     env.RENDER_SERVICE_ID==='srv-db06j2id0e5s73aafdi0'&&env.SAARTHI_ID_LIBRARY_REPAIR_DRAFT==='20261128-pdf'){
+    setTimeout(()=>require('./id-library-runtime-repair.cjs').run({
+      app,db,bucket:globalIdCardBucket,env
+    }).catch(()=>console.info('ID_LIBRARY_PROD_REPAIR_START_FAILED')),1500).unref();
+  }
   return createHandler({handle,projectId,testSchoolId,runtimeCommit:env.RENDER_GIT_COMMIT,adminCredentialFingerprint,...(wrapping||{}),allowedOrigins:(env.SAARTHI_SCHOOL_WEB_ORIGINS || '').split(',').filter(Boolean),health:async()=>{
     await verifyTest();
     await db.doc('_central_staging_health/runtime').get();
