@@ -7,7 +7,12 @@ const {join,dirname}=require('node:path');
 const runRaw=promisify(execFile);
 let activeSandboxJob=false;
 async function run(executable,args,options){
- if(process.env.SAARTHI_GLOBAL_ID_PDF_SANDBOX!=='landlock')return runRaw(executable,args,options);
+ if(process.env.SAARTHI_GLOBAL_ID_PDF_SANDBOX!=='landlock'){
+  const configured=[process.env.SAARTHI_GLOBAL_ID_PDFTOTEXT,process.env.SAARTHI_GLOBAL_ID_PDFTOHTML,process.env.SAARTHI_GLOBAL_ID_PDFTOPPM];
+  if(configured.includes(executable)&&['/usr/bin/pdftotext','/usr/bin/pdftohtml','/usr/bin/pdftoppm'].includes(executable))
+   throw Object.assign(Error('Central PDF sandbox is not configured'),{status:503,publicMessage:true});
+  return runRaw(executable,args,options);
+ }
  if(activeSandboxJob)throw Object.assign(Error('Central PDF analysis is busy; retry shortly'),{status:503,publicMessage:true});
  activeSandboxJob=true;
  try{
