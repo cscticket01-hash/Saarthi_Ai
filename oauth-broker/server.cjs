@@ -112,6 +112,8 @@ if (require.main === module) {
       process.env.SAARTHI_ID_LIBRARY_MAPPING_TEST==='20261128-v2'){
     const {execFile}=require('node:child_process');
     const {resolve}=require('node:path');
+    execFile('/usr/bin/tesseract',['--list-langs'],{timeout:5000,maxBuffer:8192,env:{PATH:'/usr/bin:/bin',LANG:'C'}},
+      (error,stdout)=>console.info('ID_OCR_CAPABILITY '+JSON.stringify({available:!error,english:!error&&stdout.split('\n').includes('eng')})));
     const tests=['global-id-card-analysis.test.js','global-id-card-library.test.js','global-id-card-package.test.js','global-id-card-integration.test.js'];
     execFile(process.execPath,['--test',...tests.map(n=>resolve(__dirname,'../functions/test',n))],
       {timeout:60000,maxBuffer:512*1024,env:{PATH:'/usr/bin:/bin',LANG:'C'}},
