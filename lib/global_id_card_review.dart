@@ -61,12 +61,11 @@ class GlobalIdCardReview {
   /// Suggest a small bounded expansion around the existing text area.
   /// Other dynamic/static candidate regions and page edges are obstacles.
   /// No source pixels are changed; any expansion must be visually reviewed.
-  static List<Map<String,dynamic>> fitOutputRegions(List<Map<String,dynamic>> pages,List<Map<String,dynamic>> input,{bool repairStudentIdOnly=false}){
+  static List<Map<String,dynamic>> fitOutputRegions(List<Map<String,dynamic>> pages,List<Map<String,dynamic>> input,{bool minimumOnly=false}){
     final result=input.map((r)=>Map<String,dynamic>.from(r)).toList();
     for(final r in result){
       if(!textFields.contains(r['key']))continue;
-      if (repairStudentIdOnly &&
-          (r['key'] != 'confirmedUniversalStudentUid' || readabilityIssue(r) == null)) continue;
+      if (minimumOnly && readabilityIssue(r) == null) continue;
       final rotated=r['rotation']==-90;
       if(readabilityIssue(r)==null&&_n(r,rotated?'height':'width')>=_minimumTextWidth(r)&&(r['key']!='address'||_n(r,rotated?'width':'height')>=15.2))continue;
       final matchingPages=pages.where((p)=>p['side']==r['side']).toList(growable:false);
@@ -76,8 +75,8 @@ class GlobalIdCardReview {
       final x=_n(r,'x'),y=_n(r,'y'),w=_n(r,'width'),h=_n(r,'height');
       if(![pw,ph,x,y,w,h].every((v)=>v.isFinite)||x<0||y<0||w<=0||h<=0||x+w>pw||y+h>ph)continue;
       final vertical=r['rotation']==-90;
-      final lineHeight=r['key']=='address'?15.2:7.6;
-      final lineWidth = repairStudentIdOnly ? 6.1 : _minimumTextWidth(r) + .1;
+      final lineHeight=!minimumOnly&&r['key']=='address'?15.2:7.6;
+      final lineWidth = minimumOnly ? 6.1 : _minimumTextWidth(r) + .1;
       final targetW=math.max(w,vertical?lineHeight:lineWidth);
       final targetH=math.max(h,vertical?lineWidth:lineHeight);
       // Only modest automatic expansion; larger corrections need a person.
@@ -94,8 +93,8 @@ class GlobalIdCardReview {
         }
         return true;
       }
-      final xs=[preferredX,if(vertical)x,if(vertical)x-dw];
-      final ys=[preferredY,if(!vertical)y,if(!vertical)y-dh,if(vertical)y];
+      final xs=[preferredX,if(vertical||minimumOnly)...[x, x-dw, x-dw/2]];
+      final ys=[preferredY,y,if(!vertical||minimumOnly)...[y-dh,y-dh/2]];
       bool done=false;
       for(final xx in xs){
         for(final yy in ys){
