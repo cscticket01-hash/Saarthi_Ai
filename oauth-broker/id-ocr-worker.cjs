@@ -13,7 +13,7 @@ async function main(){
  const png=await readFile(input);
  if(png.length<24||png.length>8*1024*1024||png.subarray(0,8).toString('hex')!=='89504e470d0a1a0a'||
    png.readUInt32BE(16)*png.readUInt32BE(20)>6000000)throw Error('invalid OCR raster');
- const selected=mode==='all'?languages:mode==='eng'?['eng']:[mode,'eng'];
+ const selected=mode==='all'?languages:[mode];
  const dir=await mkdtemp(join(tmpdir(),'saarthi-id-models-'));let worker;
  try{
   phase='models';
