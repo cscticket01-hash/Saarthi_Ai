@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 import 'dart:typed_data';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
@@ -15,6 +16,10 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
   List<Map<String,dynamic>> rows=[];
   bool busy=false, storageReady=false, analysisReady=false, imageAnalysisReady=false, rasterReady=false;
   String kind='studentId';
+  final _previews=<String,Future<Map<String,dynamic>>>{};
+  Future<void> _previewTail=Future<void>.value();
+  int _galleryPage=0;
+  static const _pageSize=10;
   String? message;
   String storageReason='not_configured';
   static const categories={'studentId':'Student','teacherId':'Teacher','otherStaffId':'Other Staff'};
@@ -26,6 +31,7 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
       final result=await ManagedDeveloperService.call('id-library/list',{});
       if(!mounted)return;
       setState((){rows=(result['templates'] as List).map((v)=>Map<String,dynamic>.from(v as Map)).toList();
+        _previews.clear();
         storageReady=result['storageReady']==true;storageReason=result['storageReason']?.toString()??'unverified';analysisReady=result['analysisConfigured']==true;
         imageAnalysisReady=result['imageAnalysisConfigured']==true;rasterReady=result['reviewRasterizerConfigured']==true;message=null;});
     }catch(e){if(mounted)setState((){storageReady=false;message='Library unavailable: $e';});}
@@ -241,6 +247,107 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
     finally{if(mounted)setState(()=>busy=false);}
     await refresh();
   }
+
+  Future<Map<String,dynamic>> _preview(Map<String,dynamic> row){
+    final key=[row['id'],row['updatedAt'],row['state']].join(':');
+    return _previews.putIfAbsent(key,(){
+      final request=_previewTail.then((_)async{
+        if(!mounted)throw StateError('Gallery closed');
+        final raw=await ManagedDeveloperService.call('id-library/preview',{'id':row['id']});
+        final rasters=Map<String,dynamic>.from(raw['rasters'] as Map);
+        final images=<String,Uint8List>{for(final e in rasters.entries)e.key:base64Decode(e.value as String)};
+        return <String,dynamic>{'mode':raw['mode'],'images':images,'manifest':raw['manifest'],'rasters':rasters};
+      });
+      _previewTail=request.then<void>((_) {},onError:(Object _,StackTrace __){});
+      return request;
+    });
+  }
+  Widget _previewImage(Map<String,dynamic> data,{bool large=false}){
+    final bytes=(data['images'] as Map<String,Uint8List>)['front'];
+    if(bytes==null)return const Center(child:Icon(Icons.badge_outlined,size:42));
+    return Image.memory(bytes,fit:BoxFit.contain,cacheWidth:large?null:480,
+      errorBuilder:(_,__,___)=>const Center(child:Text('Preview unavailable')));
+  }
+  Future<void> showPreview(Map<String,dynamic> row)async{
+    if(busy)return;
+    await showDialog<void>(context:context,builder:(ctx)=>AlertDialog(
+      title:Text(row['name'].toString()),
+      content:SizedBox(width:620,child:FutureBuilder<Map<String,dynamic>>(future:_preview(row),builder:(_,snapshot){
+        if(snapshot.hasError)return const Text('Preview unavailable. Close and refresh the library to retry.');
+        if(!snapshot.hasData)return const SizedBox(height:160,child:Center(child:CircularProgressIndicator()));
+        final data=snapshot.data!,images=data['images'] as Map<String,Uint8List>;
+        return SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,children:[
+          Text(data['mode']=='private_reference'?'Private original PDF • not published':'Verified clean artwork'),
+          const SizedBox(height:12),_previewImage(data,large:true),
+          if(images['back']!=null)...[const SizedBox(height:12),const Text('Back'),Image.memory(images['back']!,fit:BoxFit.contain)],
+          if(data['mode']=='verified')FutureBuilder<Uint8List>(
+            future:DeveloperGlobalIdPreview.generate({'manifest':data['manifest'],'backgrounds':data['rasters']},row['kind'].toString()),
+            builder:(_,rendered)=>rendered.hasData?Column(children:[const Text('Fictional final print preview'),Image.memory(rendered.data!,fit:BoxFit.contain)]):
+              rendered.hasError?const Text('Final print preview unavailable'):const LinearProgressIndicator()),
+        ]));
+      })),
+      actions:[TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Close'))]));
+  }
+  Widget _gallery(BuildContext context){
+    final visible=rows.where((r)=>r['kind']==kind).toList();
+    if(visible.isEmpty)return const Padding(padding:EdgeInsets.symmetric(vertical:24),child:Center(child:Text('No templates in this category. Upload PDF to add a design.')));
+    final pageCount=(visible.length+_pageSize-1)~/_pageSize;
+    final page=_galleryPage.clamp(0,pageCount-1).toInt();
+    return Column(children:[
+      LayoutBuilder(builder:(ctx,constraints){
+        final width=constraints.maxWidth;
+        final columns=width>=1100?5:width>=840?4:width>=610?3:width>=380?2:1;
+        final itemWidth=(width-(columns-1)*16)/columns;
+        return Wrap(spacing:16,runSpacing:16,children:[
+          for(final row in visible.skip(page*_pageSize).take(_pageSize))
+            SizedBox(width:itemWidth,child:_templateCard(row)),
+        ]);
+      }),
+      if(pageCount>1)Row(mainAxisAlignment:MainAxisAlignment.end,children:[
+        IconButton(tooltip:'Previous page',onPressed:page==0?null:()=>setState(()=>_galleryPage=page-1),icon:const Icon(Icons.chevron_left)),
+        Text((page+1).toString()+' / '+pageCount.toString()),
+        IconButton(tooltip:'Next page',onPressed:page+1>=pageCount?null:()=>setState(()=>_galleryPage=page+1),icon:const Icon(Icons.chevron_right)),
+      ]),
+    ]);
+  }
+  Widget _templateCard(Map<String,dynamic> row){
+    final colors=Theme.of(context).colorScheme;
+    final published=row['state']=='published',draft=row['state']=='draft';
+    final deletable=['draft','archived'].contains(row['state'])&&row['mappingState']!='verified';
+    return Card(margin:EdgeInsets.zero,clipBehavior:Clip.antiAlias,shape:RoundedRectangleBorder(
+      borderRadius:BorderRadius.circular(14),side:BorderSide(color:colors.outlineVariant)),
+      child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+        SizedBox(height:190,child:Stack(children:[
+          Positioned.fill(child:ColoredBox(color:colors.surfaceContainerHighest,child:Padding(
+            padding:const EdgeInsets.fromLTRB(12,34,12,10),
+            child:FutureBuilder<Map<String,dynamic>>(future:_preview(row),builder:(_,snapshot){
+              if(snapshot.hasData)return _previewImage(snapshot.data!);
+              if(snapshot.hasError)return const Center(child:Column(mainAxisSize:MainAxisSize.min,children:[Icon(Icons.picture_as_pdf_outlined,size:36),Text('Preview unavailable')]));
+              return const Center(child:SizedBox(width:22,height:22,child:CircularProgressIndicator(strokeWidth:2)));
+            })))),
+          Positioned(top:8,left:8,child:Container(padding:const EdgeInsets.symmetric(horizontal:8,vertical:4),
+            decoration:BoxDecoration(color:colors.surface,borderRadius:BorderRadius.circular(8)),
+            child:Text(published?'Published':draft?'Draft':'Archived',style:Theme.of(context).textTheme.labelSmall))),
+          Positioned(top:1,right:2,child:Material(color:colors.surface,shape:const CircleBorder(),
+            child:PopupMenuButton<String>(enabled:!busy,tooltip:'Template actions',
+              onSelected:(v){if(v=='review'){review(row);}else if(v=='revision'){upload(row);}else if(v=='current'){makeCurrent(row);}else if(v=='delete'){deleteDraft(row);}else{change(row);}},
+              itemBuilder:(_)=>[
+                if(draft)const PopupMenuItem(value:'review',child:ListTile(dense:true,contentPadding:EdgeInsets.zero,leading:Icon(Icons.publish),title:Text('Publish'))),
+                if(deletable)const PopupMenuItem(value:'delete',child:ListTile(dense:true,contentPadding:EdgeInsets.zero,leading:Icon(Icons.delete_outline),title:Text('Delete'))),
+                if(published)const PopupMenuItem(value:'revision',child:Text('Upload new revision')),
+                if(['published','archived'].contains(row['state'])&&row['mappingState']=='verified'&&row['isCurrent']!=true)const PopupMenuItem(value:'current',child:Text('Restore / make current')),
+                PopupMenuItem(value:'change',child:Text(row['state']=='archived'?'Restore draft':'Archive')),
+              ]))),
+        ])),
+        SizedBox(height:54,child:Padding(padding:const EdgeInsets.fromLTRB(12,10,12,4),child:Text(row['name'].toString(),
+          maxLines:2,overflow:TextOverflow.ellipsis,style:Theme.of(context).textTheme.titleSmall))),
+        Padding(padding:const EdgeInsets.symmetric(horizontal:12),child:Text('v'+row['version'].toString()+' • '+(row['isCurrent']==true?'Current • ':'')+'FREE',
+          style:Theme.of(context).textTheme.labelSmall)),
+        const SizedBox(height:8),
+        const Divider(height:1),
+        TextButton.icon(onPressed:busy?null:()=>showPreview(row),icon:const Icon(Icons.visibility_outlined,size:18),label:const Text('Preview')),
+      ]));
+  }
   @override Widget build(BuildContext context)=>Card(child:Padding(padding:const EdgeInsets.all(20),child:Column(
     crossAxisAlignment:CrossAxisAlignment.start,children:[
       Wrap(spacing:12,runSpacing:8,crossAxisAlignment:WrapCrossAlignment.center,children:[
@@ -252,23 +359,16 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
       ]),
       const SizedBox(height:12),
       Wrap(spacing:8,children:[for(final e in categories.entries)ChoiceChip(label:Text(e.value),
-        selected:kind==e.key,onSelected:busy?null:(_)=>setState(()=>kind=e.key))]),
+        selected:kind==e.key,onSelected:busy?null:(_)=>setState((){kind=e.key;_galleryPage=0;}))]),
       if(busy)const LinearProgressIndicator(),
       if(!storageReady&&!busy)Text('Private template storage is not verified ($storageReason). Upload disabled.'),
       if(storageReady&&!analysisReady)const Text('Central PDF text analysis is not configured; uploads remain private drafts.'),
       if(storageReady&&analysisReady&&!imageAnalysisReady)const Text('Image geometry analysis is not configured; manual image-slot review required.'),
       if(storageReady&&analysisReady&&!rasterReady)const Text('Visual PDF mapper runtime not configured. Reviewed clean packages can still be submitted.'),
       if(message!=null)Text(message!,style:TextStyle(color:Theme.of(context).colorScheme.error)),
-      for(final row in rows.where((r)=>r['kind']==kind))
-        ListTile(title:Text('${row['name']}'),subtitle:Text('v${row['version']} • ${row['state']} • ${row['mappingState']}${row['isCurrent']==true?' • Current':''}'),
-          trailing:PopupMenuButton<String>(enabled:!busy,onSelected:(v){if(v=='review'){review(row);}else if(v=='revision'){upload(row);}else if(v=='current'){makeCurrent(row);}else if(v=='delete'){deleteDraft(row);}else{change(row);}},itemBuilder:(_)=>[
-            if(row['state']=='published')const PopupMenuItem(value:'revision',child:Text('Upload new revision')),
-            if(['published','archived'].contains(row['state'])&&row['mappingState']=='verified'&&row['isCurrent']!=true)const PopupMenuItem(value:'current',child:Text('Restore / make current')),
-            if(row['state']=='draft')const PopupMenuItem(value:'review',child:Text('Analyze / review / publish')),
-            if(row['state']=='draft'&&row['mappingState']!='verified')const PopupMenuItem(value:'delete',child:ListTile(dense:true,contentPadding:EdgeInsets.zero,leading:Icon(Icons.delete_outline),title:Text('Delete draft'))),
-            PopupMenuItem(value:'change',child:Text(row['state']=='archived'?'Restore draft':'Archive')),
-          ])),
-      if(!busy&&!rows.any((r)=>r['kind']==kind))const Padding(padding:EdgeInsets.all(12),child:Text('No templates in this category.')),
+      const SizedBox(height:16),
+      _gallery(context),
+      const SizedBox(height:12),
       const Text('Drafts are private. Text mapping candidates require reviewed clean artwork before publication.'),
     ],
   )));
