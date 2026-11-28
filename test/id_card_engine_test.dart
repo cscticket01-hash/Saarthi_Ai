@@ -2,6 +2,7 @@ import '../lib/school_qr_link.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import '../lib/developer_global_id_mapping_tracker.dart';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -212,7 +213,8 @@ void main() {
     final bounds=tester.getRect(imageFinder);
     final start=bounds.topLeft+Offset(bounds.width*.10,bounds.height*.10);
     final delta=Offset(bounds.width*.18,bounds.height*.30);
-    await tester.dragFrom(start,delta);await tester.pumpAndSettle();
+    final gesture=await tester.startGesture(start,kind:PointerDeviceKind.mouse);
+    await gesture.moveBy(delta);await gesture.up();await tester.pumpAndSettle();
     await tester.tap(find.text('Save Mapping'));await tester.pumpAndSettle();
     expect(saved,isNotNull);
     final row=(saved!['slots'] as List).single as Map;

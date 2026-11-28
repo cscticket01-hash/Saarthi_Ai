@@ -244,7 +244,7 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
       final data=snapshot.data!;
       final current=data.pages.firstWhere((p)=>p['side']==side,orElse:()=>data.pages.first);
       final active=current['side'].toString(),w=n(current,'canvasWidth'),h=n(current,'canvasHeight');
-      final shown=manual?slots:(data.saved==null&&revision==0?data.automatic:slots);
+      final shown=manual?slots:data.automatic;
       final visible=shown.where((r)=>r['side']==active&&r['key']!='__static').toList();
       final tracked=shown.where((r)=>r['key']!=''&&r['key']!='__static'&&r['roleConfidence']!='low').map((r)=>r['key']).toSet();
       final tentative=shown.where((r)=>r['roleConfidence']=='low').map((r)=>r['key']).toSet();
@@ -253,7 +253,8 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
       final image=data.images[active],editable=!data.verified&&widget.save!=null;
       return SingleChildScrollView(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
         Text(widget.name,style:Theme.of(context).textTheme.titleMedium),
-        Text(data.verified?'Approved template mapping • read only':revision>0?'Saved draft mapping • not published':'Automatic detection candidates • not yet approved'),
+        Text(data.verified?'Approved template mapping • read only':manual&&revision>0?'Saved draft mapping • not published':'Automatic detection candidates • not yet approved'),
+        if(!data.verified&&revision>0&&!manual)const Text('Saved corrections are available in Manual Mapping.'),
         if(editable)...[
           const SizedBox(height:8),
           Wrap(spacing:8,children:[

@@ -76,18 +76,8 @@ function parseCandidates(xml){
   // Rotated glyphs must not contaminate ordinary horizontal line grouping.
   const tall=words.filter(w=>w.text.length>=2&&w.bottom-w.y>1.65*(w.right-w.x));
   const vertical=words.filter(w=>tall.includes(w)||(/^(?:id|[-:–—])$/i.test(w.text)&&tall.some(t=>Math.abs((t.x+t.right-w.x-w.right)/2)<3&&Math.max(0,t.y-w.bottom,w.y-t.bottom)<8)));
-  const horizontal=words.filter(w=>!vertical.includes(w));
-  horizontal.sort((a,b)=>(a.y+a.bottom)-(b.y+b.bottom)||a.x-b.x);
-  const rows=[];
-  for(const word of horizontal){
-   const overlap=r=>Math.min(r.bottom,word.bottom)-Math.max(r.y,word.y);
-   const row=rows.find(r=>overlap(r)>=.6*Math.min(r.bottom-r.y,word.bottom-word.y)&&
-    Math.abs((r.y+r.bottom-word.y-word.bottom)/2)<=.45*Math.max(r.bottom-r.y,word.bottom-word.y));
-   if(row)row.words.push(word);
-   else rows.push({y:word.y,bottom:word.bottom,words:[word]});
-  }
+  const verticalIdWords=new Set();
   const labelSlots=[],lineTexts=[];
-  const rowsByPosition=rows.sort((a,b)=>a.y-b.y);
   // Preserve separate continuation lines for address values. A continuation
   // must begin near the address value and remain within one line height.
   let previousAddress=null;
@@ -118,10 +108,23 @@ function parseCandidates(xml){
    }
    for(const g of groups){
     const phrase=g.map(w=>w.text).join(' '),reverse=[...g].reverse().map(w=>w.text).join(' ');
-    if([phrase,reverse].some(t=>/^student\s+id\s*[-:–—]\s*\S+/i.test(t)))
+    if([phrase,reverse].some(t=>/^student\s+id\s*[-:–—]\s*\S+/i.test(t))){
      add('confirmedUniversalStudentUid',g,{evidence:'vertical_id_geometry',rotation:-90});
+     for(const word of g)verticalIdWords.add(word);
+    }
    }
   }
+  const horizontal=words.filter(w=>!verticalIdWords.has(w));
+  horizontal.sort((a,b)=>(a.y+a.bottom)-(b.y+b.bottom)||a.x-b.x);
+  const rows=[];
+  for(const word of horizontal){
+   const overlap=r=>Math.min(r.bottom,word.bottom)-Math.max(r.y,word.y);
+   const row=rows.find(r=>overlap(r)>=.6*Math.min(r.bottom-r.y,word.bottom-word.y)&&
+    Math.abs((r.y+r.bottom-word.y-word.bottom)/2)<=.45*Math.max(r.bottom-r.y,word.bottom-word.y));
+   if(row)row.words.push(word);
+   else rows.push({y:word.y,bottom:word.bottom,words:[word]});
+  }
+  const rowsByPosition=rows.sort((a,b)=>a.y-b.y);
   for(const row of rowsByPosition){
    const line=row.words.sort((a,b)=>a.x-b.x),raw=line.map(w=>w.text).join(' '),norm=normalized(raw);
    lineTexts.push(raw);
