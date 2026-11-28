@@ -3,8 +3,34 @@ const {execFile}=require('node:child_process');
 const {promisify}=require('node:util');
 const {mkdtemp,writeFile,readFile,stat,readdir,rm}=require('node:fs/promises');
 const {tmpdir}=require('node:os');
-const {join}=require('node:path');
-const run=promisify(execFile);
+const {join,dirname}=require('node:path');
+const runRaw=promisify(execFile);
+let activeSandboxJob=false;
+async function run(executable,args,options){
+ if(process.env.SAARTHI_GLOBAL_ID_PDF_SANDBOX!=='landlock'){
+  const configured=[process.env.SAARTHI_GLOBAL_ID_PDFTOTEXT,process.env.SAARTHI_GLOBAL_ID_PDFTOHTML,process.env.SAARTHI_GLOBAL_ID_PDFTOPPM];
+  if(configured.includes(executable)&&['/usr/bin/pdftotext','/usr/bin/pdftohtml','/usr/bin/pdftoppm'].includes(executable))
+   throw Object.assign(Error('Central PDF sandbox is not configured'),{status:503,publicMessage:true});
+  return runRaw(executable,args,options);
+ }
+ if(activeSandboxJob)throw Object.assign(Error('Central PDF analysis is busy; retry shortly'),{status:503,publicMessage:true});
+ activeSandboxJob=true;
+ try{
+  return await runRaw('/usr/bin/python3',['-I','-B',join(__dirname,'id-pdf-sandbox.py'),executable,...args],{
+   ...options,cwd:dirname(args.at(-2)),env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'}
+  });
+ }finally{activeSandboxJob=false;}
+}
+async function probeSandbox(){
+ const dir=await mkdtemp(join(tmpdir(),'saarthi-id-sandbox-'));
+ try{
+  const file=join(dir,'source.pdf');await writeFile(file,syntheticProbePdf(),{mode:0o600});
+  const {stdout}=await runRaw('/usr/bin/python3',['-I','-B',join(__dirname,'id-pdf-sandbox.py'),'--self-test',file],{
+   cwd:dir,timeout:10000,maxBuffer:65536,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'}
+  });
+  return JSON.parse(stdout);
+ }finally{await rm(dir,{recursive:true,force:true});}
+}
 const aliases={name:'name','student name':'name','teacher name':'name','father name':'parentName','father/guardian':'parentName','father/guardain':'parentName','father/guardian name':'parentName','father':'parentName','parent name':'parentName','guardian name':'parentName','dob':'dob','d.o.b':'dob','date of birth':'dob',class:'class','roll no':'rollNo','roll number':'rollNo','ph no':'contact',phone:'contact','phone no':'contact','contact no':'contact',contact:'contact',address:'address',pin:'pinCode','pin code':'pinCode',district:'district',dist:'district',state:'state',country:'country','school name':'schoolName',designation:'designation',subject:'subject'};
 // Optional fictional placeholder phrases are useful for label-free fields in
 // a filled reference. Only exact reserved phrases are recognized.
@@ -261,4 +287,4 @@ async function renderCleanCompanion(bytes,sourcePages,analyzer,rasterizer){
  }
  return renderReviewSource(bytes,sourcePages,rasterizer);
 }
-module.exports={parseCandidates,parseImageCandidates,enrichCandidates,analyzePdf,renderReviewSource,syntheticProbePdf,probeRuntime,renderCleanCompanion};
+module.exports={probeSandbox,parseCandidates,parseImageCandidates,enrichCandidates,analyzePdf,renderReviewSource,syntheticProbePdf,probeRuntime,renderCleanCompanion};
