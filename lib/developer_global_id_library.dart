@@ -66,13 +66,16 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
     if(await picked.length()>8*1024*1024){if(mounted)setState(()=>message='PDF must be at most 8 MiB.');return;}
     if(!mounted)return;
     final name=TextEditingController(text:previous?['name']?.toString()??picked.name.replaceFirst(RegExp(r'\.pdf$',caseSensitive:false),''));
-    bool synthetic=false;
+    bool synthetic=false,cleanTemplate=false;
     final confirmed=await showDialog<bool>(context:context,builder:(ctx)=>StatefulBuilder(builder:(ctx,update)=>AlertDialog(
       title:Text('Upload ${categories[category]} ID Card'),
       content:SizedBox(width:420,child:Column(mainAxisSize:MainAxisSize.min,children:[
         TextField(controller:name,maxLength:100,decoration:const InputDecoration(labelText:'Template name')),
         CheckboxListTile(value:synthetic,onChanged:(v)=>update(()=>synthetic=v==true),
           title:const Text('Fictional sample data only; I have artwork redistribution rights.')),
+        CheckboxListTile(value:cleanTemplate,onChanged:(v)=>update(()=>cleanTemplate=v==true),
+          title:const Text('Clean template PDF'),
+          subtitle:const Text('Sample values, photos and codes have already been removed.')),
         const Text('PDF stays private until mapping and sample removal are verified. All designs are free for now.'),
       ])),
       actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),
@@ -86,8 +89,8 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
       final bytes=await picked.readAsBytes();
       if(bytes.length>8*1024*1024)throw StateError('PDF exceeds size limit');
       final payload=<String,dynamic>{'name':title,'kind':category,'syntheticSampleConfirmed':true,
-        'pdfBase64':base64Encode(bytes),if(previous!=null)'previousId':previous['id']};
-      final preflight=await ManagedDeveloperService.call('id-library/preflight',payload);
+        'pdfBase64':base64Encode(bytes),if(cleanTemplate)'cleanTemplate':true,if(previous!=null)'previousId':previous['id']};
+      final preflight=cleanTemplate?const <String,dynamic>{}:await ManagedDeveloperService.call('id-library/preflight',payload);
       if(!mounted)return;
       final detected=Map<String,dynamic>.from(preflight['category'] as Map? ?? const {});
       final actual=detected['kind']?.toString();
@@ -102,7 +105,7 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
             FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:Text('Use ${categories[actual]??actual}'))]));
         if(move!=true||!mounted)return;
         destination=actual;
-      }else if(actual==null){
+      }else if(actual==null&&!cleanTemplate){
         final confirm=await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(
           title:const Text('Confirm card category'),
           content:Text('The PDF does not contain a clear Student, Teacher or Staff heading. Confirm that it is a ${categories[category]} ID Card.'),
