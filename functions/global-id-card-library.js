@@ -56,7 +56,7 @@ function accessDecision(row,grant,school){
     grant.schoolId===school&&grant.templateId===row.id&&grant.version===row.version&&
     grant.source==='developer_grant';
 }
-function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=process.env.SAARTHI_GLOBAL_ID_STORAGE_POLICY_VERIFIED==='true',analyzer=process.env.SAARTHI_GLOBAL_ID_PDFTOTEXT,imageAnalyzer=process.env.SAARTHI_GLOBAL_ID_PDFTOHTML,rasterizer=process.env.SAARTHI_GLOBAL_ID_PDFTOPPM,analyzeSource=analyzePdf}){
+function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=process.env.SAARTHI_GLOBAL_ID_STORAGE_POLICY_VERIFIED==='true',analyzer=process.env.SAARTHI_GLOBAL_ID_PDFTOTEXT,imageAnalyzer=process.env.SAARTHI_GLOBAL_ID_PDFTOHTML,rasterizer=process.env.SAARTHI_GLOBAL_ID_PDFTOPPM,analyzeSource=analyzePdf,ocrEnabled=process.env.SAARTHI_GLOBAL_ID_OCR_ENABLED==='true'}){
   const collection='global_id_card_library';
   const refs=id=>{if(!ID.test(id||''))invalid(400,'Invalid template identity');return db.doc(collection+'/'+id);};
   const familyRef=id=>{if(!ID.test(id||''))invalid(400,'Invalid template family');return db.doc('global_id_card_families/'+id);};
@@ -90,7 +90,7 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
       const status=await storageStatus();
       return {success:true,templates:(await list()).filter(row=>row.state!=='deleted').map(row=>({...publicEntry(row),detectedKind:row.analysis?.category?.kind||null,categoryEvidence:row.analysis?.category?.evidence||'unknown'})),paymentEnabled:false,
         storageConfigured:!!bucket,storageReady:status.ready,storageReason:status.reason,
-        analysisConfigured:!!analyzer,imageAnalysisConfigured:!!imageAnalyzer,reviewRasterizerConfigured:!!rasterizer};
+        analysisConfigured:!!analyzer,imageAnalysisConfigured:!!imageAnalyzer,reviewRasterizerConfigured:!!rasterizer,ocrConfigured:ocrEnabled&&!!rasterizer};
     }
     if(action==='runtime-check'){
       const status=await storageStatus();
@@ -100,7 +100,7 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
     }
     if(action==='preflight'){
       const {bytes}=parseSource(b);
-      const analysis=await analyzeSource(bytes,analyzer,imageAnalyzer);
+      const analysis=await analyzeSource(bytes,analyzer,imageAnalyzer,{ocr:ocrEnabled,rasterizer});
       return {success:true,category:analysis.category,fields:[...new Set(analysis.pages.flatMap(p=>[
         ...p.candidates.map(r=>r.key),...(p.imageCandidates||[]).map(r=>r.suggestedRole).filter(Boolean),
         ...(p.labelSlots||[]).map(r=>r.role)
@@ -113,7 +113,7 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
       // a human category confirmation on the new upload client.
       let analysis=null;
       if(analyzer){
-        analysis=await analyzeSource(bytes,analyzer,imageAnalyzer);
+        analysis=await analyzeSource(bytes,analyzer,imageAnalyzer,{ocr:ocrEnabled,rasterizer});
         if(analysis.category?.evidence==='conflicting_headings')invalid(400,'PDF contains conflicting card categories. Correct the original PDF.');
         if(analysis.category?.kind&&analysis.category.kind!==kind)
           invalid(400,'PDF category is '+analysis.category.kind+'. Select the matching category before uploading.');
@@ -162,7 +162,7 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
       if(!snap.exists||row.state!=='draft')invalid(409,'Open a draft first');
       const [source]=await (await storage()).file(row.sourcePath).download();
       if(source.length>MAX_PDF_BYTES||sha256(source)!==row.sourceSha256)invalid(503,'Source checksum failed');
-      const analysis=await analyzeSource(source,analyzer,imageAnalyzer);
+      const analysis=await analyzeSource(source,analyzer,imageAnalyzer,{ocr:ocrEnabled,rasterizer});
       await db.runTransaction(async tx=>{
         const latest=await tx.get(ref);
         if(latest.data()?.state!=='draft'||latest.data()?.sourceSha256!==row.sourceSha256)invalid(409,'Draft changed');
@@ -252,7 +252,7 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
         invalid(409,'Only an unpublished original draft can change category');
       const [bytes]=await (await storage()).file(row.sourcePath).download();
       if(bytes.length>MAX_PDF_BYTES||sha256(bytes)!==row.sourceSha256)invalid(503,'Source checksum failed');
-      const analysis=await analyzeSource(bytes,analyzer,imageAnalyzer);
+      const analysis=await analyzeSource(bytes,analyzer,imageAnalyzer,{ocr:ocrEnabled,rasterizer});
       if(analysis.category?.kind!==b.kind)invalid(400,'PDF does not explicitly match the requested category');
       await db.runTransaction(async tx=>{
         const latest=await tx.get(ref),current=latest.data();

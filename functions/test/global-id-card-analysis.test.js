@@ -102,3 +102,23 @@ test('nearby logo text does not incorrectly assign a tall portrait as a logo',()
  assert.ok(page.candidates.some(r=>r.key==='schoolName'));
  assert.ok(page.labelSlots.some(r=>r.role==='logo'));
 });
+
+test('OCR word geometry maps local-script labels and does not retain sample content',()=>{
+ const {toPageXml}=require('../global-id-card-ocr');
+ const fixtures=[
+  ['छात्र पहचान पत्र','नाम:','studentId'],
+  ['শিক্ষক পরিচয় পত্র','নাম:','teacherId'],
+  ['কৰ্মচাৰী পৰিচয় পত্ৰ','নাম:','otherStaffId']
+ ];
+ for(const [heading,label,kind] of fixtures){
+  const p={canvasWidth:240,canvasHeight:150};
+  const words=[{text:heading,bbox:{x0:10,y0:10,x1:220,y1:24},confidence:99},
+   {text:label,bbox:{x0:10,y0:40,x1:40,y1:52},confidence:99},
+   {text:'SampleSecret',bbox:{x0:70,y0:40,x1:150,y1:52},confidence:96},
+   {text:'ignored',bbox:{x0:-1,y0:10,x1:8,y1:16},confidence:99}];
+  const result=parseCandidates(toPageXml({width:240,height:150,words},p))[0];
+  assert.equal(result.category.kind,kind);
+  assert.ok(result.candidates.some(r=>r.key==='name'));
+  assert.equal(JSON.stringify(result).includes('SampleSecret'),false);
+ }
+});
