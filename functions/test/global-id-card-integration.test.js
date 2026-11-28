@@ -188,3 +188,20 @@ test('manual mapping persists geometry only, survives analysis, and rejects stal
  await assert.rejects(library.schoolAction('save-mapping',body,member),{status:400});
  await assert.rejects(library.developerAction('publish',{id:template.id,sourceSha256:row.sourceSha256,reviewConfirmed:true,package:pkg(template.id)},actor),{status:409});
 });
+
+test('edit mapping creates a separate immutable revision from the private source',async()=>{
+ const {library,docs,objects,actor,member}=fixture(true);
+ const source=syntheticProbePdf();
+ const {template}=await library.developerAction('upload',{name:'Synthetic correction',kind:'studentId',syntheticSampleConfirmed:true,pdfBase64:source.toString('base64')},actor);
+ const row=docs.get('global_id_card_library/'+template.id);
+ row.mappingState='review_required';row.analysis={pages:[{side:'front',printWidthMm:54,printHeightMm:54}]};
+ await library.developerAction('publish',{id:template.id,sourceSha256:row.sourceSha256,package:pkg(template.id),reviewConfirmed:true},actor);
+ const before=structuredClone(docs.get('global_id_card_library/'+template.id));
+ const {template:revision}=await library.developerAction('create-revision',{id:template.id},actor);
+ assert.notEqual(revision.id,template.id);assert.equal(revision.version,2);assert.equal(revision.state,'draft');
+ assert.deepEqual(docs.get('global_id_card_library/'+template.id),before);
+ const newRow=docs.get('global_id_card_library/'+revision.id);
+ assert.equal(newRow.sourceSha256,before.sourceSha256);
+ assert.deepEqual(objects.get(newRow.sourcePath),source);
+ await assert.rejects(library.schoolAction('create-revision',{id:template.id},member),{status:400});
+});

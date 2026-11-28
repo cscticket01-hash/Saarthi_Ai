@@ -24,6 +24,7 @@ function sanitizeMapping(slots,pages){
   if(s.align!=null){if(!['left','center','right'].includes(s.align))bad();result.align=s.align;}
   result.rotation=result.kind==='text'&&s.rotation===-90?-90:0;
   result.oval=result.kind==='image'&&s.oval===true;
+  result.sampleOval=s.sampleOval===true;
   result.bold=result.kind==='text'&&s.bold===true;
   result.wrap=result.kind==='text'&&s.wrap===true;
   result.roleConfidence=s.roleConfidence==='low'?'low':'medium';

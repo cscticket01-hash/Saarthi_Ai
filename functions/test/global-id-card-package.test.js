@@ -38,3 +38,9 @@ test('original source geometry and side count cannot be changed by publication',
  assert.throws(()=>verifySourceGeometry(p,[...source,{...source[0],side:'back'}]));
  assert.throws(()=>verifySourceGeometry(p,[{...source[0],side:'back'}]));
 });
+
+test('publication rejects explicit ellipsis and requires verified mapped UID',()=>{
+ const bad=fixture();bad.manifest.regions[0].overflow='ellipsis';assert.throws(()=>validatePackage(bad,id),/truncation/);
+ const p=fixture();p.manifest.regions.push({key:'confirmedUniversalStudentUid',kind:'text',side:'front',x:110,y:100,width:170,height:20,overflow:'error'});
+ const clean=validatePackage(p,id).clean;assert.equal(clean.manifest.regions[0].overflow,'error');assert.equal(clean.manifest.regions[2].required,true);
+});
