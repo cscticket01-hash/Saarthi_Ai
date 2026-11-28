@@ -151,4 +151,84 @@ void main(){
     expect(action,'draft');expect(saved?['mappingRevision'],0);
   });
 
+  test('vertical Student ID repair expands only output and preserves the sample mask', () {
+    final uid = <String, dynamic>{
+      'key': 'confirmedUniversalStudentUid', 'side': 'front', 'rotation': -90,
+      'x': 10.0, 'y': 84.0, 'width': 6.0, 'height': 49.5,
+    };
+    final pages = [
+      <String, dynamic>{'side': 'front', 'canvasWidth': 246, 'canvasHeight': 150},
+    ];
+    final repaired = GlobalIdCardReview.fitOutputRegions(
+      pages, [uid], repairStudentIdOnly: true,
+    ).single;
+    expect(GlobalIdCardReview.readabilityIssue(repaired), isNull);
+    expect(repaired['width'], 7.6);
+    expect(repaired['height'], 49.5);
+    expect(repaired['sample_x'], 10.0);
+    expect(repaired['sample_width'], 6.0);
+    expect(uid['width'], 6.0);
+  });
+
+  testWidgets('resize handles affect only the selected field and keep photos round', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 1450));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final image = img.Image(width: 240, height: 150);
+    final raw = <String, dynamic>{
+      'mode': 'private_reference',
+      'rasters': {'front': base64Encode(img.encodePng(image))},
+      'analysis': {'pages': [
+        {'side': 'front', 'canvasWidth': 240, 'canvasHeight': 150, 'candidates': []},
+      ]},
+      'manualSlots': [
+        {'key': 'logo', 'side': 'front', 'x': 25.0, 'y': 20.0,
+          'width': 35.0, 'height': 25.0, 'sample_x': 25.0, 'sample_width': 35.0},
+        {'key': 'photo', 'side': 'front', 'x': 100.0, 'y': 30.0,
+          'width': 30.0, 'height': 30.0, 'oval': true},
+      ],
+    };
+    Map<String, dynamic>? saved;
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: DeveloperGlobalIdMappingTracker(
+      name: 'Synthetic', kind: 'studentId', data: Future.value(raw),
+      save: (payload) async {
+        saved = payload;
+        return {'mappingRevision': 1};
+      },
+    ))));
+    await tester.pumpAndSettle();
+
+    Offset onCard(double x, double y) {
+      final canvas = tester.getRect(find.byType(Image));
+      return canvas.topLeft + Offset(canvas.width * x / 240, canvas.height * y / 150);
+    }
+    Finder handle(String edge) => find.byKey(ValueKey('mapping-resize-$edge'));
+    await tester.tapAt(onCard(40, 30));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Resize'));
+    await tester.pumpAndSettle();
+    for (final edge in ['top', 'bottom', 'left', 'right']) {
+      expect(handle(edge), findsOneWidget);
+    }
+    await tester.drag(handle('left'), const Offset(-60, 0));
+    await tester.pumpAndSettle();
+
+    await tester.tapAt(onCard(115, 45));
+    await tester.pumpAndSettle();
+    await tester.drag(handle('bottom'), const Offset(0, 60));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save Mapping'));
+    await tester.pumpAndSettle();
+
+    final slots = saved!['slots'] as List;
+    final logo = slots[0] as Map<String, dynamic>;
+    final photo = slots[1] as Map<String, dynamic>;
+    expect(logo['x'], lessThan(25.0));
+    expect(logo['height'], 25.0);
+    expect(logo['sample_x'], 25.0);
+    expect(logo['sample_width'], 35.0);
+    expect(photo['width'], greaterThan(30.0));
+    expect(photo['height'], photo['width']);
+    expect((photo['x'] as num) + (photo['width'] as num) / 2, closeTo(115, .01));
+  });
+
 }

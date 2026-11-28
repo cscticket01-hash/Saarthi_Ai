@@ -61,10 +61,12 @@ class GlobalIdCardReview {
   /// Suggest a small bounded expansion around the existing text area.
   /// Other dynamic/static candidate regions and page edges are obstacles.
   /// No source pixels are changed; any expansion must be visually reviewed.
-  static List<Map<String,dynamic>> fitOutputRegions(List<Map<String,dynamic>> pages,List<Map<String,dynamic>> input){
+  static List<Map<String,dynamic>> fitOutputRegions(List<Map<String,dynamic>> pages,List<Map<String,dynamic>> input,{bool repairStudentIdOnly=false}){
     final result=input.map((r)=>Map<String,dynamic>.from(r)).toList();
     for(final r in result){
       if(!textFields.contains(r['key']))continue;
+      if (repairStudentIdOnly &&
+          (r['key'] != 'confirmedUniversalStudentUid' || readabilityIssue(r) == null)) continue;
       final rotated=r['rotation']==-90;
       if(readabilityIssue(r)==null&&_n(r,rotated?'height':'width')>=_minimumTextWidth(r)&&(r['key']!='address'||_n(r,rotated?'width':'height')>=15.2))continue;
       final matchingPages=pages.where((p)=>p['side']==r['side']).toList(growable:false);
@@ -75,8 +77,9 @@ class GlobalIdCardReview {
       if(![pw,ph,x,y,w,h].every((v)=>v.isFinite)||x<0||y<0||w<=0||h<=0||x+w>pw||y+h>ph)continue;
       final vertical=r['rotation']==-90;
       final lineHeight=r['key']=='address'?15.2:7.6;
-      final targetW=math.max(w,vertical?lineHeight:_minimumTextWidth(r)+.1);
-      final targetH=math.max(h,vertical?_minimumTextWidth(r)+.1:lineHeight);
+      final lineWidth = repairStudentIdOnly ? 6.1 : _minimumTextWidth(r) + .1;
+      final targetW=math.max(w,vertical?lineHeight:lineWidth);
+      final targetH=math.max(h,vertical?lineWidth:lineHeight);
       // Only modest automatic expansion; larger corrections need a person.
       if(targetW-w>(vertical?5:math.min(65,pw*.28))||targetH-h>(vertical?math.min(65,ph*.45):r['key']=='address'?12:5))continue;
       final dw=targetW-w,dh=targetH-h;
