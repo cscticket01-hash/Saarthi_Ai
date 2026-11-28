@@ -73,10 +73,40 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
     try {
       final bytes=await picked.readAsBytes();
       if(bytes.length>8*1024*1024)throw StateError('PDF exceeds size limit');
-      await ManagedDeveloperService.call('id-library/upload',{
-        'name':title,'kind':category,'syntheticSampleConfirmed':true,'pdfBase64':base64Encode(bytes),
-        if(previous!=null)'previousId':previous['id'],
-      });
+      final payload=<String,dynamic>{'name':title,'kind':category,'syntheticSampleConfirmed':true,
+        'pdfBase64':base64Encode(bytes),if(previous!=null)'previousId':previous['id']};
+      final preflight=await ManagedDeveloperService.call('id-library/preflight',payload);
+      if(!mounted)return;
+      final detected=Map<String,dynamic>.from(preflight['category'] as Map? ?? const {});
+      final actual=detected['kind']?.toString();
+      if(detected['evidence']=='conflicting_headings')throw StateError('PDF contains conflicting card categories.');
+      var destination=category;
+      if(actual!=null&&actual!=category){
+        if(previous!=null)throw StateError('PDF belongs to a different category from this revision.');
+        final move=await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(
+          title:const Text('Wrong category detected'),
+          content:Text('This PDF is a ${categories[actual]??actual} ID Card, not a ${categories[category]} ID Card. Save it under the correct category? No draft has been uploaded yet.'),
+          actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),
+            FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:Text('Use ${categories[actual]??actual}'))]));
+        if(move!=true||!mounted)return;
+        destination=actual;
+      }else if(actual==null){
+        final confirm=await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(
+          title:const Text('Confirm card category'),
+          content:Text('The PDF does not contain a clear Student, Teacher or Staff heading. Confirm that it is a ${categories[category]} ID Card.'),
+          actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),
+            FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Confirm category'))]));
+        if(confirm!=true||!mounted)return;
+      }
+      final uploaded=await ManagedDeveloperService.call('id-library/upload',{...payload,'kind':destination,'categoryConfirmed':true});
+      if(!mounted)return;
+      setState(()=>kind=destination);
+      final draft=Map<String,dynamic>.from(uploaded['template'] as Map);
+      // Continue directly into the existing review flow after successful upload.
+      setState(()=>busy=false);
+      await refresh();
+      if(mounted&&draft['mappingState']=='review_required')await review(draft);
+
     }catch(e){if(mounted)setState(()=>message='Upload failed: $e');return;}
     finally{if(mounted)setState(()=>busy=false);}
     await refresh();
@@ -88,18 +118,24 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
       final result=await ManagedDeveloperService.call('id-library/analyze',{'id':row['id']});
       if(!mounted)return;
       final analysis=Map<String,dynamic>.from(result['analysis'] as Map);
-      final proceed=await showDialog<String>(context:context,builder:(ctx)=>AlertDialog(
-        title:const Text('Mapping review required'),
-        content:SizedBox(width:560,child:SingleChildScrollView(child:Column(
-          crossAxisAlignment:CrossAxisAlignment.start,children:[
-            Text('Template ID: ${row['id']}'),
-            const Text('These are text candidates, not an automatically cleaned card. Review every field and remove all fictional text, QR and images.'),
-            SelectableText(const JsonEncoder.withIndent('  ').convert(analysis)),
-            const Text('Select a reviewed JSON package containing the matching manifest and clean front/back PNG artwork (base64).'),
-          ]))),
-        actions:[TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Close')),
-          if(rasterReady)FilledButton(onPressed:()=>Navigator.pop(ctx,'editor'),child:const Text('Open visual mapper')),
-          TextButton(onPressed:()=>Navigator.pop(ctx,'file'),child:const Text('Choose reviewed package'))]));
+      final detected=(analysis['category'] as Map?)?['kind']?.toString();
+      if(detected!=null&&detected!=row['kind']){
+        final move=await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(
+          title:const Text('Correct the template category'),
+          content:Text('This PDF is a ${categories[detected]??detected} ID Card. Move the existing unpublished draft to the correct category without uploading it again?'),
+          actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),
+            FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Move draft'))]));
+        if(move!=true||!mounted)return;
+        await ManagedDeveloperService.call('id-library/change-category',{'id':row['id'],'kind':detected});
+        if(!mounted)return;
+        setState(()=>kind=detected);
+      }
+      if((analysis['category'] as Map?)?['evidence']=='conflicting_headings')throw StateError('PDF contains conflicting card categories.');
+      // Prefer the visual editor directly rather than showing raw analysis JSON.
+      final proceed=rasterReady?'editor':await showDialog<String>(context:context,builder:(ctx)=>AlertDialog(
+        title:const Text('Review required'),content:const Text('Visual PDF rendering is unavailable. Use a reviewed clean package or cancel.'),
+        actions:[TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Cancel')),
+          FilledButton(onPressed:()=>Navigator.pop(ctx,'file'),child:const Text('Choose reviewed package'))]));
       if(proceed==null||!mounted)return;
       Map<String,dynamic>? package;
       if(proceed=='editor'){
@@ -174,6 +210,20 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
     finally{if(mounted)setState(()=>busy=false);}
     await refresh();
   }
+  Future<void> deleteDraft(Map<String,dynamic> row) async {
+    if(busy)return;
+    final ok=await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(
+      title:const Text('Delete unpublished draft?'),
+      content:Text('${row['name']} will disappear from the library. Its private source and deletion history are retained for safe recovery. Published templates and school ID cards are not affected.'),
+      actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),
+        FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Delete draft'))]));
+    if(ok!=true||!mounted)return;
+    setState(()=>busy=true);
+    try{await ManagedDeveloperService.call('id-library/delete',{'id':row['id'],'confirmed':true});}
+    catch(e){if(mounted)setState(()=>message='Delete failed: $e');return;}
+    finally{if(mounted)setState(()=>busy=false);}
+    await refresh();
+  }
   @override Widget build(BuildContext context)=>Card(child:Padding(padding:const EdgeInsets.all(20),child:Column(
     crossAxisAlignment:CrossAxisAlignment.start,children:[
       Wrap(spacing:12,runSpacing:8,crossAxisAlignment:WrapCrossAlignment.center,children:[
@@ -194,10 +244,11 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
       if(message!=null)Text(message!,style:TextStyle(color:Theme.of(context).colorScheme.error)),
       for(final row in rows.where((r)=>r['kind']==kind))
         ListTile(title:Text('${row['name']}'),subtitle:Text('v${row['version']} • ${row['state']} • ${row['mappingState']}${row['isCurrent']==true?' • Current':''}'),
-          trailing:PopupMenuButton<String>(enabled:!busy,onSelected:(v){if(v=='review'){review(row);}else if(v=='revision'){upload(row);}else if(v=='current'){makeCurrent(row);}else{change(row);}},itemBuilder:(_)=>[
+          trailing:PopupMenuButton<String>(enabled:!busy,onSelected:(v){if(v=='review'){review(row);}else if(v=='revision'){upload(row);}else if(v=='current'){makeCurrent(row);}else if(v=='delete'){deleteDraft(row);}else{change(row);}},itemBuilder:(_)=>[
             if(row['state']=='published')const PopupMenuItem(value:'revision',child:Text('Upload new revision')),
             if(['published','archived'].contains(row['state'])&&row['mappingState']=='verified'&&row['isCurrent']!=true)const PopupMenuItem(value:'current',child:Text('Restore / make current')),
             if(row['state']=='draft')const PopupMenuItem(value:'review',child:Text('Analyze / review / publish')),
+            if(row['state']=='draft'&&row['mappingState']!='verified')const PopupMenuItem(value:'delete',child:ListTile(dense:true,contentPadding:EdgeInsets.zero,leading:Icon(Icons.delete_outline),title:Text('Delete draft'))),
             PopupMenuItem(value:'change',child:Text(row['state']=='archived'?'Restore draft':'Archive')),
           ])),
       if(!busy&&!rows.any((r)=>r['kind']==kind))const Padding(padding:EdgeInsets.all(12),child:Text('No templates in this category.')),
