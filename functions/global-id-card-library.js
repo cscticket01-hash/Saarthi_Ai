@@ -107,6 +107,15 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
         ...(p.labelSlots||[]).map(r=>r.role)
       ]))]};
     }
+    if(action==='create-revision'){
+      // Never alter a published package. Reuse the private original after a
+      // checksum readback and create a fresh draft via the regular upload gate.
+      const snap=await refs(b.id).get(),row=snap.data();
+      if(!snap.exists||row.state!=='published'||row.packageVerified!==true||row.accessType!=='free')invalid(409,'Only a published free template can be revised');
+      const [source]=await (await storage()).file(row.sourcePath).download();
+      if(source.length>MAX_PDF_BYTES||sha256(source)!==row.sourceSha256)invalid(503,'Original source checksum failed');
+      return developerAction('upload',{name:row.name,kind:row.kind,previousId:row.id,syntheticSampleConfirmed:true,categoryConfirmed:true,pdfBase64:source.toString('base64')},actor);
+    }
     if(action==='upload'){
       const {name,kind,bytes,sourceSha256}=parseSource(b);
       // Analyze before creating any durable object. Explicit heading mismatch
