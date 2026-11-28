@@ -107,3 +107,41 @@ test('R2 enforces the 2 GB reservation before writing and does not double-count 
  await assert.rejects(bucket.file(another).save(Buffer.from('PDF'),options),{status:507});
  assert.equal(objects.size,1);
 });
+
+test('category preflight and wrong-category upload create no durable data; correction retains the source',async()=>{
+ const {db,bucket,objects,docs,actor,clock}=fixture(true);
+ const analysis={category:{kind:'studentId',evidence:'explicit_card_heading'},pages:[{side:'front',candidates:[],imageCandidates:[],labelSlots:[]}]};
+ const library=createGlobalIdCardLibrary({db,bucket,policyReviewed:true,now:()=>clock,analyzer:'test',analyzeSource:async()=>analysis});
+ const payload={name:'Synthetic student card',kind:'teacherId',syntheticSampleConfirmed:true,pdfBase64:syntheticProbePdf().toString('base64')};
+ const p=await library.developerAction('preflight',payload,actor);
+ assert.equal(p.category.kind,'studentId');assert.equal(objects.size,0);assert.equal(docs.size,0);
+ await assert.rejects(library.developerAction('upload',payload,actor),{status:400});
+ assert.equal(objects.size,0);assert.equal(docs.size,0);
+ const {template}=await library.developerAction('upload',{...payload,kind:'studentId'},actor);
+ const row=docs.get('global_id_card_library/'+template.id);
+ const before=row.sourceSha256;
+ // Emulate a legacy wrongly classified draft only.
+ row.kind='teacherId';
+ await library.developerAction('change-category',{id:template.id,kind:'studentId'},actor);
+ assert.equal(docs.get('global_id_card_library/'+template.id).kind,'studentId');
+ assert.equal(docs.get('global_id_card_library/'+template.id).sourceSha256,before);
+ assert.equal(objects.size,1);
+});
+test('unknown category needs explicit confirmation; delete hides only never-published drafts',async()=>{
+ const {db,bucket,docs,objects,actor,member,clock}=fixture(true);
+ const library=createGlobalIdCardLibrary({db,bucket,policyReviewed:true,now:()=>clock,analyzer:'test',analyzeSource:async()=>({category:{kind:null,evidence:'unknown'},pages:[]})});
+ const payload={name:'Synthetic',kind:'teacherId',syntheticSampleConfirmed:true,pdfBase64:syntheticProbePdf().toString('base64')};
+ await assert.rejects(library.developerAction('upload',payload,actor),{status:400});
+ const {template}=await library.developerAction('upload',{...payload,categoryConfirmed:true},actor);
+ await assert.rejects(library.developerAction('delete',{id:template.id},actor),{status:400});
+ await library.developerAction('delete',{id:template.id,confirmed:true},actor);
+ assert.equal(docs.get('global_id_card_library/'+template.id).state,'deleted');
+ assert.equal(objects.size,1);
+ assert.equal((await library.developerAction('list',{},actor)).templates.length,0);
+ assert.equal((await library.schoolAction('list',{},member)).templates.length,0);
+ await assert.rejects(library.developerAction('restore',{id:template.id},actor),{status:404});
+ const {template:published}=await library.developerAction('upload',{...payload,categoryConfirmed:true},actor);
+ docs.get('global_id_card_library/'+published.id).state='published';
+ docs.get('global_id_card_library/'+published.id).packageVerified=true;
+ await assert.rejects(library.developerAction('delete',{id:published.id,confirmed:true},actor),{status:409});
+});
