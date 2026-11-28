@@ -270,4 +270,22 @@ void main(){
     expect(repaired.getPixel(80, 40).r, 90);
   });
 
+  test('clean template publishes the source artwork without erasing output regions', () {
+    final image = img.Image(width: 400, height: 200, numChannels: 4);
+    img.fill(image, color: img.ColorRgba8(255, 255, 255, 255));
+    image.setPixelRgba(110, 60, 0, 90, 120, 255);
+    final png = Uint8List.fromList(img.encodePng(image));
+    final pages = <Map<String,dynamic>>[
+      {'side':'front','canvasWidth':200,'canvasHeight':100,
+       'printWidthMm':100,'printHeightMm':50,
+       'blankTextLabels':[{'key':'name','x':20,'y':30,'width':26,'rightLimit':140}]},
+    ];
+    final slots = GlobalIdCardReview.cleanTemplateSlots(pages);
+    expect(slots.single['key'], 'name');
+    slots.add({'key':'qr','side':'front','x':145,'y':45,'width':35,'height':35});
+    final result = GlobalIdCardReview.package('gid-test', pages, slots,
+      {'front':png}, useSourceArtwork:true);
+    expect((result['backgrounds'] as Map)['front'], base64Encode(png));
+  });
+
 }
