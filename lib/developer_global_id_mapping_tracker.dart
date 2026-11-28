@@ -498,6 +498,6 @@ class _Mapping{
     final pages=(analysis['pages'] as List).map((r)=>Map<String,dynamic>.from(r as Map)).toList();
     if(pages.isEmpty)throw const FormatException('No analyzed pages');
     final saved=(raw['manualSlots'] as List?)?.map((r)=>Map<String,dynamic>.from(r as Map)).toList();
-    return _Mapping(false,pages,GlobalIdCardReview.detectSlots(pages,images),images,(analysis['category'] as Map?)?['kind']?.toString(),saved,raw['sourceSha256'] as String?,(raw['mappingRevision'] as num?)?.toInt()??0);
+    return _Mapping(false,pages,analysis['cleanTemplate']==true?GlobalIdCardReview.cleanTemplateSlots(pages):GlobalIdCardReview.detectSlots(pages,images),images,(analysis['category'] as Map?)?['kind']?.toString(),saved,raw['sourceSha256'] as String?,(raw['mappingRevision'] as num?)?.toInt()??0);
   }
 }

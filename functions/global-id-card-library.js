@@ -121,9 +121,26 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
       // Analyze before creating any durable object. Explicit heading mismatch
       // never creates a draft or consumes storage. Unknown heading requires
       // a human category confirmation on the new upload client.
+      const cleanTemplate=b.cleanTemplate===true;
       let analysis=null;
-      if(analyzer){
+      if(cleanTemplate){
+        if(b.categoryConfirmed!==true)invalid(400,'Confirm the template category first.');
+        let detected;
+        try{detected=await analyzeSource(bytes,analyzer,imageAnalyzer,{ocr:false,rasterizer});}
+        catch(_){/* Manual mapping remains available if raster validation succeeds. */}
+        const rasters=await renderSource(bytes,null,rasterizer,600);
+        if(detected&&detected.pages.length!==Object.keys(rasters).length)invalid(400,'PDF analysis and render page counts differ.');
+        const pages=detected?.pages??Object.entries(rasters).map(([side,png])=>{
+          const header=Buffer.from(png.slice(0,32),'base64');
+          const w=header.readUInt32BE(16),h=header.readUInt32BE(20);
+          return {side,canvasWidth:w*72/600,canvasHeight:h*72/600,
+            printWidthMm:w*25.4/600,printHeightMm:h*25.4/600,candidates:[]};
+        });
+        analysis={...detected,pages,cleanTemplate:true};
+      }else if(analyzer){
         analysis=await analyzeSource(bytes,analyzer,imageAnalyzer,{ocr:ocrEnabled,rasterizer});
+      }
+      if(analysis){
         if(analysis.category?.evidence==='conflicting_headings')invalid(400,'PDF contains conflicting card categories. Correct the original PDF.');
         if(analysis.category?.kind&&analysis.category.kind!==kind)
           invalid(400,'PDF category is '+analysis.category.kind+'. Select the matching category before uploading.');
@@ -172,7 +189,7 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
       if(!snap.exists||row.state!=='draft')invalid(409,'Open a draft first');
       const [source]=await (await storage()).file(row.sourcePath).download();
       if(source.length>MAX_PDF_BYTES||sha256(source)!==row.sourceSha256)invalid(503,'Source checksum failed');
-      const analysis=b.force===true||!row.analysis?.pages?.length||!row.analysis.pages.every(p=>Array.isArray(p.candidates))?await analyzeSource(source,analyzer,imageAnalyzer,{ocr:ocrEnabled,rasterizer}):row.analysis;
+      const analysis=(b.force===true&&!row.analysis?.cleanTemplate)||!row.analysis?.pages?.length||!row.analysis.pages.every(p=>Array.isArray(p.candidates))?await analyzeSource(source,analyzer,imageAnalyzer,{ocr:ocrEnabled,rasterizer}):row.analysis;
       await db.runTransaction(async tx=>{
         const latest=await tx.get(ref);
         if(latest.data()?.state!=='draft'||latest.data()?.sourceSha256!==row.sourceSha256)invalid(409,'Draft changed');
@@ -186,7 +203,7 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
         !Number.isInteger(b.mappingRevision)||b.mappingRevision!==(row.mappingRevision||0))invalid(409,'Draft or mapping changed. Reopen it.');
       const [source]=await (await storage()).file(row.sourcePath).download();
       if(source.length>MAX_PDF_BYTES||sha256(source)!==row.sourceSha256)invalid(503,'Source checksum failed');
-      const analysis=b.force===true||!row.analysis?.pages?.length||!row.analysis.pages.every(p=>Array.isArray(p.candidates))?await analyzeSource(source,analyzer,imageAnalyzer,{ocr:ocrEnabled,rasterizer}):row.analysis;
+      const analysis=(b.force===true&&!row.analysis?.cleanTemplate)||!row.analysis?.pages?.length||!row.analysis.pages.every(p=>Array.isArray(p.candidates))?await analyzeSource(source,analyzer,imageAnalyzer,{ocr:ocrEnabled,rasterizer}):row.analysis;
       const manualSlots=sanitizeMapping(b.slots,analysis.pages),mappingRevision=b.mappingRevision+1;
       await db.runTransaction(async tx=>{
         const latest=await tx.get(ref),current=latest.data();
