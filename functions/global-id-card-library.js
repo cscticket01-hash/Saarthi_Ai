@@ -89,7 +89,7 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
   async function developerAction(action,b,actor){
     if(action==='list'){
       const status=await storageStatus();
-      return {success:true,templates:(await list()).filter(row=>row.state!=='deleted').map(row=>({...publicEntry(row),detectedKind:row.analysis?.category?.kind||null,categoryEvidence:row.analysis?.category?.evidence||'unknown'})),paymentEnabled:false,
+      return {success:true,templates:(await list()).filter(row=>row.state!=='deleted').map(row=>({...publicEntry(row),schoolSelectionObserved:row.schoolSelectionObserved===true,detectedKind:row.analysis?.category?.kind||null,categoryEvidence:row.analysis?.category?.evidence||'unknown'})),paymentEnabled:false,
         storageConfigured:!!bucket,storageReady:status.ready,storageReason:status.reason,
         analysisConfigured:!!analyzer,imageAnalysisConfigured:!!imageAnalyzer,reviewRasterizerConfigured:!!rasterizer,ocrConfigured:ocrEnabled&&!!rasterizer};
     }

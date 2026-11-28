@@ -357,7 +357,7 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
   Widget _templateCard(Map<String,dynamic> row){
     final colors=Theme.of(context).colorScheme;
     final published=row['state']=='published',draft=row['state']=='draft';
-    final deletable=['draft','archived','published'].contains(row['state']);
+    final deletable=['draft','archived','published'].contains(row['state'])&&row['schoolSelectionObserved']!=true;
     final removing=deleting.contains(row['id'].toString());
     return Card(margin:EdgeInsets.zero,clipBehavior:Clip.antiAlias,shape:RoundedRectangleBorder(
       borderRadius:BorderRadius.circular(14),side:BorderSide(color:colors.outlineVariant)),
@@ -380,6 +380,7 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
                 if(draft)const PopupMenuItem(value:'review',child:ListTile(dense:true,contentPadding:EdgeInsets.zero,leading:Icon(Icons.publish),title:Text('Publish'))),
                 const PopupMenuItem(value:'track',child:ListTile(dense:true,contentPadding:EdgeInsets.zero,leading:Icon(Icons.track_changes),title:Text('Track Mapping Data'))),
                 if(deletable)const PopupMenuItem(value:'delete',child:ListTile(dense:true,contentPadding:EdgeInsets.zero,leading:Icon(Icons.delete_outline),title:Text('Delete'))),
+                if(row['schoolSelectionObserved']==true)const PopupMenuItem(enabled:false,child:ListTile(dense:true,contentPadding:EdgeInsets.zero,leading:Icon(Icons.lock_outline),title:Text('Protected • school selection'))),
                 if(published)const PopupMenuItem(value:'edit-mapping',child:Text('Edit Mapping in new revision')),
                 if(published)const PopupMenuItem(value:'revision',child:Text('Upload new revision')),
                 if(['published','archived'].contains(row['state'])&&row['mappingState']=='verified'&&row['isCurrent']!=true)const PopupMenuItem(value:'current',child:Text('Restore / make current')),
