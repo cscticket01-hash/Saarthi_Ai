@@ -227,7 +227,7 @@ function fromEnvironment(env) {
     return legacyHandle(req);
   };
   // Explicit one-shot synthetic acceptance; never enabled on production.
-  if(staging&&globalIdCardBucket&&env.SAARTHI_ID_LIBRARY_E2E_PROBE==='20261128-b'&&
+  if(staging&&globalIdCardBucket&&env.SAARTHI_ID_LIBRARY_E2E_PROBE==='20261128-c'&&
      env.RENDER_SERVICE_ID==='srv-dc4skhlg1s2s73flu6q0'){
     setTimeout(()=>require('./id-library-e2e-probe.cjs').run({
       app,auth,db,bucket:globalIdCardBucket,env
