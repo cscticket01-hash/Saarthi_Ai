@@ -47,8 +47,8 @@ async function run({app,auth,db,bucket,env}){
   if(app.options.projectId!==project||env.SAARTHI_ID_LIBRARY_STAGING!=='true'||
      env.SAARTHI_GLOBAL_ID_R2_BUCKET!==bucketName||
      env.RENDER_SERVICE_ID!=='srv-dc4skhlg1s2s73flu6q0'||
-     env.SAARTHI_ID_LIBRARY_E2E_PROBE!=='20261128-b')return;
-  const checks={},mark=db.doc('_id_library_staging_probe/20261128-b');
+     env.SAARTHI_ID_LIBRARY_E2E_PROBE!=='20261128-c')return;
+  const checks={},mark=db.doc('_id_library_staging_probe/20261128-c');
   let devUid,schoolUid,schoolId,devToken,id,claimed=false,step='probe-lock';
   const port=Number(env.PORT||8080),base='http://127.0.0.1:'+port+'/school-cloud';
   const call=async(action,body,token,expected=200)=>{
@@ -100,6 +100,14 @@ async function run({app,auth,db,bucket,env}){
     requireCheck(row.sourceSha256===sourceSha256&&row.sourcePath==='global-id-card-library/private/'+id+'/source.pdf','source-registration');
     const [readback]=await bucket.file(row.sourcePath).download();
     requireCheck(hash(readback)===sourceSha256,'r2-source-readback');checks.sourceChecksum=true;
+    const account=env.SAARTHI_GLOBAL_ID_R2_ACCOUNT_ID;
+    requireCheck(/^[a-f0-9]{32}$/.test(account||''),'staging-r2-account');
+    const unsigned=await fetch('https://'+account+'.r2.cloudflarestorage.com/'+bucketName+'/'+row.sourcePath,{
+      method:'GET',signal:AbortSignal.timeout(10000),redirect:'error'
+    });
+    await unsigned.body?.cancel();
+    requireCheck([401,403,404].includes(unsigned.status),'unsigned-r2-source-denial');
+    checks.privateSourceDenied=true;
     step='draft-access-denial';
     requireCheck(!(await school('list')).templates.some(t=>t.id===id),'draft-hidden');
     await school('package',{id,version:1},403);checks.draftHidden=true;
