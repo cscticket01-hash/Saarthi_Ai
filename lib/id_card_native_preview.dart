@@ -8,6 +8,8 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 import 'id_card_engine.dart';
 import 'id_card_manifest.dart';
+import 'id_card_layout.dart';
+import 'id_card_identity.dart';
 import 'windows_appearance.dart';
 
 /// Native preview reads the same manifest and data as export. No PDF is built
@@ -43,6 +45,22 @@ class _NativeIdCardPreviewState extends State<NativeIdCardPreview> {
   String? error;
   final printBoundaries = {'front': GlobalKey(), 'back': GlobalKey()};
 
+  TextStyle globalStyle(IdCardRegion r,double size)=>TextStyle(
+    color:Color(0xff000000|int.parse(r.textColor.substring(1),radix:16)),
+    fontSize:size,fontFamily:'VidyaIdCardSans',height:1.25,
+    fontWeight:r.bold?FontWeight.bold:null,
+    fontFamilyFallback:const ['VidyaNotoBengali','VidyaNotoDevanagari']);
+  FittedIdText fitGlobal(IdCardRegion r,Map<String,dynamic> data){
+    final value=r.label+(data[r.key]?.toString()??'');
+    try{
+      return IdCardLayout.fitText(value,width:r.contentWidth,height:r.contentHeight,
+        measure:(s){
+          final p=TextPainter(text:TextSpan(text:s,style:globalStyle(r,1)),
+            textDirection:TextDirection.ltr,maxLines:1)..layout();
+          final width=p.width;p.dispose();return width;
+        },fontSize:r.fontSize,minFontSize:r.minFontSize,wrap:r.wrap,maxLines:r.maxLines,overflow:'error');
+    }on FormatException catch(e){throw FormatException('${r.key} (${r.side}): ${e.message}');}
+  }
   Widget content(IdCardRegion r, Map<String, dynamic> data, String qr) {
     if (r.kind == 'image') {
       final bytes = widget.images[r.key];
@@ -54,6 +72,10 @@ class _NativeIdCardPreviewState extends State<NativeIdCardPreview> {
       return r.shape == 'oval' ? ClipOval(child: photo) : photo;
     }
     if (r.kind == 'qr') {
+      if(qr.isNotEmpty&&IdCardIdentity.isGlobalId(widget.template.id)){
+        final side=math.min(r.contentWidth,r.contentHeight);
+        return Center(child:SizedBox.square(dimension:side,child:QrImageView(data:qr,errorCorrectionLevel:QrErrorCorrectLevel.L,padding:EdgeInsets.all(IdCardLayout.qrPadding(qr,side)),backgroundColor:Colors.white)));
+      }
       return qr.isEmpty ? const SizedBox.shrink() : QrImageView(
         data: qr,
         padding: widget.template.id == 'student-green-blue-modern-v1'
@@ -67,7 +89,15 @@ class _NativeIdCardPreviewState extends State<NativeIdCardPreview> {
     final color = Color(0xff000000 | int.parse(r.textColor.substring(1), radix: 16));
     final availableWidth = r.contentWidth;
     final availableHeight = r.contentHeight;
-    final global=widget.template.id.startsWith('gid-');
+    final global=IdCardIdentity.isGlobalId(widget.template.id);
+    if(global){
+      try{
+        final fit=fitGlobal(r,data);
+        final text=Align(alignment:r.align=='center'?Alignment.center:r.align=='right'?Alignment.centerRight:Alignment.centerLeft,
+          child:Text(fit.text,textAlign:align,style:globalStyle(r,fit.fontSize),softWrap:false,maxLines:r.maxLines));
+        return r.rotation==-90?RotatedBox(quarterTurns:3,child:text):text;
+      }on FormatException{return ColoredBox(color:Colors.red.shade100,child:const SizedBox.expand());}
+    }
     TextStyle style(double size) => TextStyle(color: color,fontSize:size,
       fontFamily:global?'VidyaIdCardSans':null,
       fontWeight:global&&r.bold?FontWeight.bold:null,
@@ -155,9 +185,18 @@ class _NativeIdCardPreviewState extends State<NativeIdCardPreview> {
   Widget build(BuildContext context) {
     final data = IdCardEngine.normalizedInput(widget.template, widget.data);
     final qr = IdCardEngine.compactQr(widget.qr);
-    final missing = widget.template.regions.where((r) => r.isRequired &&
+    final global=IdCardIdentity.isGlobalId(widget.template.id);
+    final missing = widget.template.regions.where((r) => (r.isRequired||(global&&r.key=='confirmedUniversalStudentUid')) &&
       (r.kind == 'image' ? widget.images[r.key] == null :
         r.kind == 'qr' ? qr.isEmpty : (data[r.key]?.toString().trim().isEmpty ?? true)));
+    final fittingErrors=<String>[];
+    if(global)for(final r in widget.template.regions.where((r)=>r.kind=='text')){
+      try{fitGlobal(r,data);}on FormatException catch(e){fittingErrors.add(e.message);}
+    }
+    if(global&&qr.isNotEmpty)for(final r in widget.template.regions.where((r)=>r.kind=='qr')){
+      try{final side=math.min(r.contentWidth,r.contentHeight);IdCardLayout.qrPadding(qr,side,physicalSideMm:side*widget.template.printWidth/widget.template.width);}
+      on FormatException catch(e){fittingErrors.add('QR: ${e.message}');}
+    }
     WindowsAppearance.watch(context);
     final theme = Theme.of(context);
     final template = widget.template;
@@ -169,14 +208,14 @@ class _NativeIdCardPreviewState extends State<NativeIdCardPreview> {
     final actions = <Widget>[
       if (widget.onPrint != null || widget.onPrintDocument != null)
         OutlinedButton.icon(
-          onPressed: busy || !widget.actionsEnabled || missing.isNotEmpty ? null :
+          onPressed: busy || !widget.actionsEnabled || missing.isNotEmpty || fittingErrors.isNotEmpty ? null :
             () => runAction(() => printCards(qr), 'Print failed'),
           icon: const Icon(Icons.print),
           label: const Text('Print'),
         ),
       if (widget.onDownload != null)
         FilledButton.icon(
-          onPressed: busy || !widget.actionsEnabled || missing.isNotEmpty ? null :
+          onPressed: busy || !widget.actionsEnabled || missing.isNotEmpty || fittingErrors.isNotEmpty ? null :
             () => runAction(widget.onDownload!, 'PDF export failed'),
           icon: const Icon(Icons.download),
           label: const Text('Download ID Card'),
@@ -199,6 +238,7 @@ class _NativeIdCardPreviewState extends State<NativeIdCardPreview> {
         const SizedBox(height: 16),
         if (missing.isNotEmpty) Text('Missing template fields: ' + missing.map((r) => r.key).join(', '),
           style: TextStyle(color: Theme.of(context).colorScheme.error)),
+        if(fittingErrors.isNotEmpty)Text('Template needs correction: '+fittingErrors.join(' • '),style:TextStyle(color:theme.colorScheme.error)),
         LayoutBuilder(builder: (context, constraints) {
           final template = widget.template;
           final count = template.hasBack ? 2 : 1;

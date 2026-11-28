@@ -157,7 +157,7 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
         sourceRasters=Map<String,dynamic>.from(source['rasters'] as Map);
         package=await showDialog<Map<String,dynamic>>(context:context,barrierDismissible:false,builder:(_)=>
           DeveloperGlobalIdReviewEditor(id:row['id'].toString(),analysis:analysis,manualSlots:(result['manualSlots'] as List?)?.map((r)=>Map<String,dynamic>.from(r as Map)).toList(),rasters:Map<String,dynamic>.from(source['rasters'] as Map),
-            validatePreview:(candidate)async{validatedDemo=await DeveloperGlobalIdPreview.generate(candidate,reviewedKind);},
+            validatePreview:(candidate)async{validatedDemo=await DeveloperGlobalIdPreview.generate(candidate,reviewedKind,validateQuality:true);},
             loadCleanPdf:(Uint8List bytes) async{
               final reply=await ManagedDeveloperService.call('id-library/review-clean-pdf',{'id':row['id'],'sourceSha256':result['sourceSha256'],
                 'syntheticSampleConfirmed':true,'pdfBase64':base64Encode(bytes)});
@@ -177,7 +177,7 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
       if(!mounted)return;
       // A real final print renderer and an independent QR decode must pass
       // before the human artwork approval. The QR is only a demo string.
-      final demo=validatedDemo??await DeveloperGlobalIdPreview.generate(reviewedPackage,reviewedKind);
+      final demo=validatedDemo??await DeveloperGlobalIdPreview.generate(reviewedPackage,reviewedKind,validateQuality:true);
       if(!mounted)return;
       bool checked=false;
       final approve=await showDialog<bool>(context:context,builder:(ctx)=>StatefulBuilder(builder:(ctx,update)=>AlertDialog(
@@ -206,6 +206,24 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
     }catch(e){if(mounted)setState(()=>message='Mapping / publication failed: $e');return;}
     finally{if(mounted)setState(()=>busy=false);}
     await refresh();
+  }
+  Future<void> reviseMapping(Map<String,dynamic> row)async{
+    if(busy||!storageReady)return;
+    final ok=await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(
+      title:const Text('Edit mapping in a new revision?'),
+      content:const Text('Reuse the private original PDF and run fresh analysis. The published version and existing school selections stay unchanged until a new revision is approved.'),
+      actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),
+        FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Create revision'))]));
+    if(ok!=true||!mounted)return;
+    setState(()=>busy=true);
+    Map<String,dynamic>? draft;
+    try{final result=await ManagedDeveloperService.call('id-library/create-revision',{'id':row['id']});
+      draft=Map<String,dynamic>.from(result['template'] as Map);}
+    catch(e){if(mounted)setState(()=>message='Revision failed: $e');}
+    finally{if(mounted)setState(()=>busy=false);}
+    if(!mounted||draft==null)return;
+    await refresh();
+    if(mounted)await trackMapping(draft);
   }
   Future<void> makeCurrent(Map<String,dynamic> row) async {
     if(busy)return;
@@ -342,11 +360,12 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
             child:Text(published?'Published':draft?'Draft':'Archived',style:Theme.of(context).textTheme.labelSmall))),
           Positioned(top:1,right:2,child:Material(color:colors.surface,shape:const CircleBorder(),
             child:PopupMenuButton<String>(enabled:!busy,tooltip:'Template actions',
-              onSelected:(v){if(v=='review'){review(row);}else if(v=='revision'){upload(row);}else if(v=='current'){makeCurrent(row);}else if(v=='track'){trackMapping(row);}else if(v=='delete'){deleteDraft(row);}else{change(row);}},
+              onSelected:(v){if(v=='review'){review(row);}else if(v=='revision'){upload(row);}else if(v=='edit-mapping'){reviseMapping(row);}else if(v=='current'){makeCurrent(row);}else if(v=='track'){trackMapping(row);}else if(v=='delete'){deleteDraft(row);}else{change(row);}},
               itemBuilder:(_)=>[
                 if(draft)const PopupMenuItem(value:'review',child:ListTile(dense:true,contentPadding:EdgeInsets.zero,leading:Icon(Icons.publish),title:Text('Publish'))),
                 const PopupMenuItem(value:'track',child:ListTile(dense:true,contentPadding:EdgeInsets.zero,leading:Icon(Icons.track_changes),title:Text('Track Mapping Data'))),
                 if(deletable)const PopupMenuItem(value:'delete',child:ListTile(dense:true,contentPadding:EdgeInsets.zero,leading:Icon(Icons.delete_outline),title:Text('Delete'))),
+                if(published)const PopupMenuItem(value:'edit-mapping',child:Text('Edit Mapping in new revision')),
                 if(published)const PopupMenuItem(value:'revision',child:Text('Upload new revision')),
                 if(['published','archived'].contains(row['state'])&&row['mappingState']=='verified'&&row['isCurrent']!=true)const PopupMenuItem(value:'current',child:Text('Restore / make current')),
                 PopupMenuItem(value:'change',child:Text(row['state']=='archived'?'Restore draft':'Archive')),

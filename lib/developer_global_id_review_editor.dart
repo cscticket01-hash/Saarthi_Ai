@@ -19,7 +19,7 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
   final slots=<Map<String,dynamic>>[];
   String side='front';
   String? error;
-  bool busy=false,allowSmoothGradient=true,allowApproximateRepair=true,showAdvanced=false;
+  bool busy=false,allowSmoothGradient=true,allowApproximateRepair=false,showAdvanced=false;
   final cleanArtwork=<String,Uint8List>{};
   final cleanCompanion=<String,Uint8List>{};
   @override void initState(){
@@ -110,9 +110,7 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
           slots..clear()..addAll(adjusted);showAdvanced=true;
         }),icon:const Icon(Icons.fit_screen),label:const Text('Fit readable text boxes')),
         const SizedBox(height:8),
-        CheckboxListTile(value:allowApproximateRepair,onChanged:busy?null:(v)=>setState(()=>allowApproximateRepair=v==true),
-          title:const Text('Automatic background repair'),
-          subtitle:const Text('For hidden complex patterns, reconstructed pixels are approximate. Check the final artwork before publishing.')),
+        const Text('Complex hidden artwork requires a matching clean original PDF or PNG. Approximate patches cannot be published.'),
         CheckboxListTile(value:allowSmoothGradient,onChanged:busy?null:(v)=>setState(()=>allowSmoothGradient=v==true),title:const Text('Try smooth gradient cleanup (review required)')),
         if(widget.loadCleanPdf!=null)TextButton.icon(onPressed:busy?null:chooseCleanPdf,icon:const Icon(Icons.picture_as_pdf),label:const Text('Use matching clean original PDF (preserve complex artwork)')),
         if(cleanCompanion[side]!=null)...[Image.memory(cleanCompanion[side]!,height:120,fit:BoxFit.contain),const Text('Companion will be compared against the filled source outside all sample masks.'),TextButton(onPressed:busy?null:()=>setState(()=>cleanCompanion.clear()),child:const Text('Remove clean PDF companion'))],
@@ -135,7 +133,8 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
           if(row['key']!='__static')Wrap(spacing:8,runSpacing:8,children:[
             for(final key in ['x','y','width','height'])number(row,key),
             if(row.containsKey('sample_x'))...[
-              const Text('Original sample removal rectangle (independent of output field)'),
+              const Text('Original sample removal mask (independent of output field)'),
+              FilterChip(label:const Text('Oval removal mask'),selected:row['sampleOval']==true,onSelected:busy?null:(v)=>setState(()=>row['sampleOval']=v)),
               for(final key in ['sample_x','sample_y','sample_width','sample_height'])number(row,key),
             ],
             if(GlobalIdCardReview.textFields.contains(row['key']))...[

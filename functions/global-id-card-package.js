@@ -49,11 +49,12 @@ function validatePackage(input,id){
    !['contain','cover'].includes(fit)||(['logo','signature','seal'].includes(r.key)&&fit!=='contain')||
    !['left','center','right'].includes(r.align??'left')||!['ellipsis','error'].includes(r.overflow??'ellipsis')||
    !/^#[0-9a-fA-F]{6}$/.test(r.textColor??'#000000')||!finite(r.focusX??.5,0,1)||!finite(r.focusY??.35,0,1))bad('Invalid region formatting');
+  if(r.kind==='text'&&r.overflow!==undefined&&r.overflow!=='error')bad('Text truncation is not allowed in new ID templates: '+r.key);
   if(r.key==='qr'&&(Math.min(r.width,r.height)*pw/w<12||Math.min(r.width,r.height)<8))bad('QR region too small');
   if(r.key==='photo'&&(r.width*pw/w<8||r.height*ph/h<10))bad('Photo region too small');
   return {key:r.key,side:r.side,kind:r.kind,x:r.x,y:r.y,width:r.width,height:r.height,
    label:r.label??'',fontSize,minFontSize,padding,wrap,maxLines,rotation,fit,shape,align:r.align??'left',
-   overflow:r.overflow??'ellipsis',textColor:r.textColor??'#000000',bold:r.kind==='text'&&r.bold===true,focusX:r.focusX??.5,focusY:r.focusY??.35,required:r.required===true};
+   overflow:r.kind==='text'?'error':r.overflow??'error',textColor:r.textColor??'#000000',bold:r.kind==='text'&&r.bold===true,focusX:r.focusX??.5,focusY:r.focusY??.35,required:r.required===true||r.key==='confirmedUniversalStudentUid'};
  });
  if(!keys.has('front:name')||!regions.some(r=>r.key==='qr'))bad('Name and authentication QR required');
  for(let i=0;i<regions.length;i++)for(const b of regions.slice(i+1)){

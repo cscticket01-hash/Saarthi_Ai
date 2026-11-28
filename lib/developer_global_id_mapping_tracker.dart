@@ -141,7 +141,7 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
         setRect(row,r);setRect(row,r,prefix:'sample_');
       }else if(validSelection){
         final row=slots[selected];
-        if(tool=='mask'){setRect(row,r,prefix:'sample_');}
+        if(tool=='mask'){setRect(row,r,prefix:'sample_');row['sampleOval']=shape=='circle'||shape=='oval';}
         else{setRect(row,r);if(syncMask)setRect(row,r,prefix:'sample_');}
         row['manual']=true;row['roleConfidence']='medium';
       }
@@ -224,6 +224,7 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
       ]),
       for(final r in slots.where((r)=>GlobalIdCardReview.readabilityIssue(r)!=null))
         Text(GlobalIdCardReview.readabilityIssue(r)!,style:TextStyle(color:Theme.of(context).colorScheme.error)),
+      if(row!=null&&tool=='mask')FilterChip(label:const Text('Oval sample removal'),selected:row['sampleOval']==true,onSelected:saving?null:(v)=>change((){row['sampleOval']=v;shape=v?'oval':'rectangle';})),
       if(tool=='move'||tool=='resize')CheckboxListTile(contentPadding:EdgeInsets.zero,dense:true,value:syncMask,
         onChanged:saving?null:(v)=>setState(()=>syncMask=v==true),title:const Text('Move sample-removal mask with the selection')),
       if(row!=null&&GlobalIdCardReview.textFields.contains(row['key']))Wrap(spacing:8,runSpacing:4,crossAxisAlignment:WrapCrossAlignment.center,children:[
@@ -285,7 +286,7 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
               overlay(row,rect(row),c,w,h,data.verified),
             if(manual&&validSelection)overlay(slots[selected],rect(slots[selected]),c,w,h,false,ghost:true),
             if(manual&&tool=='mask'&&validSelection&&slots[selected]['sample_x']!=null)
-              overlay({'key':'Sample mask'},rect(slots[selected],prefix:'sample_'),c,w,h,false,ghost:true),
+              overlay({'key':'Sample mask','oval':slots[selected]['sampleOval']==true},rect(slots[selected],prefix:'sample_'),c,w,h,false,ghost:true),
             if(dragRect!=null)overlay({'key':field,'oval':shape=='circle'||shape=='oval'},dragRect!,c,w,h,false,ghost:true),
           ])))),
         const SizedBox(height:12),

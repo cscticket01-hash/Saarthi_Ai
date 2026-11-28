@@ -61,7 +61,7 @@ class IdCardIndicText {
     TextPainter? painter;
     var font = fontSize;
     try {
-      while (font >= minFontSize - .01) {
+      while (true) {
         final candidate = TextPainter(
           text: TextSpan(
             text: text,
@@ -90,7 +90,8 @@ class IdCardIndicText {
           break;
         }
         candidate.dispose();
-        font -= .5;
+        if(font<=minFontSize)break;
+        font=(font-.5).clamp(minFontSize,fontSize).toDouble();
       }
       if (painter == null) {
         throw const FormatException('Indic text cannot fit readable region');

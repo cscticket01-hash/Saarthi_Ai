@@ -123,7 +123,7 @@ class WindowsIdCardDesignerEntry {
       people.docs.map((doc)=><String,dynamic>{...doc.data(),'_recordId':doc.id}),
       school,
     )??<String,dynamic>{};
-    final studentData = entry.id == greenBlueStudentTemplateId ? await greenBlueStudentData(first) : first;
+    final studentData = (entry.id == greenBlueStudentTemplateId||IdCardCatalog.isGlobalId(entry.id)) ? await greenBlueStudentData(first) : first;
     checkSchool();
     final data=<String,dynamic>{...profile,...studentData,'schoolName':profile['schoolName']??profile['name']??'','schoolAddress':profile['address']??'','class':first['studentClass']??first['class']??'','parentName':first['parentName']??first['fatherName']??''};
     final backgrounds=await entry.backgrounds();checkSchool();

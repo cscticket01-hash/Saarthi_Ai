@@ -24,6 +24,7 @@ on:
       - 'test/school_media_budgets_test.dart'
       - 'test/windows_local_first_save_test.dart'
       - 'test/id_card_engine_test.dart'
+      - 'test/global_id_card_review_test.dart'
       - 'lib/windows_document_templates.dart'
       - 'lib/windows_staff_payroll.dart'
       - 'lib/windows_receipt_print_dialog.dart'
@@ -105,7 +106,7 @@ jobs:
       - name: Run TemplateForge and document regression tests
         shell: powershell
         run: |
-          flutter test --concurrency=1 test/windows_template_import_engine_test.dart test/windows_template_office_converter_test.dart test/windows_template_private_corpus_test.dart test/windows_template_cloud_store_test.dart test/windows_template_feature_access_test.dart test/windows_reference_documents_test.dart test/windows_student_id_cards_test.dart test/windows_template_print_acceptance_test.dart test/windows_receipt_print_dialog_test.dart test/template_artwork_compression_test.dart test/school_media_budgets_test.dart test/windows_local_first_save_test.dart test/id_card_engine_test.dart
+          flutter test --concurrency=1 test/windows_template_import_engine_test.dart test/windows_template_office_converter_test.dart test/windows_template_private_corpus_test.dart test/windows_template_cloud_store_test.dart test/windows_template_feature_access_test.dart test/windows_reference_documents_test.dart test/windows_student_id_cards_test.dart test/windows_template_print_acceptance_test.dart test/windows_receipt_print_dialog_test.dart test/template_artwork_compression_test.dart test/school_media_budgets_test.dart test/windows_local_first_save_test.dart test/id_card_engine_test.dart test/global_id_card_review_test.dart
           if ($LASTEXITCODE -ne 0) { throw 'TemplateForge regression tests failed.' }
 
       - name: Attach real A4 printer calibration PDF for physical acceptance
