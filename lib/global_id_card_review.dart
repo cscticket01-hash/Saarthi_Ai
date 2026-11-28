@@ -401,11 +401,12 @@ class GlobalIdCardReview {
       for(var y=top+1;y<bottom;y++){
         if(!matches(left,y)||!matches(right,y))throw FormatException('$key: complex background; provide clean original artwork.');
       }
-      if(!allowSmoothGradient){
-        img.fillRect(output,x1:x0,y1:y0,x2:x1,y2:y1,color:img.ColorRgba8(tl[0],tl[1],tl[2],255));
-      }else{
-        for(var y=y0;y<=y1;y++)for(var x=x0;x<=x1;x++)
-          output.setPixelRgba(x,y,channel(x,y,0),channel(x,y,1),channel(x,y,2),255);
+      for(var y=y0;y<=y1;y++)for(var x=x0;x<=x1;x++){
+        if(r['oval']==true){
+          final dx=(x-(x0+x1)/2)/((x1-x0)/2),dy=(y-(y0+y1)/2)/((y1-y0)/2);
+          if(dx*dx+dy*dy>1)continue;
+        }
+        output.setPixelRgba(x,y,channel(x,y,0),channel(x,y,1),channel(x,y,2),255);
       }
     }
     return Uint8List.fromList(img.encodePng(output));
@@ -485,7 +486,10 @@ class GlobalIdCardReview {
       if(![x,y,w,h].every((v)=>v.isFinite)||x<0||y<0||w<=0||h<=0||x+w>manifest.width||y+h>manifest.height)throw const FormatException('Invalid companion mask.');
       final l=((x*sx).floor()-2).clamp(0,a.width).toInt(),t=((y*sy).floor()-2).clamp(0,a.height).toInt();
       final right=(((x+w)*sx).ceil()+2).clamp(0,a.width).toInt(),bottom=(((y+h)*sy).ceil()+2).clamp(0,a.height).toInt();
-      for(var yy=t;yy<bottom;yy++)allowed.fillRange(yy*a.width+l,yy*a.width+right,1);
+      for(var yy=t;yy<bottom;yy++)for(var xx=l;xx<right;xx++){
+        if(r['oval']==true){final dx=(xx-(l+right-1)/2)/((right-l)/2),dy=(yy-(t+bottom-1)/2)/((bottom-t)/2);if(dx*dx+dy*dy>1)continue;}
+        allowed[yy*a.width+xx]=1;
+      }
     }
     final source=a.convert(format:img.Format.uint8,numChannels:4),target=b.convert(format:img.Format.uint8,numChannels:4);
     var changedInside=false;
@@ -515,7 +519,7 @@ class GlobalIdCardReview {
       if(key=='__static')continue;
       if(!textFields.contains(key)&&!imageFields.contains(key)&&key!='qr')throw const FormatException('Unknown field.');
       final type=kind(key);
-      masks.add({'side':slot['side'],'key':key,for(final k in ['x','y','width','height'])k:slot['sample_$k']??slot[k]});
+      masks.add({'side':slot['side'],'key':key,'oval':slot['sampleOval']==true,for(final k in ['x','y','width','height'])k:slot['sample_$k']??slot[k]});
       final font=((slot['fontSize'] as num?)??math.max(6,math.min(72,((slot['height'] as num?)??12)*.8))).toDouble();
       regions.add({'key':key,'side':slot['side'],'kind':type,'x':slot['x'],'y':slot['y'],
         'width':slot['width'],'height':slot['height'],'fontSize':font,'minFontSize':6,

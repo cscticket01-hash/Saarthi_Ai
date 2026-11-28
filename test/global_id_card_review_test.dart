@@ -122,4 +122,14 @@ void main(){
     expect(find.text('1 / 14 reference fields located • 0 uncertain candidates'),findsOneWidget);
   });
 
+  test('oval removal masks leave corner decoration untouched',(){
+    final source=img.Image(width:400,height:200,numChannels:4);
+    img.fill(source,color:img.ColorRgba8(255,255,255,255));
+    img.fillCircle(source,x:140,y:60,radius:14,color:img.ColorRgba8(20,30,40,255));
+    source.setPixelRgba(84,43,90,100,110,255);
+    final masks=[<String,dynamic>{'side':'front','key':'photo','x':40,'y':20,'width':60,'height':20,'oval':true}];
+    final result=img.decodePng(GlobalIdCardReview.cleanFlatRegions(Uint8List.fromList(img.encodePng(source)),manifest,'front',sampleMasks:masks))!;
+    expect(result.getPixel(140,60).r,255);expect(result.getPixel(84,43).r,90);
+  });
+
 }

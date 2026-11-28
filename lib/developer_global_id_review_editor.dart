@@ -133,7 +133,8 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
           if(row['key']!='__static')Wrap(spacing:8,runSpacing:8,children:[
             for(final key in ['x','y','width','height'])number(row,key),
             if(row.containsKey('sample_x'))...[
-              const Text('Original sample removal rectangle (independent of output field)'),
+              const Text('Original sample removal mask (independent of output field)'),
+              FilterChip(label:const Text('Oval removal mask'),selected:row['sampleOval']==true,onSelected:busy?null:(v)=>setState(()=>row['sampleOval']=v)),
               for(final key in ['sample_x','sample_y','sample_width','sample_height'])number(row,key),
             ],
             if(GlobalIdCardReview.textFields.contains(row['key']))...[
