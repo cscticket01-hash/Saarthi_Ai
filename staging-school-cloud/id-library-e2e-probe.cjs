@@ -61,9 +61,9 @@ async function run({app,auth,db,bucket,env}){
   };
   const dev=(action,body={},expected=200)=>call('developer/managed/id-library/'+action,body,devToken,expected);
   try{
-    await db.runTransaction(async tx=>{
-      if((await tx.get(mark)).exists)return;
-      tx.create(mark,{state:'started',at:Date.now()});claimed=true;
+    claimed=await db.runTransaction(async tx=>{
+      if((await tx.get(mark)).exists)return false;
+      tx.create(mark,{state:'started',at:Date.now()});return true;
     });
     if(!claimed)return;
     step='firebase-web-config';const key=await getWebKey(app);
@@ -153,11 +153,13 @@ async function run({app,auth,db,bucket,env}){
       // Keep only the archived synthetic test template and its immutable
       // checksum evidence. No production draft or existing account touched.
       const cleanup=[];
-      if(id&&devToken&&!checks.archive)cleanup.push(dev('archive',{id}));
+      if(id&&devToken&&!checks.archive){
+        try{await dev('archive',{id});}catch(_){checks.archiveCleanupFailed=true;}
+      }
       if(devUid)cleanup.push(auth.deleteUser(devUid).catch(e=>{if(e.code!=='auth/user-not-found')throw e;}));
       if(schoolUid)cleanup.push(auth.deleteUser(schoolUid).catch(e=>{if(e.code!=='auth/user-not-found')throw e;}),db.doc('school_memberships/'+schoolUid).delete());
       if(schoolId)cleanup.push(db.doc('school_entitlements/'+schoolId).delete());
-      checks.cleanup=(await Promise.allSettled(cleanup)).every(r=>r.status==='fulfilled');
+      checks.cleanup=checks.archiveCleanupFailed!==true&&(await Promise.allSettled(cleanup)).every(r=>r.status==='fulfilled');
       const passed=checks.archive===true&&checks.cleanup===true;
       await mark.set({state:passed?'passed':'failed',checks,at:Date.now()},{merge:true}).catch(()=>{});
       console.info('ID_LIBRARY_E2E_RESULT '+JSON.stringify({passed,checks}));
