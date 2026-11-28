@@ -32,6 +32,10 @@ async function probeSandbox(){
  }finally{await rm(dir,{recursive:true,force:true});}
 }
 const aliases={name:'name','student name':'name','teacher name':'name','staff name':'name','father name':'parentName','father/guardian':'parentName','father / guardian':'parentName','father/guardain':'parentName','father/guardian name':'parentName','father':'parentName','parent name':'parentName','guardian name':'parentName','guardian':'parentName','dob':'dob','d.o.b':'dob','d.o.b.':'dob','date of birth':'dob',class:'class','roll':'rollNo','roll no':'rollNo','roll number':'rollNo','ph no':'contact',phone:'contact','phone no':'contact','contact no':'contact','contact number':'contact',contact:'contact',address:'address',pin:'pinCode','pin code':'pinCode','pincode':'pinCode',district:'district',dist:'district',state:'state',country:'country','school name':'schoolName',designation:'designation',subject:'subject','student id':'confirmedUniversalStudentUid','student uid':'confirmedUniversalStudentUid','employee id':'employeeId','teacher id':'employeeId','staff id':'employeeId'};
+Object.assign(aliases,{
+ 'नाम':'name','विद्यार्थी का नाम':'name','पिता का नाम':'parentName','अभिभावक':'parentName','जन्म तिथि':'dob','कक्षा':'class','अनुक्रमांक':'rollNo','रोल नंबर':'rollNo','संपर्क नंबर':'contact','पता':'address','विद्यालय का नाम':'schoolName','पद':'designation','विषय':'subject','कर्मचारी आईडी':'employeeId','छात्र आईडी':'confirmedUniversalStudentUid',
+ 'নাম':'name','পিতার নাম':'parentName','পিতৃৰ নাম':'parentName','অভিভাবক':'parentName','জন্ম তারিখ':'dob','জন্ম তাৰিখ':'dob','শ্রেণি':'class','শ্ৰেণী':'class','রোল নম্বর':'rollNo','ৰোল নম্বৰ':'rollNo','যোগাযোগ নম্বর':'contact','যোগাযোগ নম্বৰ':'contact','ঠিকানা':'address','বিদ্যালয়ের নাম':'schoolName','বিদ্যালয়ৰ নাম':'schoolName','পদবী':'designation','বিষয়':'subject'
+});
 const normalized=s=>s.toLowerCase().replace(/[’‘]/g,"'").replace(/\s*\/\s*/g,'/').replace(/[.:：]+$/,'').trim().replace(/\s+/g,' ');
 const union=words=>{
  const x=Math.min(...words.map(v=>v.x)),y=Math.min(...words.map(v=>v.y)),right=Math.max(...words.map(v=>v.right)),bottom=Math.max(...words.map(v=>v.bottom));
@@ -41,9 +45,9 @@ const categoryOf=lines=>{
  const matches=new Set();
  for(const line of lines){
   const t=normalized(line).replace(/[-–—]/g,' ');
-  if(/\bstudent\s+(?:id|identity)\s+card\b/.test(t))matches.add('studentId');
-  if(/\bteacher\s+(?:id|identity)\s+card\b/.test(t))matches.add('teacherId');
-  if(/\b(?:other\s+staff|staff|employee|non\s+teaching\s+staff)\s+(?:id|identity)\s+card\b/.test(t))matches.add('otherStaffId');
+  if(/\bstudent\s+(?:id|identity)\s+card\b/.test(t)||/(?:छात्र|विद्यार्थी)\s+पहचान\s+पत्र|(?:ছাত্র|শিক্ষার্থী)\s+পরিচয়\s+পত্র|ছাত্ৰ\s+পৰিচয়\s+পত্ৰ/u.test(t))matches.add('studentId');
+  if(/\bteacher\s+(?:id|identity)\s+card\b/.test(t)||/शिक्षक\s+पहचान\s+पत्र|শিক্ষক\s+(?:পরিচয়\s+পত্র|পৰিচয়\s+পত্ৰ)/u.test(t))matches.add('teacherId');
+  if(/\b(?:other\s+staff|staff|employee|non\s+teaching\s+staff)\s+(?:id|identity)\s+card\b/.test(t)||/कर्मचारी\s+पहचान\s+पत्र|কর্মচারী\s+পরিচয়\s+পত্র|কৰ্মচাৰী\s+পৰিচয়\s+পত্ৰ/u.test(t))matches.add('otherStaffId');
  }
  return matches.size===1?{kind:[...matches][0],evidence:'explicit_card_heading'}:{kind:null,evidence:matches.size>1?'conflicting_headings':'unknown'};
 };
@@ -260,7 +264,7 @@ function enrichCandidates(xml,pages){
   suggestUnlabeledImageRoles(page,texts);
  }
 }
-async function analyzePdf(bytes,executable,imageExecutable){
+async function analyzePdf(bytes,executable,imageExecutable,{ocr=false,rasterizer=process.env.SAARTHI_GLOBAL_ID_PDFTOPPM}={}){
  if(!executable)throw Object.assign(Error('Central PDF analysis runtime is not configured'),{status:503,publicMessage:true});
  const dir=await mkdtemp(join(tmpdir(),'saarthi-id-analysis-'));
  try{
@@ -283,13 +287,42 @@ async function analyzePdf(bytes,executable,imageExecutable){
     warnings.push('Embedded image locations are candidates only; classify each image and check vector QR artwork.');
    }catch(_){warnings.push('Image candidate extraction unavailable; manually review every photo/logo/seal/signature/QR region.');}
   }else warnings.push('Central image candidate runtime not configured.');
+  // Native PDF text wins. OCR adds only missing semantic fields on sparse
+  // or ambiguous pages. Never persist recognized sample strings.
+  if(ocr&&rasterizer&&pages.some(p=>p.candidates.length<5||!p.category?.kind)){
+   try{
+    const {recognize,toPageXml}=require('./global-id-card-ocr');
+    const rasters=await renderReviewSource(bytes,pages,rasterizer,300);
+    for(const page of pages){
+     if(page.candidates.length>=5&&page.category?.kind)continue;
+     const result=await recognize(Buffer.from(rasters[page.side],'base64'));
+     const recovered=parseCandidates(toPageXml(result,page))[0];
+     for(const field of recovered.candidates){
+      if(!page.candidates.some(r=>r.key===field.key))page.candidates.push({...field,side:page.side,evidence:'ocr_geometry'});
+     }
+     for(const label of recovered.labelSlots){
+      if(!page.labelSlots.some(r=>r.role===label.role))page.labelSlots.push({...label,side:page.side});
+     }
+     if(page.category?.evidence!=='conflicting_headings'){
+      if(page.category?.kind&&recovered.category?.kind&&page.category.kind!==recovered.category.kind)
+       page.category={kind:null,evidence:'conflicting_headings'};
+      else if(!page.category?.kind&&recovered.category?.kind)page.category=recovered.category;
+     }
+     page.ocr={state:'recognized',languages:result.languages,wordCount:result.words.length};
+    }
+   }catch(_){
+    warnings.push('OCR fallback unavailable or timed out; review unresolved fields.');
+    for(const page of pages)if(!page.ocr)page.ocr={state:'unavailable'};
+   }
+  }
   const kinds=[...new Set(pages.map(p=>p.category?.kind).filter(Boolean))];
   const category=kinds.length===1&&!pages.some(p=>p.category?.evidence==='conflicting_headings')?{kind:kinds[0],evidence:'explicit_card_heading'}:{kind:null,evidence:kinds.length>1||pages.some(p=>p.category?.evidence==='conflicting_headings')?'conflicting_headings':'unknown'};
   return {pages,category,reviewRequired:true,warnings};
  }finally{await rm(dir,{recursive:true,force:true});}
 }
 // Developer-only reference raster. Never distribute this filled artwork.
-async function renderReviewSource(bytes,pages,executable){
+async function renderReviewSource(bytes,pages,executable,dpi=600){
+ if(![300,600].includes(dpi))throw Error('Unsupported review resolution');
  if(!executable)throw Object.assign(Error('Central review rasterizer is not configured'),{status:503,publicMessage:true});
  if(!Array.isArray(pages)||pages.length<1||pages.length>2)throw Error('Analyze source before review');
  const dir=await mkdtemp(join(tmpdir(),'saarthi-id-review-'));
@@ -297,7 +330,7 @@ async function renderReviewSource(bytes,pages,executable){
   const input=join(dir,'source.pdf'),prefix=join(dir,'review');
   await writeFile(input,bytes,{mode:0o600});
   // Explicit configured, isolated runtime. Keep original physical size.
-  await run(executable,['-f','1','-l',String(pages.length),'-r','600','-png',input,prefix],
+  await run(executable,['-f','1','-l',String(pages.length),'-r',String(dpi),'-png',input,prefix],
     {cwd:dir,timeout:20000,maxBuffer:1024*1024,windowsHide:true});
   const names=(await readdir(dir)).filter(n=>/^review-\d+\.png$/.test(n)).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
   if(names.length!==pages.length)throw Error('Review page count mismatch');
