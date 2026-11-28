@@ -114,8 +114,10 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
       if(!mounted)return;
       final draft=Map<String,dynamic>.from(uploaded['template'] as Map);
       setState((){rows=[draft,...rows.where((r)=>r['id']!=draft['id'])];if(kind==destination)_galleryPage=0;});
-      // Do not open a blocking review dialog automatically. The new draft has
-      // its own Publish / Track Mapping actions; existing cards remain usable.
+      // Upload is already durably saved. Clear only upload progress before
+      // opening the interactive mapping popup; cancellation keeps the draft.
+      setState((){uploadingName=null;uploadingKind=null;});
+      if(mounted&&draft['mappingState']=='review_required')await trackMapping(draft);
     }catch(e){if(mounted)setState(()=>message='Upload failed: $e');return;}
     finally{if(mounted)setState((){uploadingName=null;uploadingKind=null;});}
   }
@@ -319,9 +321,12 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
     // Serialize with thumbnail work to avoid simultaneous PDF processes.
     final request=_previewTail.then((_)=>ManagedDeveloperService.call('id-library/preview',{'id':row['id'],'trackMapping':true}));
     _previewTail=request.then<void>((_) {},onError:(Object _,StackTrace __){});
-    await showDialog<void>(context:context,barrierDismissible:false,builder:(_)=>DeveloperGlobalIdMappingTracker(
-      name:row['name'].toString(),kind:row['kind'].toString(),data:request,save:row['state']=='draft'?(payload)=>ManagedDeveloperService.call('id-library/save-mapping',{'id':row['id'],...payload}):null));
-    if(mounted)await refresh();
+    final action=await showDialog<String>(context:context,barrierDismissible:false,builder:(_)=>DeveloperGlobalIdMappingTracker(
+      name:row['name'].toString(),kind:row['kind'].toString(),data:request,save:row['state']=='draft'?(payload)=>ManagedDeveloperService.call('id-library/save-mapping',{'id':row['id'],...payload}):null,
+      publish:row['state']=='draft'?()=>review(row):null));
+    if(!mounted)return;
+    if(action=='publish')await review(row);
+    else if(action=='draft')await refresh();
   }
   Widget _gallery(BuildContext context){
     final visible=rows.where((r)=>r['kind']==kind).toList();
@@ -368,7 +373,7 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
             child:Text(published?'Published':draft?'Draft':'Archived',style:Theme.of(context).textTheme.labelSmall))),
           Positioned(top:1,right:2,child:Material(color:colors.surface,shape:const CircleBorder(),
             child:PopupMenuButton<String>(enabled:!busy&&!removing,tooltip:'Template actions',
-              onSelected:(v){if(v=='review'){review(row);}else if(v=='revision'){upload(row);}else if(v=='edit-mapping'){reviseMapping(row);}else if(v=='current'){makeCurrent(row);}else if(v=='track'){trackMapping(row);}else if(v=='delete'){deleteDraft(row);}else{change(row);}},
+              onSelected:(v){if(v=='review'){trackMapping(row);}else if(v=='revision'){upload(row);}else if(v=='edit-mapping'){reviseMapping(row);}else if(v=='current'){makeCurrent(row);}else if(v=='track'){trackMapping(row);}else if(v=='delete'){deleteDraft(row);}else{change(row);}},
               itemBuilder:(_)=>[
                 if(draft)const PopupMenuItem(value:'review',child:ListTile(dense:true,contentPadding:EdgeInsets.zero,leading:Icon(Icons.publish),title:Text('Publish'))),
                 const PopupMenuItem(value:'track',child:ListTile(dense:true,contentPadding:EdgeInsets.zero,leading:Icon(Icons.track_changes),title:Text('Track Mapping Data'))),

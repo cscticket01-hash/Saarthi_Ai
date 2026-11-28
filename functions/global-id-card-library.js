@@ -211,7 +211,7 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
       const [source]=await (await storage()).file(row.sourcePath).download();
       if(source.length>MAX_PDF_BYTES||sha256(source)!==row.sourceSha256)invalid(503,'Source checksum failed');
       // Explicit tracking runs the current detector, including configured OCR, on legacy drafts without persisting anything.
-      const analysis=b.trackMapping===true?await analyzeSource(source,analyzer,imageAnalyzer,{ocr:ocrEnabled,rasterizer}):row.analysis?.pages?row.analysis:await analyzeSource(source,analyzer,imageAnalyzer,{ocr:false,rasterizer});
+      const analysis=row.analysis?.pages?.length?row.analysis:await analyzeSource(source,analyzer,imageAnalyzer,{ocr:b.trackMapping===true&&ocrEnabled,rasterizer});
       return {success:true,mode:'private_reference',rasters:await renderSource(source,analysis.pages,rasterizer,b.trackMapping===true?600:150),...(b.trackMapping===true?{analysis,sourceSha256:row.sourceSha256,mappingRevision:row.mappingRevision||0,manualSlots:row.manualSlots??null}: {})};
     }
     if(action==='review-source'){
