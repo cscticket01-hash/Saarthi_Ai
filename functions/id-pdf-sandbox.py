@@ -220,7 +220,13 @@ def main():
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except Exception:
+    except Exception as exc:
+        # Fixed phase and errno only. Never print arbitrary exception text.
+        tb=exc.__traceback__
+        while tb and tb.tb_next: tb=tb.tb_next
+        phase=tb.tb_frame.f_code.co_name if tb else "unknown"
+        if phase in ("main","isolate","checked","job_directory","allocate","add","limits"):
+            print("PDF_SAFE_PHASE "+phase+" "+str(tb.tb_lineno)+" "+type(exc).__name__+" "+str(getattr(exc,"errno",None)),file=sys.stderr,flush=True)
         # Never log the uploaded PDF, host paths, stderr or credentials.
         print("PDF sandbox rejected operation", file=sys.stderr, flush=True)
         sys.exit(1)

@@ -19,6 +19,10 @@ async function run(executable,args,options){
   return await runRaw('/usr/bin/python3',['-I','-B',join(__dirname,'id-pdf-sandbox.py'),executable,...args],{
    ...options,cwd:dirname(args.at(-2)),env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'}
   });
+ }catch(e){
+  const phase=String(e?.stderr||'').match(/PDF_SAFE_PHASE ([a-z_]+ \d+ [A-Za-z]+ (?:\d+|None))/)?.[1]||'poppler_exit';
+  console.info('ID_PDF_RUNTIME_FAILURE '+JSON.stringify({tool:executable.split('/').at(-1),phase,exit:typeof e.code==='number'?e.code:null,signal:e.signal||null,killed:e.killed===true}));
+  throw Object.assign(Error('ID Card PDF processing unavailable. No new draft was saved by analysis. Retry after runtime recovery.'),{status:503,publicMessage:true});
  }finally{activeSandboxJob=false;}
 }
 async function probeSandbox(){

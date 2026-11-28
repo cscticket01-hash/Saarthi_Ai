@@ -226,6 +226,10 @@ function fromEnvironment(env) {
     if(staging)throw Object.assign(Error('Legacy school operations are disabled in ID library staging'),{status:404});
     return legacyHandle(req);
   };
+  if(!staging&&!testSchoolId&&globalIdCardBucket&&r2BucketName==='saarthi-id-library-prod'&&
+     env.RENDER_SERVICE_ID==='srv-db06j2id0e5s73aafdi0'&&env.SAARTHI_ID_PDF_DIAGNOSTIC==='20261128-upload'){
+    setTimeout(()=>require('./id-library-upload-diagnostic.cjs').run({app,db,bucket:globalIdCardBucket,env}).catch(()=>console.info('ID_UPLOAD_DIAGNOSTIC_START_FAILED')),2500).unref();
+  }
   // Scoped startup maintenance only; does not add an HTTP route or grant
   // any user permissions. The exact existing PDF draft remains unpublished.
   if(!staging&&!testSchoolId&&globalIdCardBucket&&r2BucketName==='saarthi-id-library-prod'&&
