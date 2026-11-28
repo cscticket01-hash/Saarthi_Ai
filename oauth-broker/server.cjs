@@ -47,6 +47,28 @@ function createServer(options = {}) {
   });
 }
 if (require.main === module) {
+  // Staging-only, fixed synthetic diagnostic; no uploaded data or credentials.
+  if (process.env.SAARTHI_ID_PDF_STARTUP_PROBE === 'true') {
+    const {execFile} = require('node:child_process');
+    const {promisify} = require('node:util');
+    const execute = promisify(execFile);
+    void (async () => {
+      const available = {};
+      for (const binary of ['pdftotext','pdftohtml','pdftoppm','bwrap','prlimit']) {
+        try {
+          await execute(binary, [binary.startsWith('pdf') ? '-v' : '--version'], {
+            timeout: 3000, maxBuffer: 65536, env: {PATH: '/usr/bin:/bin:/usr/local/bin', LANG:'C'}
+          });
+          available[binary] = true;
+        } catch (_) { available[binary] = false; }
+      }
+      const configured = ['SAARTHI_GLOBAL_ID_PDFTOTEXT','SAARTHI_GLOBAL_ID_PDFTOHTML','SAARTHI_GLOBAL_ID_PDFTOPPM']
+        .map(name => Boolean(process.env[name]));
+      console.info('ID_PDF_RUNTIME_INVENTORY '+JSON.stringify({
+        available, configured, nonRoot: typeof process.getuid === 'function' && process.getuid() !== 0
+      }));
+    })().catch(() => console.info('ID_PDF_RUNTIME_INVENTORY_FAILED'));
+  }
   let schoolCloud;
   if (process.env.SAARTHI_SCHOOL_CLOUD_ENABLED === 'true') {
     schoolCloud = require('../staging-school-cloud/server.cjs').fromEnvironment(process.env);
