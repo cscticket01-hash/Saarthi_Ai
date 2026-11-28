@@ -16,7 +16,7 @@ class GlobalIdCardReview {
   /// candidates stay in the correction editor. Final publication still needs
   /// independent demo rendering and human approval.
   static bool canAutoPrepare(List<Map<String,dynamic>> pages,List<Map<String,dynamic>> slots){
-    if(pages.isEmpty||slots.isEmpty||slots.any((r)=>r['key']==''||r['key']==null))return false;
+    if(pages.isEmpty||slots.isEmpty||slots.any((r)=>r['key']==''||r['key']==null||r['roleConfidence']=='low'))return false;
     if(!slots.any((r)=>r['side']=='front'&&r['key']=='name')||!slots.any((r)=>r['key']=='qr'))return false;
     for(final page in pages){
       final side=page['side'];
@@ -70,6 +70,65 @@ class GlobalIdCardReview {
         r['key']='';r['roleEvidence']='conflicting_qr_candidate';
       }
       actual['key']='qr';actual['roleEvidence']='decoded_raster';actual['roleConfidence']='high';
+    }
+  }
+  /// Non-biometric visual features: distinguish sparse horizontal ink,
+  /// dense multicolour pictures and circular marks. Combine with geometry
+  /// and explicit nearby labels. This never identifies a person's face.
+  static String? pixelRole(img.Image image,double fraction,double centerY){
+    if(image.width<8||image.height<8||fraction>.65)return null;
+    final ratio=image.width/image.height;
+    final crop=img.copyResize(image,width:64,height:64);
+    var ink=0,colour=0,ring=0,core=0,ringTotal=0,coreTotal=0;
+    final tones=<int>{};
+    for(final p in crop){
+      final dx=(p.x-31.5)/31.5,dy=(p.y-31.5)/31.5,d=dx*dx+dy*dy;
+      final r=p.r.toInt(),g=p.g.toInt(),b=p.b.toInt();
+      final isInk=math.min(r,math.min(g,b))<190&&p.a>80;
+      if(isInk)ink++;
+      if(math.max(r,math.max(g,b))-math.min(r,math.min(g,b))>28)colour++;
+      tones.add(((r>>5)<<6)|((g>>5)<<3)|(b>>5));
+      if(d>.38&&d<.90){ringTotal++;if(isInk)ring++;}
+      if(d<.18){coreTotal++;if(isInk)core++;}
+    }
+    final density=ink/4096,chroma=colour/4096;
+    if(ratio>=2.2&&centerY>.56&&fraction<.12&&density>.025&&density<.36&&chroma<.25)return 'signature';
+    if(ratio>=.7&&ratio<=1.35&&centerY>.58&&fraction<.12&&ringTotal>0&&coreTotal>0&&
+       ring/ringTotal>.26&&ring/ringTotal-core/coreTotal>.18)return 'seal';
+    if(ratio>=.55&&ratio<=1.4&&fraction>=.065&&fraction<.36&&tones.length>45&&density>.35&&chroma>.15)return 'photo';
+    if(ratio>=.65&&ratio<=2.2&&centerY<.30&&fraction<.075&&density>.06&&density<.75&&tones.length<=45)return 'logo';
+    return null;
+  }
+  static void refineImageRoles(List<Map<String,dynamic>> pages,List<Map<String,dynamic>> slots,Map<String,Uint8List> rasters){
+    for(final page in pages){
+      final side=page['side'],bytes=rasters[side];
+      if(bytes==null||bytes.length>8*1024*1024)continue;
+      final source=img.decodePng(bytes);
+      if(source==null||source.width*source.height>20000000)continue;
+      final pw=(page['canvasWidth'] as num).toDouble(),ph=(page['canvasHeight'] as num).toDouble();
+      if(pw<=0||ph<=0)continue;
+      final proposals=<String,List<Map<String,dynamic>>>{};
+      for(final row in slots.where((r)=>r['side']==side&&r['kind']=='image'&&r['key']!='qr'&&r['key']!='__static').take(64)){
+        final x=(row['x'] as num).toDouble(),y=(row['y'] as num).toDouble(),w=(row['width'] as num).toDouble(),h=(row['height'] as num).toDouble();
+        if(w<=0||h<=0||x<0||y<0||x+w>pw||y+h>ph)continue;
+        final l=(x/pw*source.width).floor(),t=(y/ph*source.height).floor();
+        final right=((x+w)/pw*source.width).ceil().clamp(l+1,source.width).toInt();
+        final bottom=((y+h)/ph*source.height).ceil().clamp(t+1,source.height).toInt();
+        final role=pixelRole(img.copyCrop(source,x:l,y:t,width:right-l,height:bottom-t),w*h/(pw*ph),(y+h/2)/ph);
+        if(role==null)continue;
+        (proposals[role]??=[]).add(row);
+      }
+      for(final entry in proposals.entries){
+        if(entry.value.length!=1)continue;
+        final row=entry.value.single,role=entry.key;
+        if(slots.any((s)=>!identical(s,row)&&s['side']==side&&s['key']==role))continue;
+        final suggested=row['suggestedRole'];
+        if(suggested==role){
+          row['key']=role;row['roleEvidence']='geometry_and_pixel_features';row['roleConfidence']='medium';
+        }else if(row['key']==''){
+          row['suggestedRole']=role;row['roleEvidence']='pixel_features_only';row['roleConfidence']='low';
+        }
+      }
     }
   }
   /// Find actual rectangular placeholder borders near explicit Logo/QR/Photo

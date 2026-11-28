@@ -38,6 +38,7 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
       }
     }
     GlobalIdCardReview.suggestQr(pages,slots,images);
+    GlobalIdCardReview.refineImageRoles(pages,slots,images);
     GlobalIdCardReview.suggestPlaceholderSlots(pages,slots,images);
     if(GlobalIdCardReview.canAutoPrepare(pages,slots)){
       WidgetsBinding.instance.addPostFrameCallback((_){

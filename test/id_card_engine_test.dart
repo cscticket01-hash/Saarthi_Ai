@@ -9,6 +9,7 @@ import '../lib/id_card_engine.dart';
 import '../lib/id_card_catalog.dart';
 import '../lib/developer_global_id_preview.dart';
 import '../lib/global_id_card_review.dart';
+import 'package:image/image.dart' as img;
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -160,6 +161,24 @@ void main() {
     slots.add({'side':'front','key':'logo'});
     expect(GlobalIdCardReview.canAutoPrepare(pages,slots),true);
     slots.add({'side':'front','key':''});
+    expect(GlobalIdCardReview.canAutoPrepare(pages,slots),false);
+  });
+
+  test('sparse horizontal ink and circular marks are distinct from a generic full-page image',(){
+    final ink=img.ColorRgba8(20,30,40,255),white=img.ColorRgba8(255,255,255,255);
+    final sign=img.Image(width:160,height:48,numChannels:4);
+    img.fill(sign,color:white);img.fillRect(sign,x1:10,y1:22,x2:150,y2:27,color:ink);
+    expect(GlobalIdCardReview.pixelRole(sign,.03,.8),'signature');
+    final seal=img.Image(width:100,height:100,numChannels:4);
+    img.fill(seal,color:white);img.fillCircle(seal,x:50,y:50,radius:43,color:ink);
+    img.fillCircle(seal,x:50,y:50,radius:30,color:white);
+    expect(GlobalIdCardReview.pixelRole(seal,.03,.8),'seal');
+    expect(GlobalIdCardReview.pixelRole(seal,.9,.5),isNull);
+  });
+  test('uncertain image mapping blocks automatic preparation',(){
+    final pages=[<String,dynamic>{'side':'front'}];
+    final slots=[<String,dynamic>{'side':'front','key':'name'},<String,dynamic>{'side':'front','key':'qr'},
+      <String,dynamic>{'side':'front','key':'photo','roleConfidence':'low'}];
     expect(GlobalIdCardReview.canAutoPrepare(pages,slots),false);
   });
 
