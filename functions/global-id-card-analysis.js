@@ -79,6 +79,10 @@ function parseCandidates(xml){
    else rows.push({y:word.y,bottom:word.bottom,words:[word]});
   }
   const labelSlots=[],lineTexts=[];
+  const rowsByPosition=rows.sort((a,b)=>a.y-b.y);
+  // Preserve separate continuation lines for address values. A continuation
+  // must begin near the address value and remain within one line height.
+  let previousAddress=null;
   const side=n?'back':'front';
   const add=(key,value,extra={})=>{
    if(!value.length)return;
@@ -87,7 +91,7 @@ function parseCandidates(xml){
    if(candidates.some(r=>r.key===key))return;
    candidates.push({key,side,...rect,reviewRequired:true,...extra});
   };
-  for(const row of rows){
+  for(const row of rowsByPosition){
    const line=row.words.sort((a,b)=>a.x-b.x),raw=line.map(w=>w.text).join(' '),norm=normalized(raw);
    lineTexts.push(raw);
    const reserved=sampleMarkers.get(norm);
@@ -115,11 +119,24 @@ function parseCandidates(xml){
      j=k+(separate?1:0);break;
     }
    }
+   if(previousAddress&&anchors.length===0&&line.length&&
+      !/^(?:logo|qr|photo|principal|signature|seal|student\s+id|school\s+name)\b/i.test(norm)){
+     const rect=union(line);
+     const gap=rect.y-(previousAddress.y+previousAddress.height);
+     if(gap>=-1&&gap<=previousAddress.height*.8&&Math.abs(rect.x-previousAddress.x)<=Math.max(4,previousAddress.height*.6)){
+      const right=Math.max(rect.x+rect.width,previousAddress.x+previousAddress.width);
+      previousAddress.width=right-previousAddress.x;previousAddress.height=rect.y+rect.height-previousAddress.y;
+      previousAddress.wrap=true;
+      continue;
+     }
+   }
+   previousAddress=null;
    for(let i=0;i<anchors.length;i++){
     const anchor=anchors[i],value=line.slice(anchor.end+1,anchors[i+1]?.start??line.length);
     // A colon may be attached to the first word. Its bbox is conservatively
     // included so the sample cannot be partly retained.
     add(anchor.key,value,{evidence:'label_value_geometry'});
+    if(anchor.key==='address')previousAddress=candidates.find(r=>r.key==='address')||null;
    }
    // Student ID is often a rotated label/value, which may form its own row.
    // Track the whole rectangle for review instead of inventing a value bbox.
