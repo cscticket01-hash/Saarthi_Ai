@@ -108,7 +108,7 @@ class WindowsDocumentTemplates {
     final entry = await IdCardCatalog.find(templateId);
     await IdCardCatalog.requireGlobalAccess(templateId);
     final manifest = reviewedManifest ?? await entry.manifest();
-    final cardData = manifest.id == greenBlueStudentTemplateId
+    final cardData = (manifest.id == greenBlueStudentTemplateId||manifest.regions.any((r)=>r.key=='confirmedUniversalStudentUid'))
         ? await greenBlueStudentData(data) : data;
     return IdCardEngine.render(
       manifest,
@@ -694,7 +694,7 @@ class WindowsDocumentTemplates {
         ?await WindowsIdCardDesignerEntry.reviewed(template,FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']?.toString()??'local:$origin')
         :await (await IdCardCatalog.find(template is String?template.replaceFirst('manifest:',''):studentIdTemplateId)).manifest();
       if(manifest==null)throw StateError('Verified ID design is required.');
-      final cardData = manifest.id == greenBlueStudentTemplateId
+      final cardData = (manifest.id == greenBlueStudentTemplateId||manifest.regions.any((r)=>r.key=='confirmedUniversalStudentUid'))
           ? await greenBlueStudentData(effective) : effective;
       final normalized=IdCardEngine.normalizedInput(manifest,Map<String,dynamic>.from(cardData));
       text={for(final region in manifest.regions.where((r)=>r.kind=='text'))region.key:normalized[region.key]?.toString()??''};
