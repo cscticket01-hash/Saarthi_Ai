@@ -132,4 +132,23 @@ void main(){
     expect(result.getPixel(140,60).r,255);expect(result.getPixel(84,43).r,90);
   });
 
+  testWidgets('draft action saves mapping and returns only after acknowledgement',(tester)async{
+    await tester.binding.setSurfaceSize(const Size(1200,900));
+    addTearDown(()=>tester.binding.setSurfaceSize(null));
+    final image=img.Image(width:240,height:150,numChannels:4);
+    img.fill(image,color:img.ColorRgba8(255,255,255,255));
+    final raw=<String,dynamic>{'mode':'private_reference','sourceSha256':'synthetic-hash','mappingRevision':0,
+      'rasters':{'front':base64Encode(img.encodePng(image))},
+      'analysis':{'pages':[{'side':'front','canvasWidth':240,'canvasHeight':150,'candidates':[]}]}};
+    Map<String,dynamic>? saved;String? action;
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:Builder(builder:(context)=>TextButton(
+      onPressed:()async{action=await showDialog<String>(context:context,builder:(_)=>DeveloperGlobalIdMappingTracker(
+        name:'Synthetic',kind:'studentId',data:Future.value(raw),save:(payload)async{saved=payload;return {'mappingRevision':1};},publish:()async{}));},
+      child:const Text('Open mapper'))))));
+    await tester.tap(find.text('Open mapper'));await tester.pumpAndSettle();
+    expect(find.text('Manual Mapping'),findsOneWidget);expect(find.text('Publish'),findsOneWidget);
+    await tester.tap(find.text('Save Draft'));await tester.pumpAndSettle();
+    expect(action,'draft');expect(saved?['mappingRevision'],0);
+  });
+
 }

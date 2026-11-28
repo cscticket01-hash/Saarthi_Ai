@@ -172,7 +172,7 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
       if(!snap.exists||row.state!=='draft')invalid(409,'Open a draft first');
       const [source]=await (await storage()).file(row.sourcePath).download();
       if(source.length>MAX_PDF_BYTES||sha256(source)!==row.sourceSha256)invalid(503,'Source checksum failed');
-      const analysis=await analyzeSource(source,analyzer,imageAnalyzer,{ocr:ocrEnabled,rasterizer});
+      const analysis=b.force===true||!row.analysis?.pages?.length||!row.analysis.pages.every(p=>Array.isArray(p.candidates))?await analyzeSource(source,analyzer,imageAnalyzer,{ocr:ocrEnabled,rasterizer}):row.analysis;
       await db.runTransaction(async tx=>{
         const latest=await tx.get(ref);
         if(latest.data()?.state!=='draft'||latest.data()?.sourceSha256!==row.sourceSha256)invalid(409,'Draft changed');
@@ -186,7 +186,7 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
         !Number.isInteger(b.mappingRevision)||b.mappingRevision!==(row.mappingRevision||0))invalid(409,'Draft or mapping changed. Reopen it.');
       const [source]=await (await storage()).file(row.sourcePath).download();
       if(source.length>MAX_PDF_BYTES||sha256(source)!==row.sourceSha256)invalid(503,'Source checksum failed');
-      const analysis=await analyzeSource(source,analyzer,imageAnalyzer,{ocr:ocrEnabled,rasterizer});
+      const analysis=b.force===true||!row.analysis?.pages?.length||!row.analysis.pages.every(p=>Array.isArray(p.candidates))?await analyzeSource(source,analyzer,imageAnalyzer,{ocr:ocrEnabled,rasterizer}):row.analysis;
       const manualSlots=sanitizeMapping(b.slots,analysis.pages),mappingRevision=b.mappingRevision+1;
       await db.runTransaction(async tx=>{
         const latest=await tx.get(ref),current=latest.data();

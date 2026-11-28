@@ -242,7 +242,7 @@ class GlobalIdCardReview {
       final sx=source.width/(page['canvasWidth'] as num),sy=source.height/(page['canvasHeight'] as num);
       for(final row in slots.where((r)=>r['side']==side&&r['key']=='photo')){
         final x=(row['x'] as num)*sx,y=(row['y'] as num)*sy,w=(row['width'] as num)*sx,h=(row['height'] as num)*sy;
-        if(w<35||h<35||w/h>.92||w/h<.45)continue;
+        if(w<35||h<35||w/h>1.15||w/h<.45)continue;
         double edge(double xx,double yy,double radius,double angle){
           final ax=(xx+(radius-1.5)*math.cos(angle)).round(),ay=(yy+(radius-1.5)*math.sin(angle)).round();
           final bx=(xx+(radius+1.5)*math.cos(angle)).round(),by=(yy+(radius+1.5)*math.sin(angle)).round();
@@ -269,7 +269,7 @@ class GlobalIdCardReview {
         if(best<.65||br<=0)continue;
         final nx=(bx-br)/sx,ny=(by-br)/sy,nw=2*br/sx,nh=2*br/sy;
         // A verified border narrows only the proposed region; review remains mandatory.
-        row.addAll({'x':nx,'y':ny,'width':nw,'height':nh,'sample_x':nx,'sample_y':ny,'sample_width':nw,'sample_height':nh,'oval':true,'roleEvidence':'circular_border_geometry','reviewRequired':true});
+        row.addAll({'x':nx,'y':ny,'width':nw,'height':nh,'sample_x':nx,'sample_y':ny,'sample_width':nw,'sample_height':nh,'oval':true,'sampleOval':true,'roleEvidence':'circular_border_geometry','reviewRequired':true});
       }
     }
   }
@@ -346,7 +346,8 @@ class GlobalIdCardReview {
           nx<(q['x'] as num)+(q['width'] as num)&&(q['x'] as num)<nx+ww&&
           ny<(q['y'] as num)+(q['height'] as num)&&(q['y'] as num)<ny+hh))continue;
         slots.add({'key':role,'side':side,'x':nx,'y':ny,'width':ww,'height':hh,
-          'sample_x':x,'sample_y':y,'sample_width':w,'sample_height':h,
+          'sample_x':math.max(0,(l-2)/sx),'sample_y':math.max(0,(t-2)/sy),
+          'sample_width':math.min(pw,(r+2)/sx)-math.max(0,(l-2)/sx),'sample_height':math.min(ph,(b+2)/sy)-math.max(0,(t-2)/sy),
           'roleConfidence':'medium','roleEvidence':'explicit_label_and_border','reviewRequired':true});
       }
     }
@@ -379,7 +380,7 @@ class GlobalIdCardReview {
         final ex=(((other['x'] as num)+(other['width'] as num))*sx).ceil()+2;
         final ey=(((other['y'] as num)+(other['height'] as num))*sy).ceil()+2;
         if(left<=ex&&right>=ox&&top<=ey&&bottom>=oy)
-          throw const FormatException('Adjacent sample regions require combined artwork repair.');
+          throw FormatException('$key and ${other['key']}: adjacent sample masks require clean original artwork or corrected masks.');
       }
       List<int> rgb(int x,int y){final p=source.getPixel(x,y);return [p.r.toInt(),p.g.toInt(),p.b.toInt()];}
       final tl=rgb(left,top),tr=rgb(right,top),bl=rgb(left,bottom),br=rgb(right,bottom);

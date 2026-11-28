@@ -18,7 +18,7 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
   bool busy=false, storageReady=false, analysisReady=false, imageAnalysisReady=false, rasterReady=false;
   String kind='studentId';
   String? uploadingName,uploadingKind;
-  final deleting=<String>{};
+  final deleting=<String>{}, reviewing=<String>{};
   final _previews=<String,Future<Map<String,dynamic>>>{};
   Future<void> _previewTail=Future<void>.value();
   int _galleryPage=0;
@@ -122,8 +122,9 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
     finally{if(mounted)setState((){uploadingName=null;uploadingKind=null;});}
   }
   Future<void> review(Map<String,dynamic> row) async {
-    if(busy||!storageReady||row['state']!='draft')return;
-    setState(()=>busy=true);
+    final id=row['id'].toString();
+    if(busy||reviewing.contains(id)||deleting.contains(id)||!storageReady||row['state']!='draft')return;
+    setState(()=>reviewing.add(id));
     try{
       final result=await ManagedDeveloperService.call('id-library/analyze',{'id':row['id']});
       if(!mounted)return;
@@ -206,7 +207,7 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
       await ManagedDeveloperService.call('id-library/publish',{'id':row['id'],'sourceSha256':result['sourceSha256'],
         'reviewConfirmed':true,'mappingRevision':result['mappingRevision']??0,'package':reviewedPackage});
     }catch(e){if(mounted)setState(()=>message='Mapping / publication failed: $e');return;}
-    finally{if(mounted)setState(()=>busy=false);}
+    finally{if(mounted)setState(()=>reviewing.remove(id));}
     await refresh();
   }
   Future<void> reviseMapping(Map<String,dynamic> row)async{
@@ -258,7 +259,7 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
   }
   Future<void> deleteDraft(Map<String,dynamic> row) async {
     final id=row['id'].toString();
-    if(busy||deleting.contains(id))return;
+    if(busy||reviewing.contains(id)||deleting.contains(id))return;
     final published=row['state']=='published'||row['mappingState']=='verified';
     bool unused=false;
     final ok=await showDialog<bool>(context:context,builder:(ctx)=>StatefulBuilder(builder:(ctx,update)=>AlertDialog(
@@ -319,7 +320,7 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
       actions:[TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Close'))]));
   }
   Future<void> trackMapping(Map<String,dynamic> row)async{
-    if(busy)return;
+    if(busy||reviewing.contains(row['id'].toString())||deleting.contains(row['id'].toString()))return;
     // Serialize with thumbnail work to avoid simultaneous PDF processes.
     final request=_previewTail.then((_)=>ManagedDeveloperService.call('id-library/preview',{'id':row['id'],'trackMapping':true}));
     _previewTail=request.then<void>((_) {},onError:(Object _,StackTrace __){});
@@ -358,7 +359,7 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
     final colors=Theme.of(context).colorScheme;
     final published=row['state']=='published',draft=row['state']=='draft';
     final deletable=['draft','archived','published'].contains(row['state'])&&row['schoolSelectionObserved']!=true;
-    final removing=deleting.contains(row['id'].toString());
+    final removing=deleting.contains(row['id'].toString()),processing=reviewing.contains(row['id'].toString());
     return Card(margin:EdgeInsets.zero,clipBehavior:Clip.antiAlias,shape:RoundedRectangleBorder(
       borderRadius:BorderRadius.circular(14),side:BorderSide(color:colors.outlineVariant)),
       child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
@@ -374,7 +375,7 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
             decoration:BoxDecoration(color:colors.surface,borderRadius:BorderRadius.circular(8)),
             child:Text(published?'Published':draft?'Draft':'Archived',style:Theme.of(context).textTheme.labelSmall))),
           Positioned(top:1,right:2,child:Material(color:colors.surface,shape:const CircleBorder(),
-            child:PopupMenuButton<String>(enabled:!busy&&!removing,tooltip:'Template actions',
+            child:PopupMenuButton<String>(enabled:!busy&&!removing&&!processing,tooltip:'Template actions',
               onSelected:(v){if(v=='review'){trackMapping(row);}else if(v=='revision'){upload(row);}else if(v=='edit-mapping'){reviseMapping(row);}else if(v=='current'){makeCurrent(row);}else if(v=='track'){trackMapping(row);}else if(v=='delete'){deleteDraft(row);}else{change(row);}},
               itemBuilder:(_)=>[
                 if(draft)const PopupMenuItem(value:'review',child:ListTile(dense:true,contentPadding:EdgeInsets.zero,leading:Icon(Icons.publish),title:Text('Publish'))),
@@ -393,8 +394,8 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
           style:Theme.of(context).textTheme.labelSmall)),
         const SizedBox(height:8),
         const Divider(height:1),
-        if(removing)const LinearProgressIndicator(),
-        TextButton.icon(onPressed:busy||removing?null:()=>showPreview(row),icon:const Icon(Icons.visibility_outlined,size:18),label:const Text('Preview')),
+        if(removing||processing)const LinearProgressIndicator(),
+        TextButton.icon(onPressed:busy||removing||processing?null:()=>showPreview(row),icon:const Icon(Icons.visibility_outlined,size:18),label:const Text('Preview')),
       ]));
   }
   @override Widget build(BuildContext context)=>Card(child:Padding(padding:const EdgeInsets.all(20),child:Column(

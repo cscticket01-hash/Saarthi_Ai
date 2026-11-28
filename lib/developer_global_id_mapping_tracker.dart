@@ -88,8 +88,8 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
   void begin(Offset p){
     if(saving)return;
     if(tool=='move'||tool=='resize'){
-      if(!validSelection)hit(p);
-      if(!validSelection)return;
+      if(!validSelection||!rect(slots[selected]).contains(p))hit(p);
+      if(!validSelection||!rect(slots[selected]).contains(p))return;
       original=rect(slots[selected]);
     }else if(tool=='mask'){
       if(!validSelection)return;
@@ -133,13 +133,15 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
         if(existing>=0&&existing<slots.length&&slots[existing]['side']==side){selected=existing;}
         else{slots.add({'side':side,'key':field});selected=slots.length-1;}
         final row=slots[selected];
+        final hasMask=row['sample_x']!=null&&row['sample_width']!=null;
         row['key']=field;row['kind']=GlobalIdCardReview.kind(field);row['oval']=imageRole&&(shape=='circle'||shape=='oval');
-        row['manual']=true;row['roleConfidence']='medium';row['sampleOval']=imageRole&&(shape=='circle'||shape=='oval');
+        row['manual']=true;row['roleConfidence']='medium';
+        if(!hasMask||syncMask)row['sampleOval']=imageRole&&(shape=='circle'||shape=='oval');
         if(GlobalIdCardReview.textFields.contains(field)){
           row['fontSize']??=math.max(6.0,math.min(72.0,r.height*.8));
           if(field=='address')row['wrap']=true;
         }
-        setRect(row,r);setRect(row,r,prefix:'sample_');
+        setRect(row,r);if(!hasMask||syncMask)setRect(row,r,prefix:'sample_');
       }else if(validSelection){
         final row=slots[selected];
         if(tool=='mask'){setRect(row,r,prefix:'sample_');row['sampleOval']=shape=='circle'||shape=='oval';}
@@ -160,6 +162,7 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
   Future<void> saveMapping({bool publish=false})async{
     if(widget.save==null||saving||loaded==null)return;
     if(publish){
+      if(!slots.any((r)=>r['key']=='name'&&r['side']=='front')||!slots.any((r)=>r['key']=='qr')){setState(()=>error='Map the front name and authentication QR before publishing.');return;}
       final issues=slots.map(GlobalIdCardReview.readabilityIssue).whereType<String>().toList();
       if(issues.isNotEmpty||overlaps()>0||slots.any((r)=>r['key']==''||r['roleConfidence']=='low')){setState(()=>error=issues.isNotEmpty?issues.first:'Resolve overlapping or uncertain fields before publication.');return;}
     }
