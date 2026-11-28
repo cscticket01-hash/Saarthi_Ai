@@ -20,7 +20,7 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
   String side='front';
   String? error;
   bool failedField(Map<String,dynamic> r)=>error?.contains('${r['key']}:')==true||error?.contains('${r['key']} (${r['side']})')==true;
-  bool busy=false,allowSmoothGradient=true,allowApproximateRepair=false,showAdvanced=false;
+  bool busy=false,allowSmoothGradient=true,allowApproximateRepair=true,showAdvanced=false;
   final cleanArtwork=<String,Uint8List>{};
   final cleanCompanion=<String,Uint8List>{};
   @override void initState(){
@@ -72,7 +72,42 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
     try{
       // Render a frame before the bounded synchronous PNG preparation.
       await Future<void>.delayed(Duration.zero);
-      final result=GlobalIdCardReview.package(widget.id,pages,slots,images,allowSmoothGradient:allowSmoothGradient,allowApproximateRepair:allowApproximateRepair,cleanArtwork:cleanArtwork,cleanCompanion:cleanCompanion);
+      final reconstructed = <String>{};
+      final result = GlobalIdCardReview.package(widget.id, pages, slots, images,
+        allowSmoothGradient: allowSmoothGradient,
+        allowApproximateRepair: allowApproximateRepair,
+        reconstructedSides: reconstructed,
+        cleanArtwork: cleanArtwork,
+        cleanCompanion: cleanCompanion,
+      );
+      if (!mounted) return;
+      if (reconstructed.isNotEmpty) {
+        final backgrounds = result['backgrounds'] as Map<String, String>;
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Review reconstructed artwork'),
+            content: SizedBox(width: 720, child: SingleChildScrollView(child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('Check that sample values are gone and background lines and decoration still look correct. Use a matching clean PDF or PNG if any area looks wrong.'),
+                for (final repairedSide in reconstructed) ...[
+                  Text('Original · $repairedSide'),
+                  Image.memory(images[repairedSide]!, fit: BoxFit.contain),
+                  Text('Reconstructed · $repairedSide'),
+                  Image.memory(base64Decode(backgrounds[repairedSide]!), fit: BoxFit.contain),
+                ],
+              ],
+            ))),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Back to mapping')),
+              FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Use in final preview')),
+            ],
+          ),
+        );
+        if (!mounted || confirmed != true) return;
+      }
       if(widget.validatePreview!=null)await widget.validatePreview!(result);
       if(mounted)Navigator.pop(context,result);
     }catch(e){if(mounted)setState((){error=e.toString();showAdvanced=true;});}
@@ -111,7 +146,10 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
           slots..clear()..addAll(adjusted);showAdvanced=true;
         }),icon:const Icon(Icons.fit_screen),label:const Text('Fit readable text boxes')),
         const SizedBox(height:8),
-        const Text('Complex hidden artwork requires a matching clean original PDF or PNG. Approximate patches cannot be published.'),
+        CheckboxListTile(value: allowApproximateRepair,
+          onChanged: busy ? null : (value) => setState(() => allowApproximateRepair = value == true),
+          title: const Text('Reconstruct complex backgrounds when needed'),
+          subtitle: const Text('Compare the original and reconstructed artwork before continuing.')),
         CheckboxListTile(value:allowSmoothGradient,onChanged:busy?null:(v)=>setState(()=>allowSmoothGradient=v==true),title:const Text('Try smooth gradient cleanup (review required)')),
         if(widget.loadCleanPdf!=null)TextButton.icon(onPressed:busy?null:chooseCleanPdf,icon:const Icon(Icons.picture_as_pdf),label:const Text('Use matching clean original PDF (preserve complex artwork)')),
         if(cleanCompanion[side]!=null)...[Image.memory(cleanCompanion[side]!,height:120,fit:BoxFit.contain),const Text('Companion will be compared against the filled source outside all sample masks.'),TextButton(onPressed:busy?null:()=>setState(()=>cleanCompanion.clear()),child:const Text('Remove clean PDF companion'))],
