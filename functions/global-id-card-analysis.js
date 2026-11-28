@@ -251,7 +251,7 @@ function enrichCandidates(xml,pages){
     // A small logo label adjacent to a tall portrait must not label the portrait.
     const fraction=candidate.width*candidate.height/(page.canvasWidth*page.canvasHeight);
     const ratio=candidate.width/candidate.height;
-    if(t.role==='logo'&&(fraction>.085||ratio<.6||ratio>2.2))continue;
+    if(t.role==='logo'&&(fraction>.06||ratio<.78||ratio>2.2))continue;
     suggestions.push({image:candidate,role:t.role});
    }
   }
