@@ -127,12 +127,17 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
         if(b.categoryConfirmed!==true)invalid(400,'Confirm the template category first.');
         let detected;
         try{detected=await analyzeSource(bytes,analyzer,imageAnalyzer,{ocr:false,rasterizer});}
-        catch(_){/* Manual mapping remains available if raster validation succeeds. */}
-        const rasters=await renderSource(bytes,null,rasterizer,600);
+        catch(error){
+          if(error.status===400)throw error;
+          // Manual mapping remains available if raster validation succeeds.
+        }
+        const rasters=await renderSource(bytes,detected?.pages??null,rasterizer,600);
         if(detected&&detected.pages.length!==Object.keys(rasters).length)invalid(400,'PDF analysis and render page counts differ.');
         const pages=detected?.pages??Object.entries(rasters).map(([side,png])=>{
           const header=Buffer.from(png.slice(0,32),'base64');
           const w=header.readUInt32BE(16),h=header.readUInt32BE(20);
+          if(w===0||h===0||w*25.4/600>150.05||h*25.4/600>150.05)
+            invalid(400,'PDF page is not a supported ID card size');
           return {side,canvasWidth:w*72/600,canvasHeight:h*72/600,
             printWidthMm:w*25.4/600,printHeightMm:h*25.4/600,candidates:[]};
         });
