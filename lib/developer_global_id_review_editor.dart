@@ -17,10 +17,10 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
   final slots=<Map<String,dynamic>>[];
   String side='front';
   String? error;
-  bool busy=false,allowSmoothGradient=false;
+  bool busy=false,allowSmoothGradient=true,showAdvanced=false;
   final cleanArtwork=<String,Uint8List>{};
   final cleanCompanion=<String,Uint8List>{};
-  Map<String,dynamic> withMask(Map<String,dynamic> row)=>{...row,for(final k in ['x','y','width','height'])'sample_$k':row[k]};
+  Map<String,dynamic> withMask(Map<String,dynamic> row)=>{...row,for(final k in ['x','y','width','height'])'sample_$k':row['sample_$k']??row[k]};
   @override void initState(){
     super.initState();
     pages=(widget.analysis['pages'] as List).map((v)=>Map<String,dynamic>.from(v as Map)).toList();
@@ -33,10 +33,12 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
       for(final item in (page['imageCandidates'] as List? ?? const [])){
         final r=Map<String,dynamic>.from(item as Map);
         final role=r['suggestedRole'];
-        slots.add(withMask({...r,'key':r['roleConfidence']!='low'&&(GlobalIdCardReview.imageFields.contains(role)||role=='qr')?role:''}));
+        final recognized=(GlobalIdCardReview.imageFields.contains(role)||role=='qr')&&!slots.any((s)=>s['side']==r['side']&&s['key']==role);
+        slots.add(withMask({...r,'key':recognized?role:''}));
       }
     }
     GlobalIdCardReview.suggestQr(pages,slots,images);
+    GlobalIdCardReview.suggestPlaceholderSlots(pages,slots,images);
   }
   Map<String,dynamic> get page=>pages.firstWhere((p)=>p['side']==side);
   double n(Map<String,dynamic> row,String key)=>(row[key] as num?)?.toDouble()??0;
@@ -88,9 +90,12 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
     final visible=slots.where((r)=>r['side']==side).toList();
     final roles=['','__static',...GlobalIdCardReview.textFields,...GlobalIdCardReview.imageFields,'qr'];
     return PopScope(canPop:!busy,child:AlertDialog(
-      title:const Text('Map fields and remove sample artwork'),
+      title:const Text('Automatic ID card analysis'),
       content:SizedBox(width:820,child:SingleChildScrollView(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-        const Text('Automatic candidates are suggestions. Map every sample field/image, mark only genuine decoration static, and check the whole card. Flat and optional smooth-gradient cleanup are supported. Complex patterns require verified clean artwork.'),
+        Text('${slots.where((r)=>r['key']!=''&&r['key']!='__static').length} fields detected • ${slots.where((r)=>r['key']=='').length} unresolved'),
+        const Text('Review the detected fields. Prepare clean review automatically where the original artwork can be preserved. Uncertain fields and complex backgrounds need correction before publication.'),
+        Wrap(spacing:6,runSpacing:4,children:[for(final role in ['schoolName','logo','photo','confirmedUniversalStudentUid','qr','name','parentName','dob','class','rollNo','contact','address','signature','seal'])
+          Chip(label:Text(role),avatar:Icon(slots.any((r)=>r['key']==role)?Icons.check_circle_outline:Icons.help_outline,size:16))]),
         Wrap(spacing:8,children:[for(final p in pages)ChoiceChip(label:Text(p['side'].toString()),selected:p['side']==side,
           onSelected:busy?null:(_)=>setState(()=>side=p['side'].toString()))]),
         AspectRatio(aspectRatio:w/h,child:LayoutBuilder(builder:(context,c)=>Stack(fit:StackFit.expand,children:[
@@ -107,16 +112,17 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
         TextButton.icon(onPressed:busy?null:chooseCleanArtwork,icon:const Icon(Icons.image),label:Text(cleanArtwork.containsKey(side)?'Replace clean $side PNG':'Use clean original $side PNG')),
         if(cleanArtwork[side]!=null)...[Image.memory(cleanArtwork[side]!,height:120,fit:BoxFit.contain),TextButton(onPressed:busy?null:()=>setState(()=>cleanArtwork.remove(side)),child:const Text('Remove clean artwork override'))],
         Text('${page['printWidthMm']} × ${page['printHeightMm']} mm • original PDF geometry'),
-        TextButton.icon(onPressed:busy||slots.length>=128?null:()=>setState(()=>slots.add({'side':side,'key':'','x':w*.1,'y':h*.1,'width':w*.25,'height':h*.1})),
+        TextButton.icon(onPressed:busy?null:()=>setState(()=>showAdvanced=!showAdvanced),icon:Icon(showAdvanced?Icons.expand_less:Icons.expand_more),label:Text(showAdvanced?'Hide field corrections':'Show field corrections')),
+        if(showAdvanced)TextButton.icon(onPressed:busy||slots.length>=128?null:()=>setState(()=>slots.add({'side':side,'key':'','x':w*.1,'y':h*.1,'width':w*.25,'height':h*.1})),
           icon:const Icon(Icons.add),label:const Text('Add missing field / QR / image slot')),
-        for(final row in visible)Card(child:Padding(padding:const EdgeInsets.all(8),child:Column(children:[
+        for(final row in visible.where((r)=>showAdvanced||r['key']==''))Card(child:Padding(padding:const EdgeInsets.all(8),child:Column(children:[
           Row(children:[
             Expanded(child:DropdownButtonFormField<String>(key:ObjectKey(row),value:roles.contains(row['key'])?row['key'] as String:'',
               isExpanded:true,items:[for(final role in roles)DropdownMenuItem(value:role,child:Text(role==''?'Unclassified — select role':role=='__static'?'Static decoration (keep)':role))],
               onChanged:busy?null:(v)=>setState(()=>row['key']=v??''))),
             IconButton(tooltip:'Remove incorrect candidate',onPressed:busy?null:()=>setState(()=>slots.remove(row)),icon:const Icon(Icons.close)),
           ]),
-          if(row['key']==''&&row['roleConfidence']=='low')
+          if(row['roleConfidence']=='low')
             Text('Possible role from layout: ${row['suggestedRole']=='__static'?'static decoration':row['suggestedRole']}. Confirm the role before continuing.'),
           if(row['key']!='__static')Wrap(spacing:8,runSpacing:8,children:[
             for(final key in ['x','y','width','height'])number(row,key),
@@ -152,6 +158,6 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
         if(busy)const LinearProgressIndicator(),
       ]))),
       actions:[TextButton(onPressed:busy?null:()=>Navigator.pop(context),child:const Text('Cancel')),
-        FilledButton(onPressed:busy?null:buildPackage,child:const Text('Prepare clean review'))]));
+        FilledButton(onPressed:busy?null:buildPackage,child:const Text('Generate clean preview'))]));
   }
 }
