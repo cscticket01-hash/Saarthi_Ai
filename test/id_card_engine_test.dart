@@ -219,7 +219,7 @@ void main() {
     expect(saved,isNotNull);
     final row=(saved!['slots'] as List).single as Map;
     expect(row['key'],'logo');expect(row['oval'],true);
-    expect(row['manual'],true);expect(row['width'],closeTo(row['height'] as num,0.01));
+    expect(row['manual'],true);expect(row['sampleOval'],true);expect(row['width'],closeTo(row['height'] as num,0.01));
     expect(saved!['mappingRevision'],0);
   });
 

@@ -211,7 +211,7 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
       const [source]=await (await storage()).file(row.sourcePath).download();
       if(source.length>MAX_PDF_BYTES||sha256(source)!==row.sourceSha256)invalid(503,'Source checksum failed');
       // Explicit tracking runs the current detector, including configured OCR, on legacy drafts without persisting anything.
-      const analysis=row.analysis?.pages?.length?row.analysis:await analyzeSource(source,analyzer,imageAnalyzer,{ocr:b.trackMapping===true&&ocrEnabled,rasterizer});
+      const analysis=row.analysis?.pages?.length&&row.analysis.pages.every(p=>Array.isArray(p.candidates))?row.analysis:await analyzeSource(source,analyzer,imageAnalyzer,{ocr:b.trackMapping===true&&ocrEnabled,rasterizer});
       return {success:true,mode:'private_reference',rasters:await renderSource(source,analysis.pages,rasterizer,b.trackMapping===true?600:150),...(b.trackMapping===true?{analysis,sourceSha256:row.sourceSha256,mappingRevision:row.mappingRevision||0,manualSlots:row.manualSlots??null}: {})};
     }
     if(action==='review-source'){
@@ -317,6 +317,8 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
         if(!['draft','archived','published'].includes(row.state))invalid(409,'Template cannot be deleted');
         const published=row.state==='published'||row.packageVerified===true||!!row.packagePath;
         if(published&&b.revokePublished!==true)invalid(400,'Confirm removal of this published template from all schools');
+        if(published&&row.schoolSelectionObserved===true)invalid(409,'Template is protected: a school selection has been observed.');
+        if(published&&b.confirmUnused!==true)invalid(400,'Confirm no school has selected this template, including older or offline devices');
         const familyId=row.familyId||row.id,family=familyRef(familyId),fs=await tx.get(family);
         let replacement=null;
         if(fs.data()?.currentId===row.id){
@@ -396,6 +398,19 @@ function createGlobalIdCardLibrary({db,bucket,now=Date.now,policyReviewed=proces
     const serverTime=now(),expiresAt=Math.min(serverTime+24*3600000,Number(member.entitlement?.expiresAt||0));
     return {success:true,schoolId:member.schoolId,uid:member.uid,templates,paymentEnabled:false,serverTime,expiresAt};
   }
-  return {developerAction,schoolAction};
+  // Register a selection before the existing school record write can be
+  // accepted. A sticky protection marker is deliberately conservative:
+  // failed or superseded writes do not prove that every device has deselected.
+  async function protectSchoolSelection(kind,id){
+    if(!KINDS.has(kind))invalid(400,'Invalid ID category');
+    const ref=refs(id);
+    await db.runTransaction(async tx=>{
+      const snap=await tx.get(ref),row=snap.data();
+      if(!snap.exists||row.kind!==kind||!accessDecision(row,null,null)||row.accessType!=='free')
+        invalid(409,'Selected global template is unavailable. Choose another design.');
+      if(row.schoolSelectionObserved!==true)tx.set(ref,{schoolSelectionObserved:true,schoolSelectionObservedAt:now()},{merge:true});
+    });
+  }
+  return {developerAction,schoolAction,protectSchoolSelection};
 }
 module.exports={createGlobalIdCardLibrary,parseSource,accessDecision,publicEntry,verifyPrivateBucket,MAX_PDF_BYTES};

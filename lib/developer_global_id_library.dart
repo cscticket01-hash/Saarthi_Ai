@@ -260,15 +260,17 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
     final id=row['id'].toString();
     if(busy||deleting.contains(id))return;
     final published=row['state']=='published'||row['mappingState']=='verified';
-    final ok=await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(
+    bool unused=false;
+    final ok=await showDialog<bool>(context:context,builder:(ctx)=>StatefulBuilder(builder:(ctx,update)=>AlertDialog(
       title:Text(published?'Delete published template?':'Delete draft?'),
-      content:Text(published?'This template will be removed from the developer and online school libraries. Offline devices learn of revocation when they reconnect. School records and downloaded cards are not deleted. Private audit history is retained.':'This draft will disappear from the library. Private source and deletion history are retained.'),
+      content:Column(mainAxisSize:MainAxisSize.min,children:[Text(published?'Delete only unused templates. A server-observed school selection blocks deletion. Older and offline selections may not yet be registered. School records and downloaded cards are retained.':'This draft will disappear from the library. Private source and deletion history are retained.'),
+        if(published)CheckboxListTile(value:unused,onChanged:(v)=>update(()=>unused=v==true),title:const Text('I verified no school has selected this template, including older/offline devices.'))]),
       actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),
-        FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Delete template'))]));
+        FilledButton(onPressed:published&&!unused?null:()=>Navigator.pop(ctx,true),child:const Text('Delete template'))])));
     if(ok!=true||!mounted||deleting.contains(id))return;
     setState(()=>deleting.add(id));
     try{
-      await ManagedDeveloperService.call('id-library/delete',{'id':id,'confirmed':true,'revokePublished':published});
+      await ManagedDeveloperService.call('id-library/delete',{'id':id,'confirmed':true,'revokePublished':published,'confirmUnused':unused});
       if(mounted)setState((){rows=rows.where((r)=>r['id']!=id).toList();_previews.removeWhere((k,v)=>k.startsWith('$id:'));});
     }catch(e){if(mounted)setState(()=>message='Delete failed: $e');return;}
     finally{if(mounted)setState(()=>deleting.remove(id));}

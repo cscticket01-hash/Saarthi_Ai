@@ -313,7 +313,7 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
     })),
     actions:[TextButton(onPressed:saving?null:close,child:const Text('Close')),
       if(widget.save!=null&&loaded?.verified==false)...[
-        OutlinedButton(onPressed:saving?null:()=>saveMapping(),child:const Text('Save Draft')),
+        OutlinedButton(onPressed:saving?null:()=>saveMapping(),child:Text(widget.publish!=null?'Save Draft':'Save Mapping')),
         if(widget.publish!=null)FilledButton(onPressed:saving?null:()=>saveMapping(publish:true),child:const Text('Publish')),
       ]]));
 }
