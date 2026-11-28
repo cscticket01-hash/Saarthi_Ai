@@ -223,4 +223,28 @@ void main() {
     expect(saved!['mappingRevision'],0);
   });
 
+  test('readable region repair expands a tiny class without changing sample mask',(){
+    final pages=[<String,dynamic>{'side':'front','canvasWidth':240,'canvasHeight':150}];
+    final slots=[<String,dynamic>{'side':'front','key':'class','x':130,'y':80,'width':4,'height':5}];
+    final result=GlobalIdCardReview.fitOutputRegions(pages,slots).single;
+    expect(result['sample_width'],4);expect(result['sample_height'],5);
+    expect(result['width'],greaterThanOrEqualTo(13));expect(result['height'],greaterThanOrEqualTo(7.5));
+    expect(GlobalIdCardReview.readabilityIssue(result),isNull);
+    expect(slots.single['width'],4);
+  });
+  test('safe fit refuses overlap and identifies the exact field',(){
+    final pages=[<String,dynamic>{'side':'front','canvasWidth':240,'canvasHeight':150}];
+    final slots=[<String,dynamic>{'side':'front','key':'rollNo','x':130,'y':80,'width':4,'height':5},
+      <String,dynamic>{'side':'front','key':'photo','x':135,'y':60,'width':30,'height':50}];
+    final result=GlobalIdCardReview.fitOutputRegions(pages,slots).first;
+    expect(result['width'],4);expect(GlobalIdCardReview.readabilityIssue(result),contains('rollNo (front)'));
+  });
+  test('vertical ID uses width as readable line height',(){
+    final pages=[<String,dynamic>{'side':'front','canvasWidth':240,'canvasHeight':150}];
+    final slots=[<String,dynamic>{'side':'front','key':'confirmedUniversalStudentUid','rotation':-90,'x':12,'y':60,'width':4,'height':50}];
+    final result=GlobalIdCardReview.fitOutputRegions(pages,slots).single;
+    expect(result['rotation'],-90);expect(result['width'],greaterThanOrEqualTo(7.5));
+    expect(result['sample_width'],4);expect(GlobalIdCardReview.readabilityIssue(result),isNull);
+  });
+
 }

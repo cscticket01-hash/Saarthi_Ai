@@ -15,7 +15,7 @@ class DeveloperGlobalIdMappingTracker extends StatefulWidget {
 }
 class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
   String side='front',field='logo',shape='rectangle',tool='draw',assignRole='logo';
-  bool manual=false,saving=false,dirty=false,syncMask=true;
+  bool manual=false,saving=false,dirty=false,syncMask=false;
   String? error;
   late final Future<_Mapping> mapping;
   _Mapping? loaded;
@@ -158,6 +158,8 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
   }
   Future<void> saveMapping()async{
     if(widget.save==null||saving||loaded==null)return;
+    final issue=slots.map(GlobalIdCardReview.readabilityIssue).whereType<String>().firstOrNull;
+    if(issue!=null){setState(()=>error=issue);return;}
     setState((){saving=true;error=null;});
     try{
       final result=await widget.save!({'sourceSha256':loaded!.sourceSha256,'mappingRevision':revision,'slots':copy(slots)});
@@ -178,7 +180,7 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
     if(mounted)Navigator.pop(context);
   }
   Widget overlay(Map<String,dynamic> row,Rect r,BoxConstraints c,double w,double h,bool verified,{bool ghost=false}){
-    final ink=ghost?Colors.blue:color(row,verified),oval=row['oval']==true;
+    final ink=ghost?Colors.blue:!verified&&GlobalIdCardReview.readabilityIssue(row)!=null?Colors.red.shade900:color(row,verified),oval=row['oval']==true;
     return Positioned(left:r.left/w*c.maxWidth,top:r.top/h*c.maxHeight,
       width:r.width/w*c.maxWidth,height:r.height/h*c.maxHeight,
       child:IgnorePointer(child:Container(decoration:BoxDecoration(
@@ -201,6 +203,7 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
         IconButton(tooltip:'Undo',onPressed:saving||undo.isEmpty?null:()=>history(true),icon:const Icon(Icons.undo)),
         IconButton(tooltip:'Redo',onPressed:saving||redo.isEmpty?null:()=>history(false),icon:const Icon(Icons.redo)),
         TextButton(onPressed:saving?null:()=>change((){slots=copy(loaded!.automatic);selected=-1;}),child:const Text('Reset to automatic')),
+        TextButton.icon(onPressed:saving?null:()=>change((){slots=GlobalIdCardReview.fitOutputRegions(loaded!.pages,slots);selected=-1;}),icon:const Icon(Icons.fit_screen),label:const Text('Fit readable text boxes')),
       ]),
       Wrap(spacing:8,runSpacing:4,children:[
         for(final s in ['rectangle','square',if(imageRole)...['circle','oval']])ChoiceChip(label:Text(s[0].toUpperCase()+s.substring(1)),
@@ -219,6 +222,8 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
           if(row['key']=='')TextButton(onPressed:saving?null:()=>change((){row['key']='__static';row['roleConfidence']='medium';row['manual']=true;}),child:const Text('Keep as decoration')),
         ],
       ]),
+      for(final r in slots.where((r)=>GlobalIdCardReview.readabilityIssue(r)!=null))
+        Text(GlobalIdCardReview.readabilityIssue(r)!,style:TextStyle(color:Theme.of(context).colorScheme.error)),
       if(tool=='move'||tool=='resize')CheckboxListTile(contentPadding:EdgeInsets.zero,dense:true,value:syncMask,
         onChanged:saving?null:(v)=>setState(()=>syncMask=v==true),title:const Text('Move sample-removal mask with the selection')),
       if(row!=null&&GlobalIdCardReview.textFields.contains(row['key']))Wrap(spacing:8,runSpacing:4,crossAxisAlignment:WrapCrossAlignment.center,children:[

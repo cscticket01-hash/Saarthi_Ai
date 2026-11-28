@@ -118,6 +118,7 @@ class IdCardLayout {
     String overflow = 'error',
     PdfColor color = PdfColors.black,
     pw.TextAlign align = pw.TextAlign.left,
+    String? fieldName,
   }) =>
       pw.LayoutBuilder(
         builder: (context, constraints) {
@@ -133,7 +134,9 @@ class IdCardLayout {
               textAlign: align,
             );
           }
-          final fitted = fitText(
+          final FittedIdText fitted;
+          try {
+          fitted = fitText(
             value,
             width: width,
             height: height,
@@ -147,6 +150,10 @@ class IdCardLayout {
             maxLines: maxLines,
             overflow: overflow,
           );
+          } on FormatException catch(e) {
+            if(fieldName==null)rethrow;
+            throw FormatException('$fieldName: ${e.message} (available ${width.toStringAsFixed(1)} × ${height.toStringAsFixed(1)} design units). Resize output region.');
+          }
           return pw.Align(
             alignment: align == pw.TextAlign.center
                 ? pw.Alignment.center
