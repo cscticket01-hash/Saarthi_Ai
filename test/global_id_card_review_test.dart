@@ -160,7 +160,7 @@ void main(){
       <String, dynamic>{'side': 'front', 'canvasWidth': 246, 'canvasHeight': 150},
     ];
     final repaired = GlobalIdCardReview.fitOutputRegions(
-      pages, [uid], repairStudentIdOnly: true,
+      pages, [uid], minimumOnly: true,
     ).single;
     expect(GlobalIdCardReview.readabilityIssue(repaired), isNull);
     expect(repaired['width'], 7.6);
@@ -168,6 +168,30 @@ void main(){
     expect(repaired['sample_x'], 10.0);
     expect(repaired['sample_width'], 6.0);
     expect(uid['width'], 6.0);
+  });
+
+  test('minimum fitting repairs the live Name size and preserves neighboring fields', () {
+    final name = <String, dynamic>{
+      'key': 'name', 'side': 'front', 'x': 140.0, 'y': 62.0,
+      'width': 94.5, 'height': 7.3,
+    };
+    final neighbor = <String, dynamic>{
+      'key': 'parentName', 'side': 'front', 'x': 140.0, 'y': 69.5,
+      'width': 94.5, 'height': 8.0,
+    };
+    final pages = [
+      <String, dynamic>{'side': 'front', 'canvasWidth': 246, 'canvasHeight': 150},
+    ];
+    final fitted = GlobalIdCardReview.fitOutputRegions(
+      pages, [name, neighbor], minimumOnly: true,
+    );
+    expect(GlobalIdCardReview.readabilityIssue(fitted.first), isNull);
+    expect(fitted.first['width'], 94.5);
+    expect(fitted.first['height'], 7.6);
+    expect(fitted.first['sample_height'], 7.3);
+    expect(fitted.first['sample_y'], 62.0);
+    expect(fitted.last, neighbor);
+    expect(name['height'], 7.3);
   });
 
   testWidgets('resize handles affect only the selected field and keep photos round', (tester) async {
