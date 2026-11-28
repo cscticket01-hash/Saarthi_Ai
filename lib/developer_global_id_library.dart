@@ -294,7 +294,7 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
     // Serialize with thumbnail work to avoid simultaneous PDF processes.
     final request=_previewTail.then((_)=>ManagedDeveloperService.call('id-library/preview',{'id':row['id'],'trackMapping':true}));
     _previewTail=request.then<void>((_) {},onError:(Object _,StackTrace __){});
-    await showDialog<void>(context:context,builder:(_)=>DeveloperGlobalIdMappingTracker(
+    await showDialog<void>(context:context,barrierDismissible:false,builder:(_)=>DeveloperGlobalIdMappingTracker(
       name:row['name'].toString(),kind:row['kind'].toString(),data:request,save:row['state']=='draft'?(payload)=>ManagedDeveloperService.call('id-library/save-mapping',{'id':row['id'],...payload}):null));
     if(mounted)await refresh();
   }
