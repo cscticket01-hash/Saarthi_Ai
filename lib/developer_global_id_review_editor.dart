@@ -17,7 +17,7 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
   final slots=<Map<String,dynamic>>[];
   String side='front';
   String? error;
-  bool busy=false,allowSmoothGradient=true,showAdvanced=false;
+  bool busy=false,allowSmoothGradient=true,allowApproximateRepair=true,showAdvanced=false;
   final cleanArtwork=<String,Uint8List>{};
   final cleanCompanion=<String,Uint8List>{};
   Map<String,dynamic> withMask(Map<String,dynamic> row)=>{...row,for(final k in ['x','y','width','height'])'sample_$k':row['sample_$k']??row[k]};
@@ -75,7 +75,7 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
     try{
       // Render a frame before the bounded synchronous PNG preparation.
       await Future<void>.delayed(Duration.zero);
-      final result=GlobalIdCardReview.package(widget.id,pages,slots,images,allowSmoothGradient:allowSmoothGradient,cleanArtwork:cleanArtwork,cleanCompanion:cleanCompanion);
+      final result=GlobalIdCardReview.package(widget.id,pages,slots,images,allowSmoothGradient:allowSmoothGradient,allowApproximateRepair:allowApproximateRepair,cleanArtwork:cleanArtwork,cleanCompanion:cleanCompanion);
       if(mounted)Navigator.pop(context,result);
     }catch(e){if(mounted)setState(()=>error=e.toString());}
     finally{if(mounted)setState(()=>busy=false);}
@@ -106,6 +106,9 @@ class _ReviewState extends State<DeveloperGlobalIdReviewEditor>{
               child:IgnorePointer(child:Container(decoration:BoxDecoration(border:Border.all(color:r['key']==''?Colors.orange:Colors.red,width:2)),child:Align(alignment:Alignment.topLeft,child:Text(r['key']==''?'?':r['key'].toString(),style:const TextStyle(fontSize:10,color:Colors.red,backgroundColor:Colors.white)))))),
         ]))),
         const SizedBox(height:8),
+        CheckboxListTile(value:allowApproximateRepair,onChanged:busy?null:(v)=>setState(()=>allowApproximateRepair=v==true),
+          title:const Text('Automatic background repair'),
+          subtitle:const Text('For hidden complex patterns, reconstructed pixels are approximate. Check the final artwork before publishing.')),
         CheckboxListTile(value:allowSmoothGradient,onChanged:busy?null:(v)=>setState(()=>allowSmoothGradient=v==true),title:const Text('Try smooth gradient cleanup (review required)')),
         if(widget.loadCleanPdf!=null)TextButton.icon(onPressed:busy?null:chooseCleanPdf,icon:const Icon(Icons.picture_as_pdf),label:const Text('Use matching clean original PDF (preserve complex artwork)')),
         if(cleanCompanion[side]!=null)...[Image.memory(cleanCompanion[side]!,height:120,fit:BoxFit.contain),const Text('Companion will be compared against the filled source outside all sample masks.'),TextButton(onPressed:busy?null:()=>setState(()=>cleanCompanion.clear()),child:const Text('Remove clean PDF companion'))],
