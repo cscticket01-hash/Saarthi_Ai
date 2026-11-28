@@ -255,4 +255,19 @@ void main(){
     expect((photo['x'] as num) + (photo['width'] as num) / 2, closeTo(115, .01));
   });
 
+  test('oval automatic repair preserves corner artwork outside the sample', () {
+    final source = img.Image(width: 400, height: 200, numChannels: 4);
+    img.fill(source, color: img.ColorRgba8(255, 255, 255, 255));
+    img.fillCircle(source, x: 140, y: 60, radius: 14,
+      color: img.ColorRgba8(20, 30, 40, 255));
+    source.setPixelRgba(80, 40, 90, 100, 110, 255);
+    final repaired = img.decodePng(GlobalIdCardReview.reconstructArtwork(
+      Uint8List.fromList(img.encodePng(source)), manifest, 'front',
+      [{'side': 'front', 'key': 'photo', 'x': 40, 'y': 20,
+        'width': 60, 'height': 20, 'oval': true}],
+    ))!;
+    expect(repaired.getPixel(140, 60).r, 255);
+    expect(repaired.getPixel(80, 40).r, 90);
+  });
+
 }
