@@ -1,4 +1,7 @@
 import 'dart:typed_data';
+import 'dart:convert';
+import 'package:flutter/material.dart';
+import 'package:saarthi_ai/developer_global_id_mapping_tracker.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 import 'package:qr/qr.dart';
@@ -101,6 +104,22 @@ void main(){
     expect(slots.single['sample_x'],10);
     slots.single['x']=42;
     expect((pages.single['candidates'] as List).single['x'],10);
+  });
+
+  testWidgets('tracking an approved card shows actual manifest and only a close action',(tester)async{
+    final image=img.Image(width:200,height:100,numChannels:4);
+    img.fill(image,color:img.ColorRgba8(255,255,255,255));
+    final data=<String,dynamic>{'mode':'verified','rasters':{'front':base64Encode(img.encodePng(image))},
+      'manifest':{'canvasWidth':200,'canvasHeight':100,'regions':[{'side':'front','key':'name','x':50,'y':20,'width':80,'height':15}]}};
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:DeveloperGlobalIdMappingTracker(
+      name:'Synthetic ID',kind:'studentId',data:Future.value(data)))));
+    await tester.pumpAndSettle();
+    expect(find.text('Track Mapping Data'),findsOneWidget);
+    expect(find.text('Approved template mapping • read only'),findsOneWidget);
+    expect(find.text('Close'),findsOneWidget);
+    expect(find.text('Publish'),findsNothing);
+    expect(find.text('Delete'),findsNothing);
+    expect(find.text('1 / 14 reference fields located • 0 uncertain candidates'),findsOneWidget);
   });
 
 }

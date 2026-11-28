@@ -41,7 +41,8 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
       final current=data.pages.firstWhere((p)=>p['side']==side,orElse:()=>data.pages.first);
       final active=current['side'].toString(),w=n(current,'canvasWidth'),h=n(current,'canvasHeight');
       final visible=data.slots.where((r)=>r['side']==active&&r['key']!='__static').toList();
-      final tracked=data.slots.where((r)=>r['key']!=''&&r['key']!='__static').map((r)=>r['key']).toSet();
+      final tracked=data.slots.where((r)=>r['key']!=''&&r['key']!='__static'&&r['roleConfidence']!='low').map((r)=>r['key']).toSet();
+      final tentative=data.slots.where((r)=>r['roleConfidence']=='low').map((r)=>r['key']).toSet();
       final uncertain=data.slots.where((r)=>r['key']==''||r['roleConfidence']=='low').length;
       bool found(String key)=>tracked.contains(key);
       final image=data.images[active];
@@ -50,7 +51,7 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
         Text(data.verified?'Approved template mapping • read only':'Automatic detection candidates • read only, not yet approved'),
         const SizedBox(height:8),
         Text(checklist.where(found).length.toString()+' / '+checklist.length.toString()+' reference fields located • '+uncertain.toString()+' uncertain candidates'),
-        if(data.category!=null)Text('Detected category: '+data.category!),
+        if(data.category!=null)Text('Detected category: '+({'studentId':'Student','teacherId':'Teacher','otherStaffId':'Other Staff'}[data.category]??data.category!)),
         const SizedBox(height:8),
         Wrap(spacing:8,children:[for(final p in data.pages)ChoiceChip(
           label:Text(p['side']=='front'?'Front':'Back'),selected:active==p['side'],
@@ -71,13 +72,13 @@ class _TrackerState extends State<DeveloperGlobalIdMappingTracker>{
         const SizedBox(height:12),
         Text('Field tracking',style:Theme.of(context).textTheme.titleSmall),
         Wrap(spacing:6,runSpacing:4,children:[for(final key in checklist)Chip(
-          label:Text(label(key)),avatar:Icon(found(key)?Icons.check_circle_outline:Icons.help_outline,size:17,
-            color:found(key)?Colors.green.shade700:Colors.orange.shade800))]),
+          label:Text(label(key)+(found(key)?'':tentative.contains(key)?' · Uncertain':' · Not found')),avatar:Icon(found(key)?Icons.check_circle_outline:Icons.help_outline,size:17,
+            color:found(key)?(data.verified?Colors.green.shade700:Colors.red.shade700):Colors.orange.shade800))]),
         const SizedBox(height:8),
         const Text('Red: detected candidate • Orange: uncertain • Green: approved. A missing field may simply not exist on this design.'),
         ExpansionTile(title:const Text('Mapping coordinates'),children:[
           for(final row in visible)ListTile(dense:true,title:Text(label(row['key'])),
-            subtitle:Text('X '+n(row,'x').toStringAsFixed(1)+' • Y '+n(row,'y').toStringAsFixed(1)+' • W '+n(row,'width').toStringAsFixed(1)+' • H '+n(row,'height').toStringAsFixed(1))),
+            subtitle:Text('X '+n(row,'x').toStringAsFixed(1)+' • Y '+n(row,'y').toStringAsFixed(1)+' • W '+n(row,'width').toStringAsFixed(1)+' • H '+n(row,'height').toStringAsFixed(1)+(row['roleEvidence']!=null?' • '+row['roleEvidence'].toString():'')+(row['evidence']!=null?' • '+row['evidence'].toString():''))),
         ]),
       ]));
     })),
