@@ -109,7 +109,8 @@ function parseCandidates(xml){
      // is a new label just because a common word appears inside its value.
      const gap=next?next.x-line[k].right:0;
      const separate=next&&/^[:：]+$/.test(next.text);
-     if(!terminal&&!separate&&!(next&&gap>=Math.max(3,(line[k].bottom-line[k].y)*.48)))continue;
+     const attached=next&&/^[:：]\S/.test(next.text);
+     if(!terminal&&!separate&&!attached&&!(next&&gap>=Math.max(3,(line[k].bottom-line[k].y)*.48)))continue;
      anchors.push({start:j,end:k+(separate?1:0),key:aliases[label]});
      j=k+(separate?1:0);break;
     }
@@ -203,8 +204,17 @@ function enrichCandidates(xml,pages){
   for(const match of block[2].matchAll(/<text\b([^>]*)>([\s\S]*?)<\/text>/g)){
    const a=attr(match[1]),x=Number(a.left)*sx,y=Number(a.top)*sy,width=Number(a.width)*sx,height=Number(a.height)*sy;
    if(![x,y,width,height].every(Number.isFinite)||x<0||y<0||width<=0||height<=0||x+width>page.canvasWidth+.5||y+height>page.canvasHeight+.5)continue;
-   const text=decode(match[2].replace(/<[^>]*>/g,'')).trim().replace(/[:.]+$/,'').toLowerCase();
+   const text=normalized(decode(match[2].replace(/<[^>]*>/g,'')));
    const style=fonts.get(a.font);
+   // Independent XML text objects recover placeholders that share a
+   // vertical row with unrelated elements in bbox-layout.
+   if(text==='school name'&&!page.candidates.some(r=>r.key==='schoolName'))
+    page.candidates.push({key:'schoolName',side:page.side,x,y,width,height,reviewRequired:true,evidence:'explicit_placeholder'});
+   if(['logo','school logo','qr','qr code','photo','student photo','teacher photo','staff photo'].includes(text)){
+    const role=imageLabels.get(text);
+    if(role&&!(page.labelSlots||[]).some(r=>r.role===role))
+     (page.labelSlots??=[]).push({role,side:page.side,x,y,width,height});
+   }
    texts.push({x,y,width,height,role:imageLabels.get(text),style:style?{...style,bold:style.bold||/^\s*<b>[^<]*<\/b>\s*$/.test(match[2]),sourceItalic:style.sourceItalic||/<i>[^<]*<\/i>/.test(match[2])}:null});
   }
   for(const r of page.candidates){
