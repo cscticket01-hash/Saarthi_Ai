@@ -106,6 +106,20 @@ if (require.main === module) {
       }));
     })().catch(() => console.info('ID_PDF_RUNTIME_INVENTORY_FAILED'));
   }
+  // Staging-only targeted existing test files; never runs on the production service.
+  if(process.env.SAARTHI_ID_LIBRARY_STAGING==='true' &&
+      process.env.RENDER_SERVICE_ID==='srv-dc4skhlg1s2s73flu6q0' &&
+      process.env.SAARTHI_ID_LIBRARY_MAPPING_TEST==='20261128-v2'){
+    const {execFile}=require('node:child_process');
+    const {resolve}=require('node:path');
+    const tests=['global-id-card-analysis.test.js','global-id-card-library.test.js','global-id-card-package.test.js','global-id-card-integration.test.js'];
+    execFile(process.execPath,['--test',...tests.map(n=>resolve(__dirname,'../functions/test',n))],
+      {timeout:60000,maxBuffer:512*1024,env:{PATH:'/usr/bin:/bin',LANG:'C'}},
+      (error,stdout)=>{
+        const safe=stdout.split('\n').filter(l=>/^# (tests|pass|fail|cancelled|skipped) \d+/.test(l)||/^not ok \d+ - /.test(l));
+        console.info('ID_MAPPING_TARGETED_TESTS '+JSON.stringify({passed:!error,results:safe}));
+      });
+  }
   let schoolCloud;
   if (process.env.SAARTHI_SCHOOL_CLOUD_ENABLED === 'true') {
     schoolCloud = require('../staging-school-cloud/server.cjs').fromEnvironment(process.env);
