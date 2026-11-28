@@ -155,7 +155,7 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
         if(!mounted)return;
         sourceRasters=Map<String,dynamic>.from(source['rasters'] as Map);
         package=await showDialog<Map<String,dynamic>>(context:context,barrierDismissible:false,builder:(_)=>
-          DeveloperGlobalIdReviewEditor(id:row['id'].toString(),analysis:analysis,rasters:Map<String,dynamic>.from(source['rasters'] as Map),
+          DeveloperGlobalIdReviewEditor(id:row['id'].toString(),analysis:analysis,manualSlots:(result['manualSlots'] as List?)?.map((r)=>Map<String,dynamic>.from(r as Map)).toList(),rasters:Map<String,dynamic>.from(source['rasters'] as Map),
             loadCleanPdf:(Uint8List bytes) async{
               final reply=await ManagedDeveloperService.call('id-library/review-clean-pdf',{'id':row['id'],'sourceSha256':result['sourceSha256'],
                 'syntheticSampleConfirmed':true,'pdfBase64':base64Encode(bytes)});
@@ -200,7 +200,7 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
           FilledButton(onPressed:checked?()=>Navigator.pop(ctx,true):null,child:const Text('Publish free template'))])));
       if(approve!=true||!mounted)return;
       await ManagedDeveloperService.call('id-library/publish',{'id':row['id'],'sourceSha256':result['sourceSha256'],
-        'reviewConfirmed':true,'package':reviewedPackage});
+        'reviewConfirmed':true,'mappingRevision':result['mappingRevision']??0,'package':reviewedPackage});
     }catch(e){if(mounted)setState(()=>message='Mapping / publication failed: $e');return;}
     finally{if(mounted)setState(()=>busy=false);}
     await refresh();
@@ -294,8 +294,9 @@ class _DeveloperGlobalIdLibraryState extends State<DeveloperGlobalIdLibrary> {
     // Serialize with thumbnail work to avoid simultaneous PDF processes.
     final request=_previewTail.then((_)=>ManagedDeveloperService.call('id-library/preview',{'id':row['id'],'trackMapping':true}));
     _previewTail=request.then<void>((_) {},onError:(Object _,StackTrace __){});
-    await showDialog<void>(context:context,builder:(_)=>DeveloperGlobalIdMappingTracker(
-      name:row['name'].toString(),kind:row['kind'].toString(),data:request));
+    await showDialog<void>(context:context,barrierDismissible:false,builder:(_)=>DeveloperGlobalIdMappingTracker(
+      name:row['name'].toString(),kind:row['kind'].toString(),data:request,save:row['state']=='draft'?(payload)=>ManagedDeveloperService.call('id-library/save-mapping',{'id':row['id'],...payload}):null));
+    if(mounted)await refresh();
   }
   Widget _gallery(BuildContext context){
     final visible=rows.where((r)=>r['kind']==kind).toList();

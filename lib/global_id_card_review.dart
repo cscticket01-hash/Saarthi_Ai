@@ -29,6 +29,7 @@ class GlobalIdCardReview {
     }
     suggestQr(pages,slots,images);
     refineImageRoles(pages,slots,images);
+    refinePortraitBounds(pages,slots,images);
     suggestPlaceholderSlots(pages,slots,images);
     return slots;
   }
@@ -155,6 +156,50 @@ class GlobalIdCardReview {
   /// Find actual rectangular placeholder borders near explicit Logo/QR/Photo
   /// labels. Work on a bounded raster; no made-up rectangle if edges are
   /// ambiguous. The label is the removal mask and the inset box is the output.
+  /// Seek a coherent circular border inside an oversized portrait candidate.
+  /// Non-biometric edge geometry only; never infer a person's identity.
+  static void refinePortraitBounds(List<Map<String,dynamic>> pages,List<Map<String,dynamic>> slots,Map<String,Uint8List> rasters){
+    for(final page in pages){
+      final side=page['side'],bytes=rasters[side];
+      if(bytes==null||bytes.length>8*1024*1024)continue;
+      final decoded=img.decodePng(bytes);
+      if(decoded==null||decoded.width*decoded.height>20000000)continue;
+      final scale=math.min(1.0,480/math.max(decoded.width,decoded.height));
+      final source=scale==1?decoded:img.copyResize(decoded,width:math.max(1,(decoded.width*scale).round()),height:math.max(1,(decoded.height*scale).round()));
+      final sx=source.width/(page['canvasWidth'] as num),sy=source.height/(page['canvasHeight'] as num);
+      for(final row in slots.where((r)=>r['side']==side&&r['key']=='photo')){
+        final x=(row['x'] as num)*sx,y=(row['y'] as num)*sy,w=(row['width'] as num)*sx,h=(row['height'] as num)*sy;
+        if(w<35||h<35||w/h>.92||w/h<.45)continue;
+        double edge(double xx,double yy,double radius,double angle){
+          final ax=(xx+(radius-1.5)*math.cos(angle)).round(),ay=(yy+(radius-1.5)*math.sin(angle)).round();
+          final bx=(xx+(radius+1.5)*math.cos(angle)).round(),by=(yy+(radius+1.5)*math.sin(angle)).round();
+          if([ax,bx].any((v)=>v<0||v>=source.width)||[ay,by].any((v)=>v<0||v>=source.height))return 0;
+          final a=source.getPixel(ax,ay),b=source.getPixel(bx,by);
+          return math.max((a.r-b.r).abs(),math.max((a.g-b.g).abs(),(a.b-b.b).abs())).toDouble();
+        }
+        double best=0,bx=0,by=0,br=0;
+        for(var cx=x+w*.46;cx<=x+w*.54;cx+=2){
+          for(var cy=y+h*.35;cy<=y+h*.68;cy+=2){
+            for(var radius=w*.36;radius<=w*.5;radius+=1){
+              if(cx-radius<x-1||cx+radius>x+w+1||cy-radius<y||cy+radius>y+h)continue;
+              var strong=0;double total=0;
+              for(var i=0;i<32;i++){
+                final v=edge(cx,cy,radius,2*math.pi*i/32);
+                if(v>22)strong++;
+                total+=math.min(v,90);
+              }
+              final score=strong/32*.8+total/(32*90)*.2;
+              if(strong>=23&&score>best){best=score;bx=cx;by=cy;br=radius;}
+            }
+          }
+        }
+        if(best<.65||br<=0)continue;
+        final nx=(bx-br)/sx,ny=(by-br)/sy,nw=2*br/sx,nh=2*br/sy;
+        // A verified border narrows only the proposed region; review remains mandatory.
+        row.addAll({'x':nx,'y':ny,'width':nw,'height':nh,'sample_x':nx,'sample_y':ny,'sample_width':nw,'sample_height':nh,'oval':true,'roleEvidence':'circular_border_geometry','reviewRequired':true});
+      }
+    }
+  }
   static void suggestPlaceholderSlots(List<Map<String,dynamic>> pages,
       List<Map<String,dynamic>> slots,Map<String,Uint8List> rasters){
     for(final page in pages){
@@ -185,7 +230,7 @@ class GlobalIdCardReview {
           if(hi-lo<8)return 0;
           var count=0;
           for(var i=lo;i<=hi;i++){
-            if(edge(vertical?fixed:i,vertical?i:fixed,vertical)>38)count++;
+            if(edge(vertical?fixed:i,vertical?i:fixed,vertical)>18)count++;
           }
           return count/(hi-lo+1);
         }
@@ -199,12 +244,28 @@ class GlobalIdCardReview {
           if(i>((y+h)*sy).ceil()+2&&score(i,x0,x1,false)>.23)bottom.add(i);
         }
         if(left.isEmpty||right.isEmpty||top.isEmpty||bottom.isEmpty)continue;
-        // Prefer the closest complete enclosing rectangle and verify all
-        // four borders on the same extent (including dashed borders).
-        final l=left.last,r=right.first,t=top.last,b=bottom.first;
-        if([score(l,t,b,true),score(r,t,b,true),score(t,l,r,false),score(b,l,r,false)].any((v)=>v<.42))continue;
+        // Test the strongest candidate edges rather than the nearest edge
+        // (nearby letters, wave artwork and dashed borders can confuse that).
+        List<int> strongest(List<int> values,int lo,int hi,bool vertical){
+          values.sort((a,b)=>score(b,lo,hi,vertical).compareTo(score(a,lo,hi,vertical)));
+          final result=<int>[];
+          for(final v in values){if(result.every((p)=>(p-v).abs()>2))result.add(v);if(result.length>=5)break;}
+          return result;
+        }
+        var l=0,r=0,t=0,b=0;double best=0;
+        final ls=strongest(left,y0,y1,true),rs=strongest(right,y0,y1,true),ts=strongest(top,x0,x1,false),bs=strongest(bottom,x0,x1,false);
+        for(final ll in ls)for(final rr in rs)
+          for(final tt in ts)for(final bb in bs){
+            final ww=rr-ll,hh=bb-tt;
+            if(ww<12||hh<12||ww/hh<.65||ww/hh>1.7)continue;
+            final edges=[score(ll,tt,bb,true),score(rr,tt,bb,true),score(tt,ll,rr,false),score(bb,ll,rr,false)];
+            if(edges.any((v)=>v<.34))continue;
+            final quality=edges.reduce((a,b)=>a+b)/4;
+            if(quality>best){best=quality;l=ll;r=rr;t=tt;b=bb;}
+          }
+        if(best<.42)continue;
         final ww=(r-l-4)/sx,hh=(b-t-4)/sy;
-        if(ww<=0||hh<=0||ww/hh<.65||ww/hh>1.5)continue;
+        if(ww<=0||hh<=0||ww/hh<.65||ww/hh>1.7)continue;
         final rw=(page['printWidthMm'] as num)*ww/pw,rh=(page['printHeightMm'] as num)*hh/ph;
         if(role=='qr'&&(rw<12||rh<12)||role=='photo'&&(rw<8||rh<10))continue;
         final nx=(l+2)/sx,ny=(t+2)/sy;
@@ -213,7 +274,7 @@ class GlobalIdCardReview {
           ny<(q['y'] as num)+(q['height'] as num)&&(q['y'] as num)<ny+hh))continue;
         slots.add({'key':role,'side':side,'x':nx,'y':ny,'width':ww,'height':hh,
           'sample_x':x,'sample_y':y,'sample_width':w,'sample_height':h,
-          'roleEvidence':'explicit_label_and_border','reviewRequired':true});
+          'roleConfidence':'medium','roleEvidence':'explicit_label_and_border','reviewRequired':true});
       }
     }
   }
@@ -372,7 +433,7 @@ class GlobalIdCardReview {
     final w=(first['canvasWidth'] as num).toDouble(),h=(first['canvasHeight'] as num).toDouble();
     if(pages.any((p)=>((p['canvasWidth'] as num)-w).abs()>.01||((p['canvasHeight'] as num)-h).abs()>.01))
       throw const FormatException('Front/back page sizes differ.');
-    if(slots.any((r)=>r['key']==''))throw const FormatException('Classify each detected image, or explicitly mark it static artwork.');
+    if(slots.any((r)=>r['key']==''||r['roleConfidence']=='low'))throw const FormatException('Confirm uncertain images or explicitly mark them static artwork.');
     final regions=<Map<String,dynamic>>[],masks=<Map<String,dynamic>>[];
     for(final slot in slots){
       final key=slot['key']?.toString()??'';
@@ -384,7 +445,7 @@ class GlobalIdCardReview {
       regions.add({'key':key,'side':slot['side'],'kind':type,'x':slot['x'],'y':slot['y'],
         'width':slot['width'],'height':slot['height'],'fontSize':font,'minFontSize':6,
         'textColor':slot['textColor']??'#000000','align':slot['align']??'left','bold':type=='text'&&slot['bold']==true,'required':key=='name'||key=='qr',
-        'rotation':type=='text'&&slot['rotation']==-90?-90:0,'fit':key=='photo'?'cover':'contain','shape':key=='photo'&&slot['oval']==true?'oval':'rect',
+        'rotation':type=='text'&&slot['rotation']==-90?-90:0,'fit':key=='photo'?'cover':'contain','shape':type=='image'&&slot['oval']==true?'oval':'rect',
         'wrap':type=='text'&&slot['wrap']==true,'maxLines':type=='text'&&slot['wrap']==true?2:1});
     }
     if(!regions.any((r)=>r['key']=='name'&&r['side']=='front')||!regions.any((r)=>r['key']=='qr'))
